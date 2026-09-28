@@ -1,0 +1,1161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka Fundamentals Deck</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* ---------- Tokens (same palette as visualizations/module-01) ---------- */
+:root {
+  --bg: #e9ecf1; --slide: #fbfbfd; --surface: #ffffff; --surface-2: #eef1f5; --border: #d8dde5;
+  --text: #1b2330; --muted: #5b6678; --accent: #2f6fdb; --accent-soft: #dce8fb;
+  --ok: #1f8a4c; --ok-soft: #dcf2e4; --bad: #c43b3b; --bad-soft: #f9e0e0; --warn: #b7791f; --warn-soft: #fbefd8;
+  --p0: #2f6fdb; --p1: #d0682a; --p2: #2a9d6f; --p3: #8a4fd1; --p4: #c2417b; --p5: #3a8fa8;
+  --grid: rgba(27, 35, 48, .045);
+  --shadow: 0 1px 2px rgba(20,30,50,.06), 0 6px 20px rgba(20,30,50,.06);
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0a0d12; --slide: #11151c; --surface: #1a1f28; --surface-2: #232a35; --border: #333c4a;
+    --text: #e6eaf0; --muted: #9aa5b5; --accent: #6b9cf0; --accent-soft: #22324f;
+    --ok: #4cc27e; --ok-soft: #1d3527; --bad: #ef7070; --bad-soft: #3d2222; --warn: #e0a84a; --warn-soft: #3a2f1c;
+    --p0: #6b9cf0; --p1: #ec8d52; --p2: #4cc29a; --p3: #ad84ec; --p4: #e8729f; --p5: #5dbbd4;
+    --grid: rgba(230, 234, 240, .035); --shadow: none; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0a0d12; --slide: #11151c; --surface: #1a1f28; --surface-2: #232a35; --border: #333c4a;
+  --text: #e6eaf0; --muted: #9aa5b5; --accent: #6b9cf0; --accent-soft: #22324f;
+  --ok: #4cc27e; --ok-soft: #1d3527; --bad: #ef7070; --bad-soft: #3d2222; --warn: #e0a84a; --warn-soft: #3a2f1c;
+  --p0: #6b9cf0; --p1: #ec8d52; --p2: #4cc29a; --p3: #ad84ec; --p4: #e8729f; --p5: #5dbbd4;
+  --grid: rgba(230, 234, 240, .035); --shadow: none; color-scheme: dark;
+}
+
+/* ---------- Stage & slides ---------- */
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--text); font-family: var(--sans); overflow: hidden; }
+code, .mono { font-family: var(--mono); }
+.viewport { position: fixed; inset: 0; display: grid; place-items: center; }
+.deck { position: relative; width: 1280px; height: 720px; transform-origin: center center; flex: none; }
+.slide {
+  position: absolute; inset: 0; padding: 44px 64px 60px; display: flex; flex-direction: column;
+  background: var(--slide); border-radius: 18px; box-shadow: var(--shadow); overflow: hidden;
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 32px 32px;
+  opacity: 0; visibility: hidden; transform: translateX(24px); transition: opacity .35s ease, transform .35s ease, visibility 0s .35s;
+}
+.slide.active { opacity: 1; visibility: visible; transform: none; transition: opacity .35s ease, transform .35s ease; }
+.slide.before { transform: translateX(-24px); }
+.slide::before { /* accent rail */
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px;
+  background: linear-gradient(var(--p0), var(--p3), var(--p1));
+}
+.foot {
+  position: absolute; left: 64px; right: 64px; bottom: 20px; display: flex; justify-content: space-between;
+  font-size: 13px; color: var(--muted); letter-spacing: .02em;
+}
+.foot b { color: var(--text); font-weight: 600; }
+
+.kicker { text-transform: uppercase; letter-spacing: .12em; font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px; }
+h1, h2 { margin: 0; letter-spacing: -.02em; }
+h2 { font-size: 38px; line-height: 1.12; font-weight: 800; }
+h2 .hl { color: var(--accent); }
+.sub { color: var(--muted); font-size: 18px; margin: 8px 0 0; max-width: 980px; line-height: 1.45; }
+.body { flex: 1; min-height: 0; margin-top: 22px; }
+.row { display: flex; gap: 20px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow);
+}
+.card h3 { margin: 0 0 6px; font-size: 17px; font-weight: 700; }
+.card p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.45; }
+.pill { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; background: var(--accent-soft); color: var(--accent); }
+.tag { display: inline-block; font-family: var(--mono); font-size: 12.5px; padding: 1px 7px; border-radius: 6px; background: var(--surface-2); color: var(--text); }
+.callout {
+  display: flex; gap: 14px; align-items: center; border-radius: 14px; padding: 14px 18px; font-size: 16px; line-height: 1.4;
+  background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.callout.warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.callout .big { font-size: 26px; font-weight: 800; color: var(--accent); flex: none; }
+.callout.warn .big { color: var(--warn); }
+
+/* ---------- SVG vocabulary ---------- */
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+svg text { font-family: var(--sans); fill: var(--text); font-size: 14px; }
+svg .t { font-weight: 600; font-size: 15px; }
+svg .m { fill: var(--muted); font-size: 12.5px; }
+svg .mono { font-family: var(--mono); }
+svg .acc { fill: var(--accent); }
+svg .box { fill: var(--surface); stroke: var(--border); stroke-width: 1.5; }
+svg .box2 { fill: var(--surface-2); stroke: var(--border); stroke-width: 1.2; }
+svg .frame { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 6 5; }
+svg .frame-m { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 5; }
+svg .ln { stroke: var(--muted); stroke-width: 1.6; fill: none; }
+svg .ln-soft { stroke: var(--border); stroke-width: 1.4; fill: none; }
+svg .ln-acc { stroke: var(--accent); stroke-width: 2; fill: none; }
+svg .arrow { marker-end: url(#arr); }
+svg .arrow-acc { marker-end: url(#arr-acc); }
+svg .hub { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 2; }
+svg .k0, svg .k1, svg .k2, svg .k3, svg .k4, svg .k5 { stroke-width: 1.8; }
+svg .k0 { fill: color-mix(in srgb, var(--p0) 22%, var(--surface)); stroke: var(--p0); }
+svg .k1 { fill: color-mix(in srgb, var(--p1) 22%, var(--surface)); stroke: var(--p1); }
+svg .k2 { fill: color-mix(in srgb, var(--p2) 22%, var(--surface)); stroke: var(--p2); }
+svg .k3 { fill: color-mix(in srgb, var(--p3) 22%, var(--surface)); stroke: var(--p3); }
+svg .k4 { fill: color-mix(in srgb, var(--p4) 22%, var(--surface)); stroke: var(--p4); }
+svg .k5 { fill: color-mix(in srgb, var(--p5) 22%, var(--surface)); stroke: var(--p5); }
+svg .kx { fill: var(--surface-2); stroke: var(--border); stroke-width: 1.4; }
+svg .ghost { fill: none; stroke: var(--border); stroke-width: 1.4; stroke-dasharray: 4 4; }
+svg .tomb { fill: var(--surface); stroke: var(--p1); stroke-width: 1.8; stroke-dasharray: 5 4; }
+svg .cons { fill: var(--ok-soft); stroke: var(--ok); stroke-width: 1.6; }
+svg .lag { fill: var(--warn-soft); stroke: var(--warn); stroke-width: 1.6; }
+svg .unrep { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.6; stroke-dasharray: 5 4; }
+svg .gone { fill: var(--bad-soft); stroke: var(--bad); stroke-width: 1.2; stroke-dasharray: 3 4; opacity: .7; }
+svg .d0 { fill: var(--p0); } svg .d1 { fill: var(--p1); } svg .d2 { fill: var(--p2); }
+svg .d3 { fill: var(--p3); } svg .d4 { fill: var(--p4); } svg .d5 { fill: var(--p5); }
+svg .cell-t { font-size: 12px; font-weight: 600; text-anchor: middle; }
+svg .off-t { font-size: 11px; fill: var(--muted); text-anchor: middle; font-family: var(--mono); }
+svg .mid { text-anchor: middle; }
+svg .end { text-anchor: end; }
+svg .bad-t { fill: var(--bad); } svg .ok-t { fill: var(--ok); } svg .warn-t { fill: var(--warn); }
+
+/* ---------- Slide specifics ---------- */
+.title-grid { display: grid; grid-template-columns: 1fr 580px; gap: 36px; align-items: center; height: 100%; }
+.title-grid h1 { font-size: 64px; line-height: 1.02; font-weight: 800; letter-spacing: -.03em; }
+.title-grid h1 span {
+  background: linear-gradient(90deg, var(--p0), var(--p3) 55%, var(--p1)); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.title-grid .lede { font-size: 20px; color: var(--muted); line-height: 1.45; margin: 20px 0 26px; max-width: 520px; }
+.chips { display: flex; gap: 10px; flex-wrap: wrap; }
+@keyframes drop { 0% { opacity: 0; transform: translateY(-40px); } 25%, 85% { opacity: 1; transform: none; } 100% { opacity: 0; transform: none; } }
+.new-cell { animation: drop 3s ease-out infinite; transform-box: fill-box; }
+
+.modmap { display: grid; grid-template-columns: repeat(10, 1fr); gap: 8px; }
+.mod { border-radius: 10px; padding: 10px 10px 12px; font-size: 13px; line-height: 1.3; background: var(--surface); border: 1px solid var(--border); min-height: 78px; }
+.mod b { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; letter-spacing: .06em; }
+.mod.now { background: var(--accent); color: #fff; border-color: var(--accent); box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 35%, transparent); }
+.mod.now b { color: rgba(255,255,255,.85); }
+.bands { display: grid; grid-template-columns: 1fr 4fr 4fr 1fr; gap: 8px; margin-top: 8px; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.bands div { border-top: 3px solid; padding-top: 6px; text-align: center; }
+
+.decouple { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 16px; }
+.decouple .card h3 { display: flex; align-items: center; gap: 8px; }
+.decouple .num { width: 26px; height: 26px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 13px; color: #fff; }
+
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 16px 18px; box-shadow: var(--shadow); display: flex; flex-direction: column; }
+.panel h3 { margin: 0; font-size: 20px; display: flex; align-items: center; gap: 10px; }
+.panel .cap { color: var(--muted); font-size: 15px; line-height: 1.45; margin: 4px 0 8px; }
+.panel .foot-note { margin-top: auto; font-size: 14px; color: var(--muted); border-top: 1px dashed var(--border); padding-top: 8px; }
+
+table.cmp { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14.5px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+table.cmp th, table.cmp td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+table.cmp tr:last-child td { border-bottom: 0; }
+table.cmp th { background: var(--surface-2); font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+table.cmp td:first-child { font-weight: 600; white-space: nowrap; }
+table.cmp td.k { color: var(--accent); font-weight: 600; }
+
+.quote { font-size: 28px; line-height: 1.3; font-weight: 700; letter-spacing: -.01em; margin: 0 0 18px; }
+.quote em { font-style: normal; color: var(--accent); }
+.event { font-family: var(--mono); font-size: 14px; line-height: 1.75; }
+.event .f { color: var(--muted); display: inline-block; width: 92px; }
+.event .v { color: var(--text); }
+.usecases { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.usecases span { font-size: 13px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); }
+
+.legend5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-top: 12px; }
+.legend5 .card { padding: 12px 14px; border-top: 4px solid var(--accent); }
+.legend5 .card h3 { font-size: 15px; }
+.legend5 .card p { font-size: 13.5px; }
+.cards4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 14px; }
+.cards4 .card { padding: 12px 14px; }
+.cards4 .card p { font-size: 14px; color: var(--text); }
+.cards4 .card p b { color: var(--accent); }
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.rule { display: flex; gap: 12px; align-items: flex-start; }
+.rule .ico { flex: none; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font-weight: 800; color: #fff; font-size: 15px; }
+.rule h3 { margin: 0 0 2px; font-size: 16px; }
+.rule p { margin: 0; font-size: 14px; color: var(--muted); line-height: 1.4; }
+
+.term {
+  background: #0d1117; color: #d6deeb; border-radius: 12px; font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
+  padding: 12px 14px; border: 1px solid #2a3240; white-space: pre; overflow: hidden;
+}
+.term .bar { display: flex; gap: 6px; margin: -2px 0 8px; }
+.term .bar i { width: 10px; height: 10px; border-radius: 50%; background: #ff5f57; }
+.term .bar i:nth-child(2) { background: #febc2e; } .term .bar i:nth-child(3) { background: #28c840; }
+.term .c { color: #7d8799; } .term .p { color: #7fd1a7; } .term .h { color: #82aaff; } .term .y { color: #ffcb6b; }
+.baseline { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+.baseline div { text-align: center; background: var(--surface-2); border-radius: 10px; padding: 8px 4px; }
+.baseline b { display: block; font-size: 24px; color: var(--accent); }
+.baseline span { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+
+.timeline { display: grid; grid-template-columns: repeat(6, 1fr); position: relative; margin-top: 14px; }
+.timeline::before { content: ""; position: absolute; left: 8%; right: 8%; top: 13px; height: 3px; background: linear-gradient(90deg, var(--muted), var(--accent)); border-radius: 2px; }
+.timeline .ev { text-align: center; position: relative; font-size: 13.5px; line-height: 1.35; padding: 0 6px; }
+.timeline .ev::before { content: ""; display: block; width: 16px; height: 16px; border-radius: 50%; background: var(--slide); border: 3px solid var(--accent); margin: 5px auto 8px; }
+.timeline .ev.key::before { background: var(--accent); }
+.timeline .ev b { display: block; font-size: 16px; }
+.timeline .ev span { color: var(--muted); }
+
+.labs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 14px; }
+.labs .card { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; }
+.labs .n { flex: none; font-weight: 800; font-size: 22px; color: var(--accent); line-height: 1; }
+
+.recap { display: grid; grid-template-columns: 1.25fr 1fr; gap: 24px; }
+.take { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-content: start; }
+.take .card { padding: 12px 14px; }
+.take .card h3 { font-size: 15px; display: flex; gap: 8px; align-items: baseline; }
+.take .card h3 i { font-style: normal; color: var(--accent); font-weight: 800; }
+.take .card p { font-size: 13.5px; }
+.quiz { display: flex; flex-direction: column; gap: 10px; }
+.q { position: relative; padding-right: 110px !important; cursor: pointer; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 11px 14px; font-size: 15px; transition: border-color .2s; }
+.q:hover { border-color: var(--accent); }
+.q .a { display: none; margin-top: 6px; color: var(--ok); font-size: 14px; font-weight: 500; }
+.q.open .a { display: block; }
+.q .hint { color: var(--muted); font-size: 12px; position: absolute; right: 14px; top: 13px; }
+.q.open .hint { display: none; }
+.next { margin-top: 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-radius: 14px; background: var(--accent); color: #fff; }
+.next b { font-size: 18px; }
+
+/* ---------- Chrome: controls, progress, notes ---------- */
+.progress { position: fixed; left: 0; top: 0; height: 4px; background: linear-gradient(90deg, var(--p0), var(--p3)); transition: width .3s; z-index: 5; }
+.controls { position: fixed; right: 16px; top: 12px; display: flex; gap: 6px; z-index: 5; }
+.controls button {
+  font: 600 13px var(--sans); color: var(--text); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 10px; cursor: pointer; opacity: .75;
+}
+.controls button:hover { opacity: 1; border-color: var(--accent); }
+.notes-panel {
+  position: fixed; left: 16px; right: 16px; bottom: 16px; max-height: 32vh; overflow: auto; z-index: 6; display: none;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; font-size: 15px; line-height: 1.5;
+  box-shadow: 0 10px 40px rgba(0,0,0,.25);
+}
+.notes-panel.show { display: block; }
+.notes-panel h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--accent); }
+aside.notes { display: none; }
+
+/* ---------- Print: one slide per page ---------- */
+@page { size: 1280px 720px; margin: 0; }
+@media print {
+  body { overflow: visible; background: none; }
+  .viewport { position: static; display: block; }
+  .deck { transform: none !important; width: 1280px; height: auto; }
+  .slide { position: relative; opacity: 1; visibility: visible; transform: none; height: 720px; border-radius: 0; box-shadow: none; break-after: page; transition: none; }
+  .controls, .progress, .notes-panel { display: none !important; }
+  .q .a { display: block; } .q .hint { display: none; }
+}
+</style>
+</head>
+<body>
+
+<!-- Shared SVG defs (markers) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" style="fill: var(--muted)"/>
+    </marker>
+    <marker id="arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" style="fill: var(--accent)"/>
+    </marker>
+  </defs>
+</svg>
+
+<div class="progress" id="progress"></div>
+<div class="viewport"><div class="deck" id="deck">
+
+<!-- ===================== 1. TITLE ===================== -->
+<section class="slide" data-title="Title">
+  <div class="title-grid">
+    <div>
+      <div class="kicker">Apache Kafka &amp; Confluent Kafka Administration · Module 1</div>
+      <h1>Messaging &amp;<br><span>Kafka Fundamentals</span></h1>
+      <p class="lede">From queues to a distributed, replicated, append-only log. This is the mental model the rest of the course builds on.</p>
+      <div class="chips">
+        <span class="pill">Beginner → Intermediate</span>
+        <span class="pill">6 topics · 3 labs</span>
+        <span class="pill">Apache Kafka 4.x · KRaft</span>
+      </div>
+    </div>
+    <svg viewBox="0 0 580 380" role="img" aria-label="A producer appends records to a log while two consumer groups read at their own offsets">
+      <rect x="446" y="18" width="110" height="42" rx="21" class="hub"/>
+      <text x="501" y="44" class="t mid">Producer</text>
+      <path d="M501,62 L501,150" class="ln-acc arrow-acc"/>
+      <text x="20" y="140" class="m">topic <tspan class="mono">cdr.voice</tspan> · partition 0</text>
+      <g class="cells" data-x="20" data-y="160" data-w="46" data-h="56" data-gap="6" data-offy="240"
+         data-items='[["","k0"],["","k1"],["","k0"],["","k2"],["","k1"],["","k3"],["","k0"],["","k2"],["","k1"]]'></g>
+      <rect x="488" y="160" width="46" height="56" rx="7" class="k3 new-cell"/>
+      <text x="511" y="240" class="off-t">9</text>
+      <!-- consumer bookmarks -->
+      <g>
+        <animateTransform attributeName="transform" type="translate" values="0 0;52 0;104 0;156 0" dur="6s" calcMode="discrete" repeatCount="indefinite"/>
+        <path d="M199,254 l-10,16 h20 z" class="d2"/>
+        <rect x="149" y="274" width="100" height="30" rx="8" class="k2"/>
+        <text x="199" y="294" class="cell-t">group: billing</text>
+      </g>
+      <g>
+        <animateTransform attributeName="transform" type="translate" values="0 0;52 0;104 0;52 0" dur="4s" calcMode="discrete" repeatCount="indefinite"/>
+        <path d="M303,254 l-10,16 h20 z" class="d4"/>
+        <rect x="258" y="310" width="90" height="30" rx="8" class="k4"/>
+        <line x1="303" y1="270" x2="303" y2="310" class="ln-soft"/>
+        <text x="303" y="330" class="cell-t">group: fraud</text>
+      </g>
+      <text x="20" y="372" class="m">Reading doesn't delete anything. Each group just moves its own bookmark (offset).</text>
+    </svg>
+  </div>
+  <aside class="notes">Welcome. Most of the audience knows IBM MQ. Promise: by the end of this module they can explain why Kafka is a log, not a queue, and they will have run Kafka locally. Point at the animation: the producer only appends, and two groups read the same data independently.</aside>
+</section>
+
+<!-- ===================== 2. AGENDA ===================== -->
+<section class="slide" data-title="Agenda">
+  <div class="kicker">Today's route</div>
+  <h2>Six stops from <span class="hl">messaging basics</span> to a running cluster</h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 250" role="img" aria-label="Agenda as a metro line with seven stops">
+      <path id="metro" d="M60,125 L1098,125" style="stroke: var(--accent); stroke-width: 8; stroke-linecap: round; fill: none; opacity: .25"/>
+      <path d="M60,125 L1098,125" style="stroke: var(--accent); stroke-width: 8; stroke-linecap: round; fill: none; stroke-dasharray: 1 22"/>
+      <circle r="9" class="d1"><animateMotion dur="8s" repeatCount="indefinite"><mpath href="#metro"/></animateMotion></circle>
+      <g id="stops"></g>
+    </svg>
+    <div style="margin-top:6px">
+      <div class="kicker" style="color:var(--muted)">Where Module 1 sits in the 40-hour course</div>
+      <div class="modmap">
+        <div class="mod now"><b>M1</b>Messaging &amp; Kafka fundamentals</div>
+        <div class="mod"><b>M2</b>Install, setup &amp; CLI</div>
+        <div class="mod"><b>M3</b>Config, storage &amp; retention</div>
+        <div class="mod"><b>M4</b>Producing &amp; consuming</div>
+        <div class="mod"><b>M5</b>Cluster ops &amp; HA</div>
+        <div class="mod"><b>M6</b>Confluent platform</div>
+        <div class="mod"><b>M7</b>Security &amp; RBAC</div>
+        <div class="mod"><b>M8</b>Monitoring &amp; tuning</div>
+        <div class="mod"><b>M9</b>Troubleshooting &amp; message loss</div>
+        <div class="mod"><b>M10</b>Ecosystem, DR &amp; capstone</div>
+      </div>
+      <div class="bands">
+        <div style="border-color:var(--p0);color:var(--p0)">Model</div>
+        <div style="border-color:var(--p1);color:var(--p1)">Apache Kafka administration</div>
+        <div style="border-color:var(--p4);color:var(--p4)">Confluent Kafka</div>
+        <div style="border-color:var(--p2);color:var(--p2)">Capstone</div>
+      </div>
+    </div>
+  </div>
+  <aside class="notes">Walk the route quickly. Stress that Modules 2–10 all assume this model: partitions, offsets, replication and retention come back in every lab.</aside>
+</section>
+
+<!-- ===================== 3. WHY MESSAGING ===================== -->
+<section class="slide" data-title="Why messaging">
+  <div class="kicker">Topic 1 · Messaging recap</div>
+  <h2>Why messaging? <span class="hl">Decouple</span> the systems that talk</h2>
+  <div class="body">
+    <div class="grid2">
+      <div class="panel">
+        <h3><span class="pill" style="background:var(--bad-soft);color:var(--bad)">Before</span> Point-to-point integration</h3>
+        <svg viewBox="0 0 520 262" role="img" aria-label="Four sources each wired to four targets: sixteen connections">
+          <g id="n-by-m"></g>
+          <text x="260" y="258" class="t mid bad-t">4 sources × 4 targets = 16 integrations to build and run</text>
+        </svg>
+      </div>
+      <div class="panel">
+        <h3><span class="pill" style="background:var(--ok-soft);color:var(--ok)">After</span> A central event backbone</h3>
+        <svg viewBox="0 0 520 262" role="img" aria-label="Four sources and four targets connected through one hub: eight connections">
+          <g id="n-plus-m"></g>
+          <text x="260" y="258" class="t mid ok-t">4 + 4 = 8 connections. Add a consumer without touching producers</text>
+        </svg>
+      </div>
+    </div>
+    <div class="decouple">
+      <div class="card"><h3><span class="num" style="background:var(--p0)">1</span>Time</h3><p>The sender doesn't wait. The receiver can be down and catch up later.</p></div>
+      <div class="card"><h3><span class="num" style="background:var(--p1)">2</span>Space</h3><p>The sender doesn't know who receives, or where they run.</p></div>
+      <div class="card"><h3><span class="num" style="background:var(--p2)">3</span>Rate</h3><p>Bursts are absorbed. Fast producers don't overwhelm slow consumers.</p></div>
+      <div class="card"><h3><span class="num" style="background:var(--p3)">4</span>Technology</h3><p>Java, Python, mainframe, DB: they share a message format, nothing else.</p></div>
+    </div>
+  </div>
+  <aside class="notes">Ask the room: how many point-to-point interfaces does your billing system have today? The N×M to N+M argument is why an event backbone exists at all.</aside>
+</section>
+
+<!-- ===================== 4. QUEUE vs PUB/SUB ===================== -->
+<section class="slide" data-title="Queue vs pub/sub">
+  <div class="kicker">Topic 1 · Messaging recap</div>
+  <h2>Two classic models: <span class="hl">queue</span> vs <span class="hl">publish–subscribe</span></h2>
+  <div class="body">
+    <div class="grid2">
+      <div class="panel">
+        <h3>Point-to-point queue</h3>
+        <p class="cap">Each message goes to <b>exactly one</b> consumer. Competing consumers share the work.</p>
+        <svg viewBox="0 0 540 250" role="img" aria-label="Queue: three messages each delivered to a different single consumer">
+          <rect x="10" y="100" width="100" height="50" rx="10" class="box"/><text x="60" y="130" class="t mid">Producer</text>
+          <rect x="170" y="95" width="160" height="60" rx="30" class="hub"/><text x="250" y="130" class="t mid">Queue</text>
+          <path d="M110,125 L168,125" class="ln arrow"/>
+          <g class="consumers" data-x="420" data-label="Consumer"></g>
+          <path d="M330,125 C 380,125 380,40 418,40" class="ln-soft arrow"/>
+          <path d="M330,125 L418,125" class="ln-soft arrow"/>
+          <path d="M330,125 C 380,125 380,210 418,210" class="ln-soft arrow"/>
+          <circle r="8" class="d0"><animateMotion dur="3s" begin="0s" repeatCount="indefinite" path="M110,125 L330,125 C 380,125 380,40 420,40"/></circle>
+          <circle r="8" class="d1"><animateMotion dur="3s" begin="-1s" repeatCount="indefinite" path="M110,125 L330,125 L420,125"/></circle>
+          <circle r="8" class="d2"><animateMotion dur="3s" begin="-2s" repeatCount="indefinite" path="M110,125 L330,125 C 380,125 380,210 420,210"/></circle>
+        </svg>
+        <div class="foot-note">IBM MQ local queue · JMS queue · work distribution, commands</div>
+      </div>
+      <div class="panel">
+        <h3>Publish–subscribe topic</h3>
+        <p class="cap">Each message goes to <b>every</b> subscriber. Each gets its own copy.</p>
+        <svg viewBox="0 0 540 250" role="img" aria-label="Pub/sub: every message copied to all three subscribers">
+          <rect x="10" y="100" width="100" height="50" rx="10" class="box"/><text x="60" y="130" class="t mid">Publisher</text>
+          <rect x="170" y="95" width="160" height="60" rx="30" class="hub"/><text x="250" y="130" class="t mid">Topic</text>
+          <path d="M110,125 L168,125" class="ln arrow"/>
+          <g class="consumers" data-x="420" data-label="Subscriber"></g>
+          <path d="M330,125 C 380,125 380,40 418,40" class="ln-soft arrow"/>
+          <path d="M330,125 L418,125" class="ln-soft arrow"/>
+          <path d="M330,125 C 380,125 380,210 418,210" class="ln-soft arrow"/>
+          <g id="pubsub-dots"></g>
+        </svg>
+        <div class="foot-note">IBM MQ topics · JMS topics · notifications, fan-out</div>
+      </div>
+    </div>
+    <div class="callout" style="margin-top:16px">
+      <span class="big">Kafka does both.</span>
+      <span>Consumers <b>in the same group</b> share partitions like a queue. <b>Different groups</b> each get every message, like pub/sub. More on slide 9.</span>
+    </div>
+  </div>
+  <aside class="notes">Watch the colours: on the left, each colour lands on ONE consumer. On the right, each colour lands on ALL of them. Kafka's consumer groups combine both.</aside>
+</section>
+
+<!-- ===================== 5. MQ vs KAFKA ===================== -->
+<section class="slide" data-title="IBM MQ vs Kafka">
+  <div class="kicker">Topic 1 · Comparison with IBM MQ</div>
+  <h2>IBM MQ is a <span class="hl">mailbox</span>. Kafka is a <span class="hl">ledger</span>.</h2>
+  <div class="body" style="display:grid;grid-template-columns:500px 1fr;gap:22px">
+    <div class="stack">
+      <div class="panel" style="padding:12px 16px">
+        <h3 style="font-size:17px">Mailbox: read = remove</h3>
+        <svg viewBox="0 0 470 118" role="img" aria-label="A queue where each consumed message disappears">
+          <g class="cells" data-x="10" data-y="30" data-w="52" data-h="46" data-gap="6"
+             data-items='[["m4","k0"],["m3","k0"],["m2","k0"]]'></g>
+          <rect x="184" y="30" width="52" height="46" rx="7" class="k0">
+            <animate attributeName="opacity" values="1;0;1" keyTimes="0;.35;.95" dur="3s" calcMode="discrete" repeatCount="indefinite"/>
+          </rect>
+          <text x="210" y="58" class="cell-t">m1<animate attributeName="opacity" values="1;0;1" keyTimes="0;.35;.95" dur="3s" calcMode="discrete" repeatCount="indefinite"/></text>
+          <circle r="7" class="d0" opacity="0">
+            <animateMotion dur="3s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;.35;.7;1" calcMode="linear" path="M236,53 L350,53"/>
+            <animate attributeName="opacity" values="0;1;0" keyTimes="0;.35;.7" dur="3s" calcMode="discrete" repeatCount="indefinite"/>
+          </circle>
+          <path d="M240,53 L350,53" class="ln-soft arrow"/>
+          <rect x="355" y="30" width="105" height="46" rx="10" class="box"/><text x="407" y="58" class="t mid">Consumer</text>
+          <text x="10" y="108" class="m">Once acknowledged the message is gone. There's no replay.</text>
+        </svg>
+      </div>
+      <div class="panel" style="padding:12px 16px">
+        <h3 style="font-size:17px">Ledger: read = move a bookmark</h3>
+        <svg viewBox="0 0 470 130" role="img" aria-label="A log where records stay and two groups hold separate bookmarks">
+          <g class="cells" data-x="10" data-y="14" data-w="52" data-h="46" data-gap="6" data-offy="76"
+             data-items='[["","k0"],["","k1"],["","k2"],["","k0"],["","k3"],["","k1"],["","k2"],["","k0"]]'></g>
+          <path d="M152,82 l-8,13 h16 z" class="d2"/><text x="152" y="112" class="cell-t" style="fill:var(--p2)">billing @ 2</text>
+          <path d="M326,82 l-8,13 h16 z" class="d4"/><text x="326" y="112" class="cell-t" style="fill:var(--p4)">fraud @ 5</text>
+          <text x="10" y="128" class="m">Records stay until retention. Any group can rewind and replay.</text>
+        </svg>
+      </div>
+      <div class="callout warn" style="padding:10px 14px;font-size:14.5px">
+        <span class="big" style="font-size:20px">MQ admins:</span>
+        <span>queue depth ≈ <b>consumer lag</b>. Kafka's disk always fills up to retention, so disk usage tells you nothing about consumer health.</span>
+      </div>
+    </div>
+    <table class="cmp">
+      <thead><tr><th>Dimension</th><th>IBM MQ / traditional</th><th>Apache Kafka</th></tr></thead>
+      <tbody>
+        <tr><td>Core abstraction</td><td>Queue of messages</td><td class="k">Partitioned, append-only log</td></tr>
+        <tr><td>Reading</td><td>Destructive: removed on ack</td><td class="k">Non-destructive: kept until retention</td></tr>
+        <tr><td>Delivery</td><td>Broker pushes / hands out</td><td class="k">Consumer pulls in batches</td></tr>
+        <tr><td>Who tracks position</td><td>Broker, per message</td><td class="k">Consumer group, one offset per partition</td></tr>
+        <tr><td>Replay</td><td>Not native</td><td class="k">Reset offsets and re-read</td></tr>
+        <tr><td>Ordering</td><td>Per queue</td><td class="k">Per partition</td></tr>
+        <tr><td>Scaling</td><td>Scale the queue manager up</td><td class="k">Add partitions and brokers</td></tr>
+        <tr><td>Throughput</td><td>~10³–10⁴ msg/s per QM</td><td class="k">~10⁵–10⁶ msg/s per cluster</td></tr>
+        <tr><td>Best fit</td><td>Transactions (XA), commands, request/reply</td><td class="k">Event streams, fan-out, replay, pipelines</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <aside class="notes">This is the slide that saves MQ admins the most pain. Three questions people ask in week one: "why is the message still there?", "why can't more consumers go faster?", "why did ordering break?" The ledger model answers all three.</aside>
+</section>
+
+<!-- ===================== 6. KAFKA OVERVIEW ===================== -->
+<section class="slide" data-title="Kafka overview">
+  <div class="kicker">Topic 2 · Kafka overview &amp; use cases</div>
+  <h2>What is Kafka? An <span class="hl">event backbone</span></h2>
+  <div class="body" style="display:grid;grid-template-columns:470px 1fr;gap:26px">
+    <div>
+      <p class="quote">A <em>distributed</em>, <em>replicated</em>, <em>append-only log</em> of events that many applications write to and read from.</p>
+      <div class="card">
+        <div class="kicker" style="color:var(--muted)">Anatomy of an event (record)</div>
+        <div class="event">
+          <div><span class="f">key</span><span class="v" style="color:var(--p0)">"966500000001"</span></div>
+          <div><span class="f">value</span><span class="v">{"type":"call-end","sec":312}</span></div>
+          <div><span class="f">timestamp</span><span class="v">2026-09-28T09:14:05Z</span></div>
+          <div><span class="f">headers</span><span class="v">source=mediation</span></div>
+          <div><span class="f">offset</span><span class="v" style="color:var(--p1)">42</span> <span style="color:var(--muted)">← assigned by the broker</span></div>
+        </div>
+      </div>
+      <div class="usecases">
+        <span>Messaging</span><span>Activity tracking</span><span>Log aggregation</span><span>Metrics</span>
+        <span>Stream processing</span><span>Event sourcing</span><span>CDC</span><span>Integration hub</span>
+      </div>
+    </div>
+    <div class="panel" style="align-self:start">
+      <h3 style="font-size:17px">Telecom example: CDRs, CRM and apps feeding many consumers</h3>
+      <svg viewBox="0 0 640 390" role="img" aria-label="Sources flowing into a Kafka hub and out to billing, fraud, data lake and dashboards">
+        <g id="hub-diagram"></g>
+      </svg>
+    </div>
+  </div>
+  <aside class="notes">An event is a fact that happened: a call ended, a SIM was activated. The key matters. It decides the partition, which we'll see shortly. Use cases: map each to something they run today.</aside>
+</section>
+
+<!-- ===================== 7. ECOSYSTEM ===================== -->
+<section class="slide" data-title="Ecosystem">
+  <div class="kicker">Topic 3 · The Kafka ecosystem</div>
+  <h2>The cast: producers, brokers, topics, partitions, consumers</h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 330" role="img" aria-label="Producers write to topics whose partitions are spread over three brokers; consumer groups read them">
+      <g id="eco"></g>
+    </svg>
+    <div class="legend5">
+      <div class="card" style="border-top-color:var(--p1)"><h3>Producer</h3><p>App that writes events to a topic. It picks the partition, usually from the key.</p></div>
+      <div class="card" style="border-top-color:var(--accent)"><h3>Broker</h3><p>A Kafka server. Stores partitions on disk and serves clients on <code>:9092</code>.</p></div>
+      <div class="card" style="border-top-color:var(--p3)"><h3>Topic</h3><p>A named stream of events, e.g. <code>cdr.voice</code>. Logical only, never stored whole on one broker.</p></div>
+      <div class="card" style="border-top-color:var(--p2)"><h3>Partition</h3><p>An ordered, append-only log. The unit of <b>scale</b>, <b>ordering</b> and <b>replication</b>.</p></div>
+      <div class="card" style="border-top-color:var(--p4)"><h3>Consumer group</h3><p>Consumers that share the work of reading a topic. Each group keeps its own offsets.</p></div>
+    </div>
+  </div>
+  <aside class="notes">A topic is a logical name; partitions are physical. Topic cdr.voice here has 3 partitions spread over 3 brokers, which is how Kafka scales out. Producers never talk to "the topic"; they write to a partition leader.</aside>
+</section>
+
+<!-- ===================== 8. PARTITIONS & KEYS ===================== -->
+<section class="slide" data-title="Partitions & keys">
+  <div class="kicker">Topic 3 · Topics &amp; partitions</div>
+  <h2>The <span class="hl">key</span> picks the partition. The partition keeps the order.</h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 320" role="img" aria-label="Keyed records are hashed to three partitions; the same key always lands in the same partition">
+      <g id="records"></g>
+      <rect x="330" y="115" width="200" height="90" rx="16" class="hub"/>
+      <text x="430" y="152" class="t mid">Partitioner</text>
+      <text x="430" y="180" class="mid mono" style="font-size:15px;fill:var(--accent)">hash(key) % 3</text>
+      <path d="M530,160 C 580,160 580,60 632,60" class="ln arrow"/>
+      <path d="M530,160 L632,160" class="ln arrow"/>
+      <path d="M530,160 C 580,160 580,260 632,260" class="ln arrow"/>
+      <text x="560" y="12" class="m">topic cdr.voice</text>
+      <text x="612" y="66" class="t end">P0</text><text x="612" y="166" class="t end">P1</text><text x="612" y="266" class="t end">P2</text>
+      <g class="cells" data-x="640" data-y="38" data-w="48" data-h="44" data-gap="4" data-offy="32" data-offabove="1"
+         data-items='[["","kx"],["","kx"],["","kx"],["002\nstart","k1"],["002\nend","k1"]]'></g>
+      <g class="cells" data-x="640" data-y="138" data-w="48" data-h="44" data-gap="4" data-offy="132" data-offabove="1"
+         data-items='[["","kx"],["","kx"],["","kx"],["","kx"],["","kx"],["001\nstart","k0"],["001\nend","k0"]]'></g>
+      <g class="cells" data-x="640" data-y="238" data-w="48" data-h="44" data-gap="4" data-offy="232" data-offabove="1"
+         data-items='[["","kx"],["","kx"],["003\nsms","k2"]]'></g>
+      <text x="1000" y="304" class="m end">Offsets are per partition, so P1 offset 5 ≠ P0 offset 5</text>
+    </svg>
+    <div class="cards4">
+      <div class="card"><p><b>Same key → same partition.</b> Every event for one subscriber stays in order.</p></div>
+      <div class="card"><p><b>Order is per partition</b>, never across the whole topic.</p></div>
+      <div class="card"><p><b>No key?</b> Records are spread across partitions in batches (sticky partitioner).</p></div>
+      <div class="card"><p><b>Adding partitions later</b> remaps keys. Size topics up front (Module 3).</p></div>
+    </div>
+  </div>
+  <aside class="notes">Colour = subscriber (MSISDN key). call-start and call-end for 001 always land in P1, in order. If you need global order you need ONE partition, and then you give up parallelism.</aside>
+</section>
+
+<!-- ===================== 9. CONSUMER GROUPS ===================== -->
+<section class="slide" data-title="Consumer groups">
+  <div class="kicker">Topic 3 · Consumers &amp; consumer groups</div>
+  <h2>Consumer groups: <span class="hl">queue</span> inside, <span class="hl">pub/sub</span> across</h2>
+  <div class="body" style="display:grid;grid-template-columns:700px 1fr;gap:26px">
+    <svg viewBox="0 0 700 420" role="img" aria-label="Three partitions read by group billing with four consumers, one idle, and group fraud with a single consumer">
+      <g id="groups"></g>
+    </svg>
+    <div class="stack">
+      <div class="rule"><span class="ico" style="background:var(--p2)">1</span><div><h3>Within a group, one partition → one consumer</h3><p>That's how Kafka keeps per-partition order while scaling out.</p></div></div>
+      <div class="rule"><span class="ico" style="background:var(--bad)">!</span><div><h3>More consumers than partitions = idle consumers</h3><p><b>C4</b> gets nothing. Partitions cap parallelism.</p></div></div>
+      <div class="rule"><span class="ico" style="background:var(--p4)">2</span><div><h3>Every group reads everything</h3><p><b>billing</b> and <b>fraud</b> each see all records, at their own pace, with their own offsets.</p></div></div>
+      <div class="rule"><span class="ico" style="background:var(--p3)">↻</span><div><h3>Rebalance</h3><p>When a consumer joins, leaves or crashes, the group reassigns partitions (Module 4).</p></div></div>
+      <div class="callout" style="padding:10px 14px;font-size:14.5px"><span>MQ mapping: <b>a group ≈ a durable subscription</b>. Several consumers in it ≈ competing consumers on a queue.</span></div>
+    </div>
+  </div>
+  <aside class="notes">Classic interview question: 3 partitions, 4 consumers in a group, how many are busy? Three. Want more throughput? Add partitions first, then consumers.</aside>
+</section>
+
+<!-- ===================== 10. REPLICATION ===================== -->
+<section class="slide" data-title="Replication">
+  <div class="kicker">Topic 4 · Architecture: cluster design &amp; replicas</div>
+  <h2>Replication: one <span class="hl">leader</span>, several <span class="hl">followers</span>, per partition</h2>
+  <div class="body" style="display:grid;grid-template-columns:690px 1fr;gap:24px">
+    <svg viewBox="0 0 760 400" role="img" aria-label="Three brokers; each partition has a leader on one broker and followers on the other two">
+      <g id="repl"></g>
+    </svg>
+    <div class="stack">
+      <div class="card">
+        <h3>ISR: in-sync replicas</h3>
+        <p>The leader plus the followers that are caught up. If the leader's broker dies, the controller promotes a follower <b>from the ISR</b>, so no committed data is lost.</p>
+      </div>
+      <div class="card">
+        <h3>Durability baseline</h3>
+        <div class="baseline">
+          <div><b>3</b><span>replication.factor</span></div>
+          <div><b>2</b><span>min.insync.replicas</span></div>
+          <div><b>all</b><span>acks</span></div>
+        </div>
+        <p style="margin-top:8px">You survive one broker loss with no data loss and no write outage.</p>
+      </div>
+      <div class="term"><span class="c">$ kafka-topics.sh --describe --topic cdr.voice</span>
+<span class="h">Partition: 0</span>  Leader: <span class="y">1</span>  Replicas: 1,2,3  Isr: <span class="p">1,2,3</span>
+<span class="h">Partition: 1</span>  Leader: <span class="y">2</span>  Replicas: 2,3,1  Isr: <span class="p">2,3,1</span>
+<span class="h">Partition: 2</span>  Leader: <span class="y">3</span>  Replicas: 3,1,2  Isr: <span class="p">3,1,2</span></div>
+    </div>
+  </div>
+  <aside class="notes">Leaders are spread so every broker does its share of the work. Clients produce to and consume from leaders; followers just fetch. Broker failure and reassignment are hands-on in Module 5; acks and min.insync.replicas are tested in Module 3.</aside>
+</section>
+
+<!-- ===================== 11. OFFSETS ===================== -->
+<section class="slide" data-title="Offsets">
+  <div class="kicker">Topic 4 · Architecture: offsets</div>
+  <h2>Offsets: four markers every admin must read</h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 290" role="img" aria-label="A partition log with log start offset 3, committed offset 8, high watermark 12 and log end offset 14; lag is 4">
+      <g class="cells" data-x="60" data-y="110" data-w="60" data-h="60" data-gap="4" data-offy="102" data-offabove="1"
+         data-items='[["","gone"],["","gone"],["","gone"],["","cons"],["","cons"],["","cons"],["","cons"],["","cons"],["","lag"],["","lag"],["","lag"],["","lag"],["","unrep"],["","unrep"],["","ghost"],["","ghost"]]'></g>
+      <!-- markers above -->
+      <line x1="250" y1="46" x2="250" y2="182" style="stroke:var(--bad);stroke-width:2.5"/>
+      <text x="256" y="44" class="t bad-t">Log start offset = 3</text>
+      <line x1="826" y1="46" x2="826" y2="182" style="stroke:var(--accent);stroke-width:2.5"/>
+      <text x="820" y="44" class="t end acc">High watermark = 12</text>
+      <line x1="954" y1="72" x2="954" y2="182" style="stroke:var(--muted);stroke-width:2.5"/>
+      <text x="960" y="72" class="t" style="fill:var(--muted)">Log end offset = 14 <tspan class="m">(next write)</tspan></text>
+      <!-- committed below -->
+      <line x1="570" y1="100" x2="570" y2="222" style="stroke:var(--ok);stroke-width:2.5"/>
+      <text x="562" y="220" class="t end ok-t">Committed offset = 8 (group billing)</text>
+      <!-- lag bracket -->
+      <path d="M574,190 v8 H822 v-8" style="stroke:var(--warn);stroke-width:2;fill:none"/>
+      <text x="698" y="220" class="t mid warn-t">lag = 12 − 8 = 4</text>
+      <!-- producer arrow at LEO -->
+      <!-- legend -->
+      <g transform="translate(60,252)">
+        <rect width="18" height="18" rx="4" class="gone"/><text x="26" y="14" class="m">deleted by retention</text>
+        <rect x="190" width="18" height="18" rx="4" class="cons"/><text x="216" y="14" class="m">read &amp; committed</text>
+        <rect x="370" width="18" height="18" rx="4" class="lag"/><text x="396" y="14" class="m">lag: available, not yet read</text>
+        <rect x="610" width="18" height="18" rx="4" class="unrep"/><text x="636" y="14" class="m">not yet on all ISR, invisible to consumers</text>
+        <rect x="940" width="18" height="18" rx="4" class="ghost"/><text x="966" y="14" class="m">future</text>
+      </g>
+    </svg>
+    <div class="cards4">
+      <div class="card"><p><b>Log start offset</b>: oldest record still on disk. It moves forward as retention deletes segments.</p></div>
+      <div class="card"><p><b>Committed offset</b>: where a group resumes. Stored per group and partition in <code>__consumer_offsets</code>.</p></div>
+      <div class="card"><p><b>High watermark</b>: replicated to all ISR. Consumers only read below it.</p></div>
+      <div class="card"><p><b>Consumer lag</b>: HW − committed. It's the #1 health metric (Module 8), your new "queue depth".</p></div>
+    </div>
+  </div>
+  <aside class="notes">Offsets are sequential per partition and never reused. In Lab 02 learners will see CURRENT-OFFSET, LOG-END-OFFSET and LAG columns in kafka-consumer-groups.sh --describe. Map them to this picture.</aside>
+</section>
+
+<!-- ===================== 12. RETENTION & COMPACTION ===================== -->
+<section class="slide" data-title="Retention & compaction">
+  <div class="kicker">Topic 5 · Message retention &amp; compaction</div>
+  <h2>How data leaves the log: <span class="hl">delete</span> or <span class="hl">compact</span></h2>
+  <div class="body">
+    <div class="grid2">
+      <div class="panel">
+        <h3><span class="tag">cleanup.policy=delete</span> Time/size retention</h3>
+        <p class="cap">Old <b>segments</b> are dropped once they pass <code>retention.ms</code> (default 7 days) or <code>retention.bytes</code>, <b>consumed or not</b>.</p>
+        <svg viewBox="0 0 540 250" role="img" aria-label="Five log segments; the two older than seven days are deleted">
+          <g id="segments"></g>
+        </svg>
+        <div class="foot-note">Use for event streams: <code>cdr.voice</code>, logs, clickstreams</div>
+      </div>
+      <div class="panel">
+        <h3><span class="tag">cleanup.policy=compact</span> Keep latest per key</h3>
+        <p class="cap">The log cleaner keeps only the <b>newest value for each key</b>. A <b>null value</b> (tombstone ∅) deletes the key.</p>
+        <svg viewBox="0 0 540 250" role="img" aria-label="Seven keyed records compacted to the latest value per key">
+          <text x="20" y="16" class="m">Before</text>
+          <g class="cells" data-x="20" data-y="40" data-w="66" data-h="48" data-gap="6" data-offy="34" data-offabove="1"
+             data-items='[["001\nBasic","k0"],["002\nGold","k1"],["001\nSilver","k0"],["003\nBasic","k2"],["002\n∅","tomb"],["001\nGold","k0"],["004\nGold","k3"]]'></g>
+          <path d="M270,98 L270,140" class="ln-acc arrow-acc"/>
+          <text x="282" y="124" class="m acc">log cleaner</text>
+          <text x="20" y="146" class="m">After</text>
+          <g class="cells" data-x="20" data-y="170" data-w="66" data-h="48" data-gap="6" data-offy="164" data-offabove="1"
+             data-items='[["","ghost"],["","ghost"],["","ghost"],["003\nBasic","k2"],["002\n∅","tomb"],["001\nGold","k0"],["004\nGold","k3"]]'></g>
+          <text x="20" y="240" class="m">Offsets never change. Tombstones are removed later (delete.retention.ms).</text>
+        </svg>
+        <div class="foot-note">Use for state: subscriber profiles, config, <code>__consumer_offsets</code></div>
+      </div>
+    </div>
+  </div>
+  <aside class="notes">Retention is per segment, not per message. There is no per-message TTL like MQ expiry. Only the active segment is written to, and it is never deleted. Lab 03 shows both policies with a 15-second retention check.</aside>
+</section>
+
+<!-- ===================== 13. ZOOKEEPER vs KRAFT ===================== -->
+<section class="slide" data-title="ZooKeeper vs KRaft">
+  <div class="kicker">Topic 6 · ZooKeeper vs KRaft</div>
+  <h2>Metadata moved <span class="hl">inside Kafka</span>: goodbye ZooKeeper</h2>
+  <div class="body">
+    <div class="grid2">
+      <div class="panel" style="padding:12px 16px">
+        <h3 style="font-size:18px"><span class="pill" style="background:var(--surface-2);color:var(--muted)">Legacy</span> ZooKeeper mode</h3>
+        <svg viewBox="0 0 540 250" role="img" aria-label="Brokers depend on a separate ZooKeeper ensemble; one broker is the controller">
+          <g id="zk"></g>
+        </svg>
+      </div>
+      <div class="panel" style="padding:12px 16px">
+        <h3 style="font-size:18px"><span class="pill">Today</span> KRaft mode</h3>
+        <svg viewBox="0 0 540 250" role="img" aria-label="A Raft quorum of controllers stores metadata in a Kafka log; brokers fetch from it">
+          <g id="kraft"></g>
+        </svg>
+      </div>
+    </div>
+    <div class="timeline">
+      <div class="ev"><b>2019</b><span>KIP-500 proposes removing ZooKeeper</span></div>
+      <div class="ev"><b>2021 · 2.8</b><span>KRaft early access</span></div>
+      <div class="ev"><b>2022 · 3.3</b><span>KRaft production-ready</span></div>
+      <div class="ev"><b>2023 · 3.5</b><span>ZooKeeper deprecated</span></div>
+      <div class="ev"><b>2024 · 3.9</b><span>Last ZK release, the migration bridge</span></div>
+      <div class="ev key"><b>2025 · 4.0</b><span>ZooKeeper removed, KRaft only</span></div>
+    </div>
+  </div>
+  <aside class="notes">Admin takeaways: new clusters are KRaft (Kafka 4.x, Confluent Platform 8.x). Old --zookeeper flags no longer work; use --bootstrap-server. ZK clusters must migrate on 3.x (ideally 3.9) before moving to 4.x. New object to monitor: the controller quorum (kafka-metadata-quorum.sh).</aside>
+</section>
+
+<!-- ===================== 14. HANDS-ON ===================== -->
+<section class="slide" data-title="Hands-on">
+  <div class="kicker">Hands-on · Docker, local Kafka, CLI tools</div>
+  <h2>Your lab: a single-node KRaft cluster in <span class="hl">Docker</span></h2>
+  <div class="body">
+    <div style="display:grid;grid-template-columns:500px 1fr;gap:22px">
+      <svg viewBox="0 0 520 330" role="img" aria-label="Laptop running Docker Desktop with a kafka container, reached from the terminal on localhost:9092 and via docker exec">
+        <rect x="6" y="6" width="508" height="318" rx="16" class="box2"/>
+        <text x="24" y="32" class="t">Your laptop</text>
+        <rect x="24" y="44" width="472" height="186" rx="14" class="frame"/>
+        <text x="40" y="68" class="m acc">Docker Desktop</text>
+        <rect x="40" y="78" width="440" height="140" rx="12" class="box"/>
+        <text x="56" y="100" class="m mono">container: kafka · apache/kafka:4.3.1</text>
+        <rect x="56" y="112" width="210" height="92" rx="10" class="k1"/>
+        <text x="161" y="140" class="t mid">Kafka node</text>
+        <text x="161" y="162" class="cell-t">broker + controller</text>
+        <text x="161" y="182" class="m mid">KRaft combined mode</text>
+        <rect x="282" y="112" width="182" height="92" rx="10" class="k0"/>
+        <text x="373" y="140" class="t mid">CLI tools</text>
+        <text x="373" y="162" class="cell-t mono">/opt/kafka/bin/*.sh</text>
+        <text x="373" y="182" class="m mid">on PATH, $BS set</text>
+        <rect x="24" y="258" width="220" height="50" rx="10" class="box"/>
+        <text x="134" y="288" class="t mid">Terminal / VS Code</text>
+        <path d="M110,258 C 110,232 130,226 140,206" class="ln-acc arrow-acc"/>
+        <text x="30" y="246" class="m mono acc">localhost:9092</text>
+        <path d="M244,283 C 360,283 373,250 373,206" class="ln-acc arrow-acc"/>
+        <text x="385" y="262" class="m mono acc">docker exec</text>
+        <rect x="300" y="290" width="196" height="26" rx="13" class="box2"/>
+        <text x="398" y="308" class="m mid mono">volume: kafka-data</text>
+      </svg>
+      <div class="term"><div class="bar"><i></i><i></i><i></i></div><span class="c"># 1. Start the lab (labs/module-01)</span>
+<span class="p">$</span> docker compose up -d
+<span class="p">$</span> docker exec -it kafka bash
+
+<span class="c"># 2. Create and inspect a 3-partition topic</span>
+<span class="p">$</span> kafka-topics.sh --bootstrap-server <span class="y">$BS</span> --create \
+    --topic <span class="h">cdr.voice</span> --partitions 3 --replication-factor 1
+<span class="p">$</span> kafka-topics.sh --bootstrap-server <span class="y">$BS</span> --describe --topic <span class="h">cdr.voice</span>
+
+<span class="c"># 3. Produce keyed events, consume as group "billing"</span>
+<span class="p">$</span> kafka-console-producer.sh --bootstrap-server <span class="y">$BS</span> --topic <span class="h">cdr.voice</span> \
+    --property parse.key=true --property key.separator=:
+<span class="p">$</span> kafka-console-consumer.sh --bootstrap-server <span class="y">$BS</span> --topic <span class="h">cdr.voice</span> \
+    --group billing --from-beginning --property print.partition=true
+
+<span class="c"># 4. Offsets, lag and the KRaft quorum</span>
+<span class="p">$</span> kafka-consumer-groups.sh --bootstrap-server <span class="y">$BS</span> --describe --group billing
+<span class="p">$</span> kafka-metadata-quorum.sh --bootstrap-server <span class="y">$BS</span> describe --status</div>
+    </div>
+    <div class="labs">
+      <div class="card"><span class="n">01</span><div><h3>Environment setup</h3><p>Docker Desktop, start Kafka, explore the CLI tools.</p></div></div>
+      <div class="card"><span class="n">02</span><div><h3>Partitions, offsets &amp; groups</h3><p>Keys → partitions, replay with a new group, read lag.</p></div></div>
+      <div class="card"><span class="n">03</span><div><h3>Retention, compaction &amp; KRaft</h3><p>Watch segments expire, compact by key, inspect the quorum.</p></div></div>
+    </div>
+  </div>
+  <aside class="notes">Lab files live in labs/module-01. The compose file puts the CLI tools on PATH and defines $BS=localhost:9092 inside the container. Combined broker+controller mode is fine for labs, never for production. Multi-broker clusters come in Module 2.</aside>
+</section>
+
+<!-- ===================== 15. RECAP ===================== -->
+<section class="slide" data-title="Recap">
+  <div class="kicker">Wrap-up</div>
+  <h2>Key takeaways, and a quick self-check</h2>
+  <div class="body recap">
+    <div class="take">
+      <div class="card"><h3><i>01</i>Kafka is a log</h3><p>Reading doesn't delete. Retention or compaction does.</p></div>
+      <div class="card"><h3><i>02</i>Partitions rule</h3><p>They're the unit of order, parallelism and replication. The key picks the partition.</p></div>
+      <div class="card"><h3><i>03</i>Groups = queue + pub/sub</h3><p>Queue inside a group, pub/sub across groups. Consumers beyond the partition count sit idle.</p></div>
+      <div class="card"><h3><i>04</i>Watch the offsets</h3><p>Know log start, committed, HW and LEO. Lag is the health signal.</p></div>
+      <div class="card"><h3><i>05</i>Replicate for safety</h3><p>RF 3 · min.insync.replicas 2 · acks=all. Leaders are elected from the ISR.</p></div>
+      <div class="card"><h3><i>06</i>KRaft only</h3><p>Metadata lives in <code>__cluster_metadata</code> and a Raft quorum. No ZooKeeper in 4.x.</p></div>
+    </div>
+    <div>
+      <div class="quiz">
+        <div class="q"><span class="hint">click to reveal</span>A consumer read a record. Is it deleted from the topic?<div class="a">No. The group's offset moves forward. Only retention or compaction removes data.</div></div>
+        <div class="q"><span class="hint">click to reveal</span>6 partitions, 8 consumers in one group. What happens?<div class="a">6 consumers get one partition each; 2 sit idle.</div></div>
+        <div class="q"><span class="hint">click to reveal</span>Why key every CDR by the subscriber's MSISDN?<div class="a">Same key → same partition → strict order per subscriber.</div></div>
+        <div class="q"><span class="hint">click to reveal</span>Disk on the brokers is 80% full. Are consumers falling behind?<div class="a">You can't tell from disk. Check consumer lag. The log fills up to retention regardless.</div></div>
+      </div>
+      <div class="next"><div><div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;opacity:.85">Next up</div><b>Module 2: Installation, setup &amp; CLI operations</b></div><span style="font-size:26px">→</span></div>
+    </div>
+  </div>
+  <aside class="notes">Run the self-check as a quick poll before revealing each answer. Then move into Lab 01.</aside>
+</section>
+
+</div></div>
+
+<div class="notes-panel" id="notesPanel"><h4>Speaker notes</h4><div id="notesText"></div></div>
+<div class="controls">
+  <button id="prev" aria-label="Previous slide">←</button>
+  <button id="counter" aria-label="Slide number" disabled style="cursor:default"></button>
+  <button id="next" aria-label="Next slide">→</button>
+  <button id="notesBtn" title="Speaker notes (N)">Notes</button>
+  <button id="themeBtn" title="Toggle theme (T)">Theme</button>
+  <button id="fsBtn" title="Fullscreen (F)">⛶</button>
+</div>
+
+<script>
+(function () {
+  const NS = "http://www.w3.org/2000/svg";
+  const el = (tag, attrs = {}, parent, text) => {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (text != null) n.textContent = text;
+    if (parent) parent.appendChild(n);
+    return n;
+  };
+  const txt = (parent, x, y, s, cls, lh = 14) => {
+    const lines = String(s).split("\n");
+    const t = el("text", { x, y: y - ((lines.length - 1) * lh) / 2, class: cls }, parent);
+    lines.forEach((l, i) => el("tspan", { x, dy: i ? lh : 0 }, t, l));
+    return t;
+  };
+  const dot = (parent, cls, path, dur, begin = 0, r = 7) => {
+    const c = el("circle", { r, class: cls }, parent);
+    el("animateMotion", { dur: dur + "s", begin: begin + "s", repeatCount: "indefinite", path }, c);
+    return c;
+  };
+
+  /* ---- Generic log-cell rows: <g class="cells" data-*> ---- */
+  document.querySelectorAll("g.cells").forEach(g => {
+    const x0 = +g.dataset.x, y = +g.dataset.y, w = +g.dataset.w, h = +g.dataset.h, gap = +(g.dataset.gap || 4);
+    const items = JSON.parse(g.dataset.items);
+    items.forEach(([label, cls], i) => {
+      const x = x0 + i * (w + gap);
+      el("rect", { x, y, width: w, height: h, rx: 7, class: cls }, g);
+      if (label) txt(g, x + w / 2, y + h / 2 + 4, label, "cell-t", 14);
+      if (g.dataset.offy) el("text", { x: x + w / 2, y: +g.dataset.offy + (g.dataset.offabove ? 0 : 0), class: "off-t" }, g, i);
+    });
+  });
+
+  /* ---- Consumer stacks for queue / pubsub ---- */
+  document.querySelectorAll("g.consumers").forEach(g => {
+    const x = +g.dataset.x;
+    [40, 125, 210].forEach((cy, i) => {
+      el("rect", { x, y: cy - 20, width: 110, height: 40, rx: 10, class: "box" }, g);
+      el("text", { x: x + 55, y: cy + 5, class: "t mid", style: "font-size:13.5px" }, g, g.dataset.label + " " + (i + 1));
+    });
+  });
+  const ps = document.getElementById("pubsub-dots");
+  const routes = ["C 380,125 380,40 420,40", "L420,125", "C 380,125 380,210 420,210"];
+  [0, 1, 2].forEach(m => routes.forEach(r => dot(ps, "d" + m, "M110,125 L330,125 " + r, 3, -m)));
+
+  /* ---- Agenda metro stops ---- */
+  const stops = [
+    ["Messaging recap", "queues, pub/sub, IBM MQ"], ["Kafka overview", "what it is, use cases"],
+    ["Ecosystem", "producers → consumers"], ["Architecture", "cluster, offsets, replicas"],
+    ["Retention", "delete vs compaction"], ["ZooKeeper → KRaft", "metadata & controllers"], ["Hands-on", "Docker · Kafka · CLI"]
+  ];
+  const sg = document.getElementById("stops");
+  stops.forEach(([a, b], i) => {
+    const x = 60 + i * 173, up = i % 2 === 0, last = i === stops.length - 1;
+    el("circle", { cx: x, cy: 125, r: 22, style: `fill:${last ? "var(--p2)" : "var(--slide)"};stroke:${last ? "var(--p2)" : "var(--accent)"};stroke-width:4` }, sg);
+    el("text", { x, y: 131, class: "t mid", style: `fill:${last ? "#fff" : "var(--accent)"};font-size:17px;font-weight:800` }, sg, last ? "▶" : i + 1);
+    el("text", { x, y: up ? 62 : 188, class: "t mid", style: "font-size:16px" }, sg, a);
+    el("text", { x, y: up ? 82 : 208, class: "m mid", style: "font-size:13.5px" }, sg, b);
+  });
+
+  /* ---- Slide 3: N×M vs N+M ---- */
+  const srcs = ["Probes", "CRM", "Mobile app", "IBM MQ"], tgts = ["Billing", "Fraud", "Data lake", "Dashboards"];
+  const ys = [20, 76, 132, 188];
+  function sides(g) {
+    ys.forEach((y, i) => {
+      el("rect", { x: 10, y, width: 100, height: 38, rx: 9, class: "k1" }, g); el("text", { x: 60, y: y + 24, class: "cell-t", style: "font-size:13px" }, g, srcs[i]);
+      el("rect", { x: 410, y, width: 100, height: 38, rx: 9, class: "k2" }, g); el("text", { x: 460, y: y + 24, class: "cell-t", style: "font-size:13px" }, g, tgts[i]);
+    });
+  }
+  const nm = document.getElementById("n-by-m");
+  ys.forEach(a => ys.forEach(b => el("path", { d: `M110,${a + 19} L410,${b + 19}`, style: "stroke:var(--bad);stroke-width:1.4;opacity:.55;fill:none" }, nm)));
+  sides(nm);
+  const np = document.getElementById("n-plus-m");
+  ys.forEach(a => el("path", { d: `M110,${a + 19} C 160,${a + 19} 170,123 205,123`, class: "ln" }, np));
+  ys.forEach(b => el("path", { d: `M315,123 C 350,123 360,${b + 19} 410,${b + 19}`, class: "ln arrow" }, np));
+  el("rect", { x: 205, y: 88, width: 110, height: 70, rx: 16, class: "hub" }, np);
+  el("text", { x: 260, y: 119, class: "t mid acc" }, np, "Kafka");
+  el("text", { x: 260, y: 138, class: "m mid" }, np, "event backbone");
+  sides(np);
+  ys.forEach((a, i) => dot(np, "d" + i, `M110,${a + 19} C 160,${a + 19} 170,123 205,123 L315,123 C 350,123 360,${ys[(i + 1) % 4] + 19} 410,${ys[(i + 1) % 4] + 19}`, 4, -i, 6));
+
+  /* ---- Slide 6: hub diagram ---- */
+  const hub = document.getElementById("hub-diagram");
+  const hs = [["Network probes", "CDRs / xDRs"], ["CRM / BSS DB", "change data capture"], ["Mobile app", "user events"], ["IBM MQ", "existing flows"]];
+  const ht = [["Billing & rating", "group: billing"], ["Fraud detection", "stream processing"], ["Data lake / DWH", "Kafka Connect"], ["Live dashboards", "real-time KPIs"]];
+  const hy = [30, 120, 210, 300];
+  hy.forEach((y, i) => {
+    el("path", { d: `M170,${y + 25} C 220,${y + 25} 220,195 262,195`, class: "ln" }, hub);
+    el("path", { d: `M378,195 C 420,195 420,${y + 25} 468,${y + 25}`, class: "ln arrow" }, hub);
+  });
+  el("rect", { x: 262, y: 140, width: 116, height: 110, rx: 18, class: "hub" }, hub);
+  el("text", { x: 320, y: 186, class: "t mid acc", style: "font-size:18px;font-weight:800" }, hub, "Kafka");
+  el("text", { x: 320, y: 207, class: "m mid" }, hub, "durable, ordered,");
+  el("text", { x: 320, y: 223, class: "m mid" }, hub, "replayable");
+  hy.forEach((y, i) => {
+    el("rect", { x: 10, y, width: 160, height: 50, rx: 10, class: "k1" }, hub);
+    el("text", { x: 90, y: y + 22, class: "cell-t", style: "font-size:13.5px" }, hub, hs[i][0]);
+    el("text", { x: 90, y: y + 39, class: "m mid", style: "font-size:11.5px" }, hub, hs[i][1]);
+    el("rect", { x: 470, y, width: 160, height: 50, rx: 10, class: "k2" }, hub);
+    el("text", { x: 550, y: y + 22, class: "cell-t", style: "font-size:13.5px" }, hub, ht[i][0]);
+    el("text", { x: 550, y: y + 39, class: "m mid", style: "font-size:11.5px" }, hub, ht[i][1]);
+    dot(hub, "d1", `M170,${y + 25} C 220,${y + 25} 220,195 262,195`, 2.4, -i * 0.6, 6);
+    dot(hub, "d2", `M378,195 C 420,195 420,${y + 25} 468,${y + 25}`, 2.4, -i * 0.6 - 1.2, 6);
+  });
+  el("text", { x: 320, y: 382, class: "m mid" }, hub, "Producers never know who consumes. New consumers can replay history.");
+
+  /* ---- Slide 7: ecosystem ---- */
+  const eco = document.getElementById("eco");
+  const prods = [["Mediation", "CDRs"], ["CRM DB", "CDC"], ["Self-care app", "events"]];
+  const py = [60, 165, 270];
+  el("rect", { x: 250, y: 5, width: 610, height: 320, rx: 18, class: "frame" }, eco);
+  el("text", { x: 270, y: 30, class: "t acc" }, eco, "Kafka cluster");
+  prods.forEach(([a, b], i) => {
+    el("rect", { x: 10, y: py[i] - 25, width: 190, height: 50, rx: 10, class: "k1" }, eco);
+    el("text", { x: 105, y: py[i] - 3, class: "cell-t", style: "font-size:14px" }, eco, a);
+    el("text", { x: 105, y: py[i] + 14, class: "m mid" }, eco, "producer · " + b);
+    el("path", { d: `M200,${py[i]} L248,${py[i]}`, class: "ln arrow" }, eco);
+  });
+  const parts = [["cdr.voice · P0", "sub.events · P1"], ["cdr.voice · P1", "sub.events · P2"], ["cdr.voice · P2", "sub.events · P0"]];
+  [270, 470, 670].forEach((bx, b) => {
+    el("rect", { x: bx, y: 45, width: 180, height: 265, rx: 12, class: "box" }, eco);
+    el("text", { x: bx + 90, y: 72, class: "t mid" }, eco, "Broker " + (b + 1));
+    parts[b].forEach((p, r) => {
+      const y = r ? 188 : 113;
+      el("text", { x: bx + 15, y: y - 8, class: "m mono", style: "font-size:12px" }, eco, p);
+      for (let c = 0; c < 6; c++) el("rect", { x: bx + 15 + c * 25, y, width: 22, height: 28, rx: 4, class: r ? "k3" : "k0" }, eco);
+    });
+    el("text", { x: bx + 90, y: 262, class: "m mid mono" }, eco, "/var/lib/kafka/data");
+    el("text", { x: bx + 90, y: 284, class: "m mid" }, eco, "listener :9092");
+  });
+  // consumers
+  el("rect", { x: 900, y: 20, width: 250, height: 150, rx: 14, class: "frame-m" }, eco);
+  el("text", { x: 915, y: 44, class: "m", style: "fill:var(--p4);font-weight:600" }, eco, "group: billing");
+  el("rect", { x: 900, y: 190, width: 250, height: 110, rx: 14, class: "frame-m" }, eco);
+  el("text", { x: 915, y: 214, class: "m", style: "fill:var(--p4);font-weight:600" }, eco, "group: fraud");
+  [[58, "C1 ← P0, P1"], [110, "C2 ← P2"], [228, "F1 ← P0, P1, P2"]].forEach(([y, l]) => {
+    el("rect", { x: 930, y, width: 200, height: 40, rx: 10, class: "k4" }, eco);
+    el("text", { x: 1030, y: y + 25, class: "cell-t", style: "font-size:13.5px" }, eco, l);
+    el("path", { d: `M862,${y + 20} L928,${y + 20}`, class: "ln arrow" }, eco);
+  });
+  dot(eco, "d1", "M200,60 C 240,60 250,127 285,127", 2.2, 0);
+  dot(eco, "d1", "M200,165 C 320,165 400,202 485,202", 2.6, -1);
+  dot(eco, "d1", "M200,270 C 420,300 600,202 685,202", 3, -2);
+  dot(eco, "d4", "M820,127 C 880,127 880,78 930,78", 2.2, -0.5);
+  dot(eco, "d4", "M820,127 C 880,127 880,130 930,130", 2.2, -1.6);
+  dot(eco, "d4", "M820,127 C 880,127 880,248 930,248", 2.2, -1.1);
+
+  /* ---- Slide 8: keyed records ---- */
+  const rec = document.getElementById("records");
+  const rs = [["966…001", "call-start", "k0"], ["966…002", "call-start", "k1"], ["966…003", "sms", "k2"], ["966…001", "call-end", "k0"], ["966…002", "call-end", "k1"]];
+  rs.forEach(([k, v, c], i) => {
+    const y = 20 + i * 60;
+    el("rect", { x: 10, y, width: 230, height: 40, rx: 10, class: c }, rec);
+    el("text", { x: 24, y: y + 25, class: "mono", style: "font-size:13.5px;font-weight:600" }, rec, k);
+    el("text", { x: 228, y: y + 25, class: "m end" }, rec, v);
+    el("path", { d: `M240,${y + 20} C 290,${y + 20} 290,160 328,160`, class: "ln-soft" }, rec);
+  });
+  dot(rec, "d0", "M240,40 C 290,40 290,160 330,160 L530,160 L632,160", 3, 0);
+  dot(rec, "d1", "M240,100 C 290,100 290,160 330,160 L530,160 C 580,160 580,60 632,60", 3, -1);
+  dot(rec, "d2", "M240,160 L330,160 L530,160 C 580,160 580,260 632,260", 3, -2);
+
+  /* ---- Slide 9: consumer groups ---- */
+  const gr = document.getElementById("groups");
+  el("text", { x: 20, y: 40, class: "m" }, gr, "topic cdr.voice");
+  const pc = [94, 214, 334], pk = ["k0", "k1", "k2"];
+  el("rect", { x: 380, y: 10, width: 300, height: 245, rx: 14, class: "frame-m" }, gr);
+  el("text", { x: 396, y: 36, class: "t", style: "fill:var(--p4)" }, gr, "group: billing");
+  el("text", { x: 396, y: 56, class: "m" }, gr, "4 consumers");
+  el("rect", { x: 380, y: 275, width: 300, height: 135, rx: 14, class: "frame-m" }, gr);
+  el("text", { x: 396, y: 301, class: "t", style: "fill:var(--p4)" }, gr, "group: fraud");
+  el("text", { x: 396, y: 321, class: "m" }, gr, "1 consumer");
+  const cs = [[60, "C1"], [115, "C2"], [170, "C3"], [225, "C4 · idle"]];
+  // lines first
+  pc.forEach((y, i) => el("path", { d: `M190,${y} C 330,${y} 380,${cs[i][0]} 500,${cs[i][0]}`, style: `stroke:var(--p${i});stroke-width:2;fill:none` }, gr));
+  pc.forEach((y, i) => el("path", { d: `M190,${y} C 330,${y} 380,370 500,370`, style: `stroke:var(--p${i});stroke-width:2;fill:none;opacity:.7` }, gr));
+  pc.forEach((y, i) => {
+    el("rect", { x: 20, y: y - 24, width: 170, height: 48, rx: 10, class: pk[i] }, gr);
+    el("text", { x: 105, y: y + 5, class: "cell-t", style: "font-size:14px" }, gr, "Partition " + i);
+  });
+  cs.forEach(([y, l], i) => {
+    el("rect", { x: 500, y: y - 20, width: 160, height: 40, rx: 10, class: i === 3 ? "ghost" : "box" }, gr);
+    el("text", { x: 580, y: y + 5, class: "t mid" + (i === 3 ? " bad-t" : ""), style: "font-size:14px" }, gr, l);
+  });
+  el("rect", { x: 500, y: 350, width: 160, height: 40, rx: 10, class: "box" }, gr);
+  el("text", { x: 580, y: 375, class: "t mid", style: "font-size:14px" }, gr, "F1 ← P0, P1, P2");
+  pc.forEach((y, i) => {
+    dot(gr, "d" + i, `M190,${y} C 330,${y} 380,${cs[i][0]} 500,${cs[i][0]}`, 2.5, -i * 0.8, 6);
+    dot(gr, "d" + i, `M190,${y} C 330,${y} 380,370 500,370`, 2.5, -i * 0.8 - 0.4, 6);
+  });
+
+  /* ---- Slide 10: replication ---- */
+  const rp = document.getElementById("repl");
+  el("rect", { x: 270, y: 0, width: 220, height: 38, rx: 19, class: "hub" }, rp);
+  el("text", { x: 380, y: 24, class: "t mid" }, rp, "Producer · acks=all");
+  const bx = [20, 270, 520], rowY = [125, 205, 285];
+  const leaderOf = [0, 1, 2]; // partition p leader on broker p
+  bx.forEach((x, b) => {
+    el("rect", { x, y: 70, width: 220, height: 310, rx: 14, class: "box" }, rp);
+    el("text", { x: x + 110, y: 100, class: "t mid" }, rp, "Broker " + (b + 1));
+    rowY.forEach((y, p) => {
+      const lead = leaderOf[p] === b;
+      el("rect", { x: x + 15, y, width: 190, height: 60, rx: 10, class: "k" + p, style: lead ? "stroke-width:3" : "fill:var(--surface);stroke-dasharray:6 4" }, rp);
+      el("text", { x: x + 34, y: y + 37, class: "t", style: "font-size:18px;font-weight:800;fill:var(--p" + p + ")" }, rp, "P" + p);
+      el("text", { x: x + 190, y: y + 28, class: "t end", style: "font-size:14px" }, rp, lead ? "★ Leader" : "Follower");
+      el("text", { x: x + 190, y: y + 46, class: "m end" }, rp, lead ? "reads + writes" : "fetches from leader");
+    });
+  });
+  // produce → leader P0 on broker 1, then followers fetch
+  const prodDot = el("circle", { r: 8, class: "d0" }, rp);
+  el("animateMotion", { dur: "3s", repeatCount: "indefinite", keyPoints: "0;1;1", keyTimes: "0;.33;1", calcMode: "linear", path: "M380,38 C 380,70 130,80 130,125" }, prodDot);
+  el("animate", { attributeName: "opacity", values: "1;0", keyTimes: "0;.33", dur: "3s", calcMode: "discrete", repeatCount: "indefinite" }, prodDot);
+  ["M205,155 L285,155", "M205,135 C 240,40 520,40 555,135"].forEach(p => {
+    el("path", { d: p, class: "ln-soft", style: "stroke-dasharray:4 4" }, rp);
+    const d = el("circle", { r: 7, class: "d0", opacity: 0 }, rp);
+    el("animateMotion", { dur: "3s", repeatCount: "indefinite", keyPoints: "0;0;1;1", keyTimes: "0;.33;.7;1", calcMode: "linear", path: p }, d);
+    el("animate", { attributeName: "opacity", values: "0;1;0", keyTimes: "0;.33;.7", dur: "3s", calcMode: "discrete", repeatCount: "indefinite" }, d);
+  });
+
+  /* ---- Slide 12: segments ---- */
+  const sgm = document.getElementById("segments");
+  const segs = [["0–99", "9 days"], ["100–199", "8 days"], ["200–299", "5 days"], ["300–399", "2 days"], ["400–…", "active"]];
+  segs.forEach(([r, age], i) => {
+    const x = 15 + i * 104, expired = i < 2, active = i === 4;
+    const g = el("g", {}, sgm);
+    el("rect", { x, y: 56, width: 96, height: 74, rx: 10, class: expired ? "gone" : active ? "k2" : "k0", style: active ? "stroke-dasharray:6 4" : "" }, g);
+    el("text", { x: x + 48, y: 86, class: "cell-t mono", style: "font-size:12px" }, g, r);
+    el("text", { x: x + 48, y: 108, class: "m mid" + (expired ? " bad-t" : "") }, g, age);
+    if (expired) {
+      el("path", { d: `M${x + 14},${56 + 14} L${x + 82},${56 + 60} M${x + 82},${56 + 14} L${x + 14},${56 + 60}`, style: "stroke:var(--bad);stroke-width:2.5;opacity:.6" }, g);
+      el("animate", { attributeName: "opacity", values: "1;.15;1", dur: "3s", repeatCount: "indefinite" }, g);
+    }
+  });
+  el("line", { x1: 222, y1: 38, x2: 222, y2: 150, style: "stroke:var(--bad);stroke-width:2;stroke-dasharray:5 4" }, sgm);
+  el("text", { x: 222, y: 30, class: "m mid bad-t", style: "font-weight:600" }, sgm, "retention.ms = 7 days");
+  el("path", { d: "M20,170 L520,170", class: "ln arrow" }, sgm);
+  el("text", { x: 20, y: 192, class: "m" }, sgm, "older");
+  el("text", { x: 520, y: 192, class: "m end" }, sgm, "newer · producer appends here");
+  el("text", { x: 20, y: 226, class: "m" }, sgm, "Deletion happens per segment, never per message.");
+  el("text", { x: 20, y: 244, class: "m" }, sgm, "The active segment is never deleted.");
+
+  /* ---- Slide 13: ZooKeeper vs KRaft ---- */
+  const zk = document.getElementById("zk");
+  el("rect", { x: 110, y: 10, width: 320, height: 90, rx: 14, class: "frame-m" }, zk);
+  el("text", { x: 124, y: 30, class: "m" }, zk, "ZooKeeper ensemble · separate system");
+  [200, 270, 340].forEach(cx => { el("circle", { cx, cy: 64, r: 22, class: "k5" }, zk); el("text", { x: cx, y: 69, class: "cell-t" }, zk, "ZK"); });
+  const bxs = [40, 200, 360];
+  bxs.forEach((x, i) => {
+    el("path", { d: `M${x + 70},160 L${270 + (i - 1) * 50},100`, class: "ln", style: i ? "stroke-dasharray:4 4" : "stroke-width:2.4" }, zk);
+    el("rect", { x, y: 160, width: 140, height: 56, rx: 10, class: i ? "box" : "k1" }, zk);
+    el("text", { x: x + 70, y: 184, class: "cell-t", style: "font-size:13.5px" }, zk, "Broker " + (i + 1));
+    el("text", { x: x + 70, y: 202, class: "m mid" }, zk, i ? "watches znodes" : "controller");
+  });
+  el("text", { x: 270, y: 244, class: "m mid" }, zk, "2 systems to run and secure · controller failover reloads all metadata");
+
+  const kr = document.getElementById("kraft");
+  el("rect", { x: 30, y: 10, width: 480, height: 110, rx: 14, class: "frame" }, kr);
+  el("text", { x: 46, y: 30, class: "m acc" }, kr, "Controller quorum (Raft) · __cluster_metadata log");
+  [[60, "active"], [205, "standby"], [350, "standby"]].forEach(([x, s], i) => {
+    el("rect", { x, y: 44, width: 130, height: 60, rx: 10, class: i ? "box" : "k0" }, kr);
+    el("text", { x: x + 65, y: 68, class: "cell-t", style: "font-size:13.5px" }, kr, "Controller " + (i + 1));
+    el("text", { x: x + 65, y: 88, class: "m mid" }, kr, s);
+  });
+  el("path", { d: "M190,74 L203,74", class: "ln-acc" }, kr); el("path", { d: "M335,74 L348,74", class: "ln-acc" }, kr);
+  bxs.forEach((x, i) => {
+    el("path", { d: `M${x + 70},122 L${x + 70},158`, class: "ln-acc arrow-acc" }, kr);
+    el("rect", { x, y: 160, width: 140, height: 56, rx: 10, class: "box" }, kr);
+    el("text", { x: x + 70, y: 184, class: "cell-t", style: "font-size:13.5px" }, kr, "Broker " + (i + 1));
+    el("text", { x: x + 70, y: 202, class: "m mid" }, kr, "fetches metadata");
+    dot(kr, "d0", `M${x + 70},112 L${x + 70},156`, 1.6, -i * 0.5, 5);
+  });
+  el("text", { x: 270, y: 244, class: "m mid" }, kr, "1 system · near-instant failover · millions of partitions");
+
+  /* ---- Quiz ---- */
+  document.querySelectorAll(".q").forEach(q => q.addEventListener("click", () => q.classList.toggle("open")));
+
+  /* ---- Deck navigation ---- */
+  const deck = document.getElementById("deck");
+  const slides = [...document.querySelectorAll(".slide")];
+  const N = slides.length;
+  slides.forEach((s, i) => {
+    const f = document.createElement("div");
+    f.className = "foot";
+    f.innerHTML = `<span><b>Module 1</b> · Messaging &amp; Kafka Fundamentals</span><span>${String(i + 1).padStart(2, "0")} / ${N}</span>`;
+    s.appendChild(f);
+  });
+  let cur = 0;
+  function fit() {
+    const s = Math.min(window.innerWidth / 1320, window.innerHeight / 750);
+    deck.style.transform = `scale(${s})`;
+  }
+  function go(i) {
+    cur = Math.max(0, Math.min(N - 1, i));
+    slides.forEach((s, k) => { s.classList.toggle("active", k === cur); s.classList.toggle("before", k < cur); });
+    document.getElementById("counter").textContent = `${cur + 1} / ${N}`;
+    document.getElementById("progress").style.width = ((cur + 1) / N * 100) + "%";
+    const n = slides[cur].querySelector("aside.notes");
+    document.getElementById("notesText").textContent = n ? n.textContent : "";
+    if (location.hash !== "#" + (cur + 1)) history.replaceState(null, "", "#" + (cur + 1));
+  }
+  function toggleTheme() {
+    const r = document.documentElement;
+    const dark = r.dataset.theme ? r.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    r.dataset.theme = dark ? "light" : "dark";
+    try { localStorage.setItem("m1-deck-theme", r.dataset.theme); } catch (e) {}
+  }
+  try { const t = localStorage.getItem("m1-deck-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  const toggleNotes = () => document.getElementById("notesPanel").classList.toggle("show");
+  const fullscreen = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.();
+
+  document.getElementById("prev").onclick = () => go(cur - 1);
+  document.getElementById("next").onclick = () => go(cur + 1);
+  document.getElementById("notesBtn").onclick = toggleNotes;
+  document.getElementById("themeBtn").onclick = toggleTheme;
+  document.getElementById("fsBtn").onclick = fullscreen;
+  document.addEventListener("keydown", e => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const k = e.key;
+    if (["ArrowRight", "ArrowDown", "PageDown", " ", "Enter"].includes(k)) { e.preventDefault(); go(cur + 1); }
+    else if (["ArrowLeft", "ArrowUp", "PageUp", "Backspace"].includes(k)) { e.preventDefault(); go(cur - 1); }
+    else if (k === "Home") go(0);
+    else if (k === "End") go(N - 1);
+    else if (k === "n" || k === "N") toggleNotes();
+    else if (k === "t" || k === "T") toggleTheme();
+    else if (k === "f" || k === "F") fullscreen();
+  });
+  let tx = null;
+  document.addEventListener("touchstart", e => { tx = e.touches[0].clientX; }, { passive: true });
+  document.addEventListener("touchend", e => {
+    if (tx == null) return; const dx = e.changedTouches[0].clientX - tx;
+    if (Math.abs(dx) > 50) go(cur + (dx < 0 ? 1 : -1)); tx = null;
+  });
+  window.addEventListener("resize", fit);
+  window.addEventListener("hashchange", () => go((parseInt(location.hash.slice(1), 10) || 1) - 1));
+  fit();
+  go((parseInt(location.hash.slice(1), 10) || 1) - 1);
+})();
+</script>
+</body>
+</html>

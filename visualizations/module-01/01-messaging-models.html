@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Queues vs Pub-Sub vs Kafka</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .modes-explain > div { display: none; }
+  .modes-explain > div.on { display: block; }
+  .consumer { cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 1 · Messaging &amp; Kafka Fundamentals</a>
+    <div class="nav"><span>1 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 1</div>
+  <h1>Messaging models: queue vs. pub-sub vs. Kafka's log</h1>
+  <p class="lede">If you know IBM MQ, you already know two delivery models. Kafka adds a third: a durable, replayable log where
+    reading a message doesn't remove it. Switch modes below, send messages, and click a consumer to take it offline.</p>
+
+  <div class="card">
+    <div class="controls">
+      <div class="seg" role="group" aria-label="Messaging model">
+        <button data-mode="queue" aria-pressed="true">Queue (point-to-point)</button>
+        <button data-mode="pubsub" aria-pressed="false">Pub-Sub (classic topic)</button>
+        <button data-mode="kafka" aria-pressed="false">Kafka (durable log)</button>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="primary" id="send">Send message</button>
+      <button id="auto">▶ Auto-send</button>
+      <button id="rewind" hidden>⟲ Rewind audit-svc to offset 0</button>
+      <span class="pill" id="hint">Tip: click a consumer to toggle it offline</span>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 340" role="img" aria-label="Messaging model animation"></svg></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <div class="modes-explain card" style="margin-top:16px">
+    <div data-for="queue" class="on">
+      <h3>Queue — competing consumers</h3>
+      <p>Each message is delivered to <b>exactly one</b> consumer and is <b>removed</b> once acknowledged. Adding consumers spreads the
+        load (like multiple applications reading from one IBM MQ local queue). Take all consumers offline and watch the queue
+        depth grow — messages wait, but once consumed they're gone for good.</p>
+    </div>
+    <div data-for="pubsub">
+      <h3>Classic pub-sub — every subscriber gets a copy</h3>
+      <p>The broker fans each message out to <b>every active subscriber</b>. With a non-durable subscription, a subscriber that is
+        offline when the message is published <b>misses it</b>. (IBM MQ durable subscriptions fix this by keeping a per-subscriber
+        queue, at the cost of storing a copy per subscriber.)</p>
+    </div>
+    <div data-for="kafka">
+      <h3>Kafka — an append-only log with consumer offsets</h3>
+      <p>Messages are appended to a log and <b>stay there</b> until retention removes them. Each <b>consumer group</b> keeps its own
+        <b>offset</b> (a bookmark). One stored copy serves any number of groups. Take <code>audit-svc</code> offline: its <b>lag</b>
+        grows, and when it comes back it catches up from where it left off. Hit <em>Rewind</em> to replay history — impossible in
+        a classic queue.</p>
+    </div>
+  </div>
+
+  <h2>How Kafka compares with IBM MQ and traditional messaging</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Aspect</th><th>IBM MQ / traditional broker</th><th>Apache Kafka</th></tr></thead>
+      <tbody>
+        <tr><td>Core abstraction</td><td>Queues and topics; broker tracks delivery per message</td><td>Partitioned, append-only log; consumers track their own offsets</td></tr>
+        <tr><td>After consumption</td><td>Message is removed (destructive get)</td><td>Message stays until retention time/size or compaction removes it</td></tr>
+        <tr><td>Replay</td><td>Not possible once consumed (unless re-sent)</td><td>Reset offsets and re-read any retained data</td></tr>
+        <tr><td>Fan-out</td><td>Copy per subscriber / per queue</td><td>One stored copy; many consumer groups read independently</td></tr>
+        <tr><td>Ordering</td><td>Per queue (weakened with competing consumers)</td><td>Strict per partition; related records share a key → same partition</td></tr>
+        <tr><td>Scaling</td><td>Queue managers, clusters, shared queues</td><td>Add partitions and brokers; consumers scale up to the partition count</td></tr>
+        <tr><td>Transactions</td><td>XA / two-phase commit, per-message ack</td><td>Idempotent producer + transactions (exactly-once within Kafka)</td></tr>
+        <tr><td>Sweet spot</td><td>Request/reply, command messaging, strict per-message workflow</td><td>High-throughput event streams, integration backbone, stream processing</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout">Kafka can behave like <b>both</b> models: consumers in the <b>same group</b> share partitions (queue semantics),
+    while <b>different groups</b> each receive every message (pub-sub semantics). You'll see this in Topic 3.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="index.html"><small>← Back</small>Module overview</a>
+    <a class="next" href="02-kafka-overview.html"><small>Next →</small>Kafka overview &amp; use cases</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg');
+const logEl = document.getElementById('log');
+const base = el('g', {}, svg);
+const fx = el('g', {}, svg);
+
+const CX = [210, 590];            // channel x range
+const CONS_Y = [40, 140, 240];
+const CONS_X = 690;
+const NAMES = {
+  queue: ['Consumer 1', 'Consumer 2', 'Consumer 3'],
+  pubsub: ['Subscriber 1', 'Subscriber 2', 'Subscriber 3'],
+  kafka: ['billing-svc', 'analytics-svc', 'audit-svc']
+};
+const GROUPS = ['group: billing', 'group: analytics', 'group: audit'];
+const KWIN = 12;
+
+let S;
+function reset(mode) {
+  S = { mode, seq: 0, queue: [], log: [], offsets: [0, 0, 0], online: [true, true, true],
+        got: [0, 0, 0], missed: [0, 0, 0], rr: 0, flash: [0, 0, 0] };
+  fx.innerHTML = '';
+  logEl.innerHTML = '';
+  document.getElementById('rewind').hidden = mode !== 'kafka';
+  document.querySelectorAll('.modes-explain > div').forEach(d => d.classList.toggle('on', d.dataset.for === mode));
+  render();
+}
+
+function token(seq, parent) {
+  const g = el('g', {}, parent || fx);
+  el('rect', { x: -15, y: -12, width: 30, height: 24, rx: 5, fill: PCOLORS[seq % 6] }, g);
+  el('text', { x: 0, y: 4, 'text-anchor': 'middle', 'font-size': 11, 'font-weight': 600, style: 'fill:#fff', text: 'm' + seq }, g);
+  return g;
+}
+
+function cellPos(i) { return [CX[0] + 22 + i * 30, 150]; }
+function kafkaWindowStart() { return Math.max(0, S.log.length - KWIN); }
+
+function render() {
+  base.innerHTML = '';
+  // producer
+  el('rect', { x: 20, y: 120, width: 130, height: 60, rx: 10, fill: 'var(--surface)', stroke: 'var(--border)' }, base);
+  el('text', { x: 85, y: 146, 'text-anchor': 'middle', 'font-weight': 600, text: 'Producer' }, base);
+  el('text', { x: 85, y: 165, 'text-anchor': 'middle', 'font-size': 12, class: 'muted', text: `sent ${S.seq}` }, base);
+  el('line', { x1: 150, y1: 150, x2: CX[0], y2: 150, stroke: 'var(--border)', 'stroke-width': 2, 'stroke-dasharray': '4 4' }, base);
+
+  // channel
+  const title = { queue: 'Queue (e.g. MQ local queue)', pubsub: 'Topic on broker', kafka: 'Kafka topic · partition 0 (log)' }[S.mode];
+  el('rect', { x: CX[0], y: 80, width: CX[1] - CX[0], height: 150, rx: 12, fill: 'var(--surface)', stroke: 'var(--accent)', 'stroke-width': 1.5 }, base);
+  el('text', { x: CX[0] + 14, y: 102, 'font-size': 13, 'font-weight': 600, text: title }, base);
+
+  if (S.mode === 'queue') {
+    el('text', { x: CX[0] + 14, y: 215, 'font-size': 12, class: 'muted', text: `queue depth: ${S.queue.length}   ← head (next out)` }, base);
+    S.queue.slice(0, 11).forEach((m, i) => { const t = token(m, base); const [x, y] = cellPos(i); t.setAttribute('transform', `translate(${x},${y})`); });
+    if (S.queue.length > 11) el('text', { x: CX[1] - 20, y: 154, 'text-anchor': 'end', class: 'muted', text: '…' }, base);
+  } else if (S.mode === 'pubsub') {
+    el('text', { x: (CX[0] + CX[1]) / 2, y: 155, 'text-anchor': 'middle', class: 'muted', 'font-size': 13, text: 'Nothing is stored — fan-out on arrival' }, base);
+  } else {
+    const ws = kafkaWindowStart();
+    for (let i = 0; i < KWIN; i++) {
+      const off = ws + i, [x, y] = cellPos(i);
+      if (off < S.log.length) {
+        const t = token(S.log[off], base); t.setAttribute('transform', `translate(${x},${y})`);
+      } else {
+        el('rect', { x: x - 15, y: y - 12, width: 30, height: 24, rx: 5, fill: 'none', stroke: 'var(--border)', 'stroke-dasharray': '3 3' }, base);
+      }
+      el('text', { x, y: y + 26, 'text-anchor': 'middle', 'font-size': 10, class: 'muted', text: off }, base);
+    }
+    // group offset markers
+    [0, 1, 2].forEach(g => {
+      const rel = S.offsets[g] - ws;
+      const x = rel < 0 ? CX[0] + 8 : cellPos(Math.min(rel, KWIN))[0] - 15;
+      const y = 190 + g * 11;
+      el('path', { d: `M${x} ${y} l6 -5 v10 z`, fill: PCOLORS[g] }, base);
+      el('text', { x: x + 9, y: y + 4, 'font-size': 10, style: `fill:${PCOLORS[g]}`, text: `${NAMES.kafka[g]} @${S.offsets[g]}` }, base);
+    });
+    el('text', { x: CX[1] - 12, y: 102, 'text-anchor': 'end', 'font-size': 11, class: 'muted', text: `log-end offset: ${S.log.length}` }, base);
+  }
+
+  // consumers
+  CONS_Y.forEach((y, i) => {
+    const g = el('g', { class: 'consumer', tabindex: 0, role: 'button', 'aria-label': `Toggle ${NAMES[S.mode][i]}` }, base);
+    const on = S.online[i];
+    el('rect', { x: CONS_X, y, width: 190, height: 70, rx: 10,
+      fill: S.flash[i] ? 'var(--bad-soft)' : on ? 'var(--surface)' : 'var(--surface-2)',
+      stroke: on ? (S.mode === 'kafka' ? PCOLORS[i] : 'var(--border)') : 'var(--border)',
+      'stroke-dasharray': on ? '' : '5 4', 'stroke-width': 1.5 }, g);
+    el('circle', { cx: CONS_X + 16, cy: y + 20, r: 5, fill: on ? 'var(--ok)' : 'var(--muted)' }, g);
+    el('text', { x: CONS_X + 28, y: y + 24, 'font-weight': 600, 'font-size': 14, text: NAMES[S.mode][i] + (on ? '' : ' (offline)') }, g);
+    let sub;
+    if (S.mode === 'queue') sub = `received ${S.got[i]}`;
+    else if (S.mode === 'pubsub') sub = `received ${S.got[i]} · missed ${S.missed[i]}`;
+    else sub = `${GROUPS[i]} · lag ${S.log.length - S.offsets[i]}`;
+    el('text', { x: CONS_X + 16, y: y + 50, 'font-size': 12, class: 'muted', text: sub }, g);
+    g.onclick = () => toggle(i);
+    g.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(i); } };
+    base.prepend(el('line', { x1: CX[1], y1: 155, x2: CONS_X, y2: y + 35, stroke: 'var(--border)', 'stroke-dasharray': '4 4' }));
+  });
+}
+
+function toggle(i) {
+  S.online[i] = !S.online[i];
+  logLine(logEl, `${NAMES[S.mode][i]} is now ${S.online[i] ? 'online' : 'offline'}`);
+  render();
+}
+
+async function send() {
+  const mode = S.mode, m = S.seq++;
+  render();
+  const t = token(m);
+  if (mode === 'queue') {
+    const [x, y] = cellPos(Math.min(S.queue.length, 10));
+    await tween(t, 150, 150, x, y, 500); t.remove();
+    if (S.mode !== mode) return;
+    S.queue.push(m); render();
+    logLine(logEl, `m${m} enqueued (depth ${S.queue.length})`);
+  } else if (mode === 'pubsub') {
+    const mid = (CX[0] + CX[1]) / 2;
+    await tween(t, 150, 150, mid, 150, 450); t.remove();
+    if (S.mode !== mode) return;
+    const flights = [];
+    CONS_Y.forEach((y, i) => {
+      if (S.online[i]) {
+        const c = token(m);
+        flights.push(tween(c, mid, 150, CONS_X + 150, y + 35, 550).then(() => { c.remove(); S.got[i]++; render(); }));
+      } else {
+        S.missed[i]++; S.flash[i] = 1; setTimeout(() => { S.flash[i] = 0; render(); }, 500);
+        logLine(logEl, `m${m} <b>missed</b> by ${NAMES.pubsub[i]} (offline, non-durable)`, true);
+      }
+    });
+    render();
+    await Promise.all(flights);
+    logLine(logEl, `m${m} fanned out to ${S.online.filter(Boolean).length} subscriber(s), then discarded`);
+  } else {
+    const [x, y] = cellPos(Math.min(S.log.length - kafkaWindowStart(), KWIN - 1));
+    await tween(t, 150, 150, x, y, 500); t.remove();
+    if (S.mode !== mode) return;
+    S.log.push(m); render();
+    logLine(logEl, `m${m} appended at offset ${S.log.length - 1}`);
+  }
+}
+
+// consumer loops
+let busy = false;
+setInterval(async () => {
+  if (busy) return;
+  if (S.mode === 'queue' && S.queue.length) {
+    const online = [0, 1, 2].filter(i => S.online[i]);
+    if (!online.length) return;
+    busy = true;
+    const i = online[S.rr++ % online.length];
+    const m = S.queue.shift(); render();
+    const t = token(m);
+    await tween(t, cellPos(0)[0], 150, CONS_X + 150, CONS_Y[i] + 35, 550); t.remove();
+    if (S.mode === 'queue') { S.got[i]++; render(); logLine(logEl, `m${m} consumed by ${NAMES.queue[i]} → <b>removed</b> from queue`); }
+    busy = false;
+  } else if (S.mode === 'kafka') {
+    busy = true;
+    const ws = kafkaWindowStart();
+    const flights = [];
+    [0, 1, 2].forEach(g => {
+      if (!S.online[g] || S.offsets[g] >= S.log.length) return;
+      const off = S.offsets[g]++;
+      const rel = off - ws;
+      const [x, y] = rel >= 0 ? cellPos(rel) : [CX[0] + 10, 150];
+      const t = token(S.log[off]);
+      flights.push(tween(t, x, y, CONS_X + 150, CONS_Y[g] + 35, 550).then(() => t.remove()));
+    });
+    if (flights.length) render();
+    await Promise.all(flights);
+    if (S.mode === 'kafka') render();
+    busy = false;
+  }
+}, 700);
+
+document.querySelectorAll('.seg button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.seg button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  reset(b.dataset.mode);
+});
+document.getElementById('send').onclick = send;
+let autoTimer = null;
+document.getElementById('auto').onclick = e => {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null; e.target.textContent = '▶ Auto-send'; }
+  else { send(); autoTimer = setInterval(send, 1100); e.target.textContent = '⏸ Stop'; }
+};
+document.getElementById('rewind').onclick = () => {
+  S.offsets[2] = 0; render();
+  logLine(logEl, 'audit-svc offset reset to 0 — it will <b>replay</b> all retained messages', true);
+};
+reset('queue');
+
+renderQuiz('quiz', [
+  { q: 'Three applications read from the same IBM MQ queue. A message arrives. How many of them receive it?',
+    options: ['All three', 'Exactly one', 'None until all three acknowledge', 'Two, for redundancy'],
+    answer: 1, explain: 'A queue uses competing consumers: each message goes to exactly one reader and is removed after it’s acknowledged.' },
+  { q: 'What happens to a Kafka record after a consumer group has read it?',
+    options: ['It is deleted from the partition', 'It moves to a dead-letter topic', 'It stays in the log; the group simply advances its offset', 'It is marked read and hidden from other groups'],
+    answer: 2, explain: 'Reading is non-destructive. Only retention (time/size) or compaction removes data, so other groups — or the same group after a reset — can still read it.' },
+  { q: 'In a classic non-durable pub-sub setup, a subscriber is offline while 50 messages are published. When it reconnects…',
+    options: ['It receives all 50 in order', 'It receives only messages published after it reconnects', 'The broker blocks publishing until it returns', 'It receives the latest message only'],
+    answer: 1, explain: 'Non-durable subscriptions only deliver while connected. Durable subscriptions (or Kafka offsets) are needed to catch up.' },
+  { q: 'Which statement best describes how Kafka tracks consumer progress?',
+    options: ['The broker keeps a per-message ack flag for every consumer', 'Each consumer group commits an offset per partition', 'Producers track which consumers read each record', 'ZooKeeper stores a copy of every consumed message'],
+    answer: 1, explain: 'A group’s position is just an integer offset per partition (stored in the internal __consumer_offsets topic) — cheap and replayable.' },
+  { q: 'Your team needs five independent services to each process every order event. What is the Kafka way to do this?',
+    options: ['Create five copies of the topic, one per service', 'Put all five services in one consumer group', 'Give each service its own consumer group on the same topic', 'Use five partitions, one per service'],
+    answer: 2, explain: 'Different consumer groups each receive every record from a single stored copy — pub-sub semantics without duplicating the data.' }
+]);
+</script>
+</body>
+</html>

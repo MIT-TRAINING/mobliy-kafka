@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZooKeeper vs KRaft</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .bar { height: 10px; background: var(--surface-2); border-radius: 5px; overflow: hidden; margin-top: 6px; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .1s linear; }
+  .timeline { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+  .timeline li { display: grid; grid-template-columns: 110px 1fr; gap: 14px; padding: 10px 0; border-top: 1px solid var(--border); }
+  .timeline li:first-child { border-top: 0; }
+  .timeline b.v { font-family: var(--mono); color: var(--accent); }
+  pre { background: var(--surface-2); padding: 12px 14px; border-radius: 8px; overflow-x: auto; font-size: 13px; margin: 8px 0 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 1 · Messaging &amp; Kafka Fundamentals</a>
+    <div class="nav"><span>6 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 6</div>
+  <h1>ZooKeeper vs. KRaft — where cluster metadata lives</h1>
+  <p class="lede">Every cluster must track brokers, topics, partitions, leaders, ISRs and configs. Historically that metadata lived in an
+    external <b>ZooKeeper</b> ensemble. <b>KRaft</b> (Kafka Raft) moves it into Kafka itself, as a replicated metadata log managed by
+    a quorum of controllers. Kafka 4.0 runs in KRaft mode only.</p>
+
+  <div class="card" style="margin-top:20px">
+    <div class="controls">
+      <div class="seg" role="group" aria-label="Metadata mode" id="mode">
+        <button data-mode="zk" aria-pressed="true">ZooKeeper mode (legacy)</button>
+        <button data-mode="kraft" aria-pressed="false">KRaft mode</button>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="primary" id="create">Create topic "orders"</button>
+      <button class="danger" id="fail">Kill active controller</button>
+      <button id="restore">Reset cluster</button>
+      <label class="range">Partitions in cluster <input type="range" id="parts" min="1" max="6" value="3"> <b id="partsv">50,000</b></label>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 400" role="img" aria-label="Cluster metadata architecture"></svg></div>
+    <div style="margin-top:10px;font-size:13px;color:var(--muted)">
+      <span id="phase">Idle</span> <span class="pill" style="margin-left:6px">illustrative timing</span>
+      <div class="bar"><div id="bar"></div></div>
+    </div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Side by side</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th></th><th>ZooKeeper mode</th><th>KRaft mode</th></tr></thead>
+      <tbody>
+        <tr><td>Metadata store</td><td>Znodes in a separate ZooKeeper ensemble</td><td><code>__cluster_metadata</code> log, replicated by Raft across controllers</td></tr>
+        <tr><td>Systems to operate</td><td>Two (Kafka + ZooKeeper), each with its own config, security, monitoring</td><td>One — Kafka only</td></tr>
+        <tr><td>Controller</td><td>One broker, elected by racing for the ephemeral <code>/controller</code> znode</td><td>Quorum of controller nodes; one active leader elected via Raft</td></tr>
+        <tr><td>Controller failover</td><td>New controller must re-read all metadata from ZooKeeper — slow with many partitions</td><td>Standby controllers already hold the log in memory — near-instant failover</td></tr>
+        <tr><td>Metadata propagation</td><td>Controller pushes RPCs (UpdateMetadata, LeaderAndIsr) to every broker</td><td>Brokers pull (fetch) new records from the metadata log, like a consumer</td></tr>
+        <tr><td>Scale</td><td>Practical limit ~200k partitions per cluster</td><td>Designed for millions of partitions</td></tr>
+        <tr><td>Key settings</td><td><code>zookeeper.connect</code>, <code>broker.id</code></td><td><code>process.roles</code>, <code>node.id</code>, <code>controller.quorum.bootstrap.servers</code> (or <code>.voters</code>), <code>controller.listener.names</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid grid-2" style="margin-top:16px">
+    <div class="card">
+      <h3>Timeline</h3>
+      <ul class="timeline">
+        <li><b class="v">KIP-500</b><span>Proposal (2019) to replace ZooKeeper with a self-managed metadata quorum.</span></li>
+        <li><b class="v">2.8</b><span>KRaft early access.</span></li>
+        <li><b class="v">3.3</b><span>KRaft marked production-ready for new clusters.</span></li>
+        <li><b class="v">3.5 – 3.9</b><span>ZooKeeper mode deprecated; ZK → KRaft migration path. 3.9 is the last release that supports ZooKeeper.</span></li>
+        <li><b class="v">4.0</b><span>ZooKeeper removed — KRaft only (2025). Confluent Platform 8.0 follows.</span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>KRaft node roles (used in the hands-on lab)</h3>
+      <p style="margin:0">Each node's <code>process.roles</code> decides what it does:</p>
+      <pre>process.roles=broker            # data plane only
+process.roles=controller        # metadata quorum only
+process.roles=broker,controller # combined — dev/local only</pre>
+      <p style="margin:10px 0 0">A new KRaft node's storage must be formatted with a cluster ID before first start:</p>
+      <pre>bin/kafka-storage.sh random-uuid
+bin/kafka-storage.sh format -t &lt;uuid&gt; -c config/server.properties</pre>
+    </div>
+  </div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="05-retention-compaction.html"><small>← Previous</small>Retention &amp; compaction</a>
+    <a class="next" href="index.html"><small>Done →</small>Back to Module 1 overview</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg');
+const logEl = document.getElementById('log');
+const base = el('g', {}, svg), fx = el('g', {}, svg);
+const PARTS = [1000, 10000, 50000, 100000, 200000, 1000000];
+let mode = 'zk', S, running = false;
+
+const POS = {
+  admin: [70, 200],
+  q: [[300, 80], [450, 80], [600, 80]],
+  b: [[220, 320], [450, 320], [680, 320]]
+};
+
+function reset() {
+  S = { ctrl: 0, dead: -1, mlog: ['broker-reg', 'broker-reg', 'broker-reg'], topics: [], bctrl: 0, deadB: -1 };
+  fx.innerHTML = ''; logEl.innerHTML = '';
+  setPhase('Idle', 0);
+  render();
+}
+
+function setPhase(text, pct) {
+  document.getElementById('phase').textContent = text;
+  document.getElementById('bar').style.width = pct + '%';
+}
+
+function render() {
+  base.innerHTML = '';
+  // admin
+  el('rect', { x: 10, y: 175, width: 120, height: 50, rx: 9, fill: 'var(--surface)', stroke: 'var(--border)' }, base);
+  el('text', { x: 70, y: 197, 'text-anchor': 'middle', 'font-weight': 600, 'font-size': 13, text: 'Admin client' }, base);
+  el('text', { x: 70, y: 214, 'text-anchor': 'middle', 'font-size': 10, class: 'muted mono', text: 'kafka-topics.sh' }, base);
+
+  // quorum region
+  const zk = mode === 'zk';
+  el('rect', { x: 215, y: 20, width: 470, height: 130, rx: 14, fill: 'none',
+    stroke: zk ? 'var(--warn)' : 'var(--accent)', 'stroke-dasharray': '6 5' }, base);
+  el('text', { x: 230, y: 40, 'font-size': 12, 'font-weight': 700, style: `fill:${zk ? 'var(--warn)' : 'var(--accent)'}`,
+    text: zk ? 'ZOOKEEPER ENSEMBLE (separate system)' : 'KRAFT CONTROLLER QUORUM (process.roles=controller)' }, base);
+  POS.q.forEach(([x, y], i) => {
+    const dead = !zk && S.dead === i, active = !zk && S.ctrl === i;
+    el('circle', { cx: x, cy: y + 10, r: 34, fill: dead ? 'var(--bad-soft)' : active ? 'var(--accent)' : 'var(--surface)',
+      stroke: dead ? 'var(--bad)' : zk ? 'var(--warn)' : 'var(--accent)', 'stroke-width': 1.5 }, base);
+    el('text', { x, y: y + 8, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 600, style: active && !dead ? 'fill:#fff' : '',
+      text: zk ? `zk-${i + 1}` : `ctrl-${i + 1}` }, base);
+    el('text', { x, y: y + 23, 'text-anchor': 'middle', 'font-size': 10, style: active && !dead ? 'fill:#fff' : '', class: active ? '' : 'muted',
+      text: dead ? 'down' : zk ? (i === 0 ? 'leader' : 'follower') : active ? 'ACTIVE' : 'voter' }, base);
+  });
+  // metadata store
+  if (zk) {
+    el('text', { x: 700, y: 60, 'font-size': 11, class: 'muted mono', text: '/controller' }, base);
+    el('text', { x: 700, y: 76, 'font-size': 11, class: 'muted mono', text: '/brokers/ids/{1,2,3}' }, base);
+    el('text', { x: 700, y: 92, 'font-size': 11, class: 'muted mono', text: '/brokers/topics/…' }, base);
+    el('text', { x: 700, y: 108, 'font-size': 11, class: 'muted mono', text: '/config/…' }, base);
+    el('text', { x: 700, y: 128, 'font-size': 11, style: 'fill:var(--warn)', text: S.topics.length ? `+ ${S.topics.join(', ')}` : '' }, base);
+  } else {
+    el('text', { x: 700, y: 50, 'font-size': 11, class: 'muted mono', text: '__cluster_metadata' }, base);
+    S.mlog.slice(-6).forEach((r, i) => {
+      el('rect', { x: 700, y: 58 + i * 15, width: 180, height: 13, rx: 3, fill: 'var(--accent-soft)', stroke: 'var(--accent)', 'stroke-width': .5 }, base);
+      el('text', { x: 705, y: 68 + i * 15, 'font-size': 9, class: 'mono', text: `${S.mlog.length - Math.min(6, S.mlog.length) + i}: ${r}` }, base);
+    });
+  }
+
+  // brokers
+  el('text', { x: 150, y: 270, 'font-size': 12, class: 'muted', text: zk ? 'BROKERS (one is also the controller)' : 'BROKERS (process.roles=broker)' }, base);
+  POS.b.forEach(([x, y], i) => {
+    const isCtrl = zk && S.bctrl === i, dead = zk && S.deadB === i;
+    el('rect', { x: x - 80, y: y - 30, width: 160, height: 64, rx: 10,
+      fill: dead ? 'var(--bad-soft)' : 'var(--surface)', stroke: dead ? 'var(--bad)' : isCtrl ? 'var(--warn)' : 'var(--border)',
+      'stroke-width': isCtrl ? 2.5 : 1.5 }, base);
+    el('text', { x, y: y - 6, 'text-anchor': 'middle', 'font-weight': 600, text: `broker-${i + 1}` }, base);
+    el('text', { x, y: y + 14, 'text-anchor': 'middle', 'font-size': 11, class: 'muted',
+      text: dead ? 'down' : isCtrl ? '★ controller' : zk ? 'watches ZooKeeper' : 'fetches metadata log' }, base);
+  });
+  // connectors
+  POS.b.forEach(([bx, by]) => POS.q.forEach(([qx, qy]) => {
+    base.prepend(el('line', { x1: bx, y1: by - 30, x2: qx, y2: qy + 44, stroke: 'var(--border)', 'stroke-width': 1 }));
+  }));
+}
+
+function dot(from, to, color, ms) {
+  const g = el('g', {}, fx);
+  el('circle', { r: 7, fill: color || 'var(--accent)' }, g);
+  return tween(g, from[0], from[1], to[0], to[1], ms || 600).then(() => g.remove());
+}
+async function progress(label, ms) {
+  const t0 = performance.now();
+  if (reducedMotion) { setPhase(label + ' — done', 100); return; }
+  while (true) {
+    const p = Math.min(1, (performance.now() - t0) / ms);
+    setPhase(label, p * 100);
+    if (p >= 1) break;
+    await sleep(40);
+  }
+}
+const parts = () => PARTS[+document.getElementById('parts').value - 1];
+
+async function createTopic() {
+  if (running) return; running = true;
+  const name = 'orders' + (S.topics.length ? '-' + (S.topics.length + 1) : '');
+  if (mode === 'zk') {
+    const c = POS.b[S.bctrl];
+    logLine(logEl, `admin → controller (broker-${S.bctrl + 1}): CreateTopics ${name}`);
+    await dot(POS.admin, c);
+    logLine(logEl, `controller writes /brokers/topics/${name} to ZooKeeper`);
+    await dot(c, POS.q[0], 'var(--warn)');
+    await Promise.all([dot(POS.q[0], POS.q[1], 'var(--warn)', 400), dot(POS.q[0], POS.q[2], 'var(--warn)', 400)]);
+    S.topics.push(name); render();
+    logLine(logEl, 'controller <b>pushes</b> LeaderAndIsr + UpdateMetadata RPCs to every broker', true);
+    await Promise.all(POS.b.map((b, i) => i === S.bctrl ? null : dot(c, b, 'var(--warn)')));
+  } else {
+    const c = POS.q[S.ctrl];
+    logLine(logEl, `admin → active controller (ctrl-${S.ctrl + 1}): CreateTopics ${name}`);
+    await dot(POS.admin, c);
+    S.mlog.push(`TopicRecord ${name}`, `PartitionRecord ${name}-0..2`);
+    render();
+    logLine(logEl, 'controller appends TopicRecord + PartitionRecords to <b>__cluster_metadata</b>; Raft replicates to voters');
+    await Promise.all(POS.q.map((q, i) => i === S.ctrl || i === S.dead ? null : dot(c, q, 'var(--accent)', 400)));
+    logLine(logEl, 'record committed by quorum majority → brokers <b>fetch</b> the new records (pull model)', true);
+    await Promise.all(POS.b.map(b => dot(c, b, 'var(--accent)')));
+  }
+  setPhase(`Topic ${name} created`, 100);
+  running = false;
+}
+
+async function failController() {
+  if (running) return; running = true;
+  const n = parts();
+  if (mode === 'zk') {
+    if (S.deadB >= 0) { logLine(logEl, 'Reset the cluster first'); running = false; return; }
+    const old = S.bctrl; S.deadB = old; render();
+    logLine(logEl, `<b>broker-${old + 1} (controller) crashed</b>`, true);
+    await progress('Waiting for ZooKeeper session timeout…', 1200);
+    logLine(logEl, 'ZooKeeper session expires → ephemeral <code>/controller</code> znode deleted; watches fire on all brokers');
+    const cands = [0, 1, 2].filter(i => i !== old);
+    await Promise.all(cands.map(i => dot(POS.b[i], POS.q[0], 'var(--warn)', 500)));
+    S.bctrl = cands[0]; render();
+    logLine(logEl, `broker-${S.bctrl + 1} wins the race to create /controller`, true);
+    await progress(`New controller loading metadata for ${n.toLocaleString()} partitions from ZooKeeper…`, 800 + Math.sqrt(n / 1000) * 400);
+    logLine(logEl, 'metadata loaded → controller pushes LeaderAndIsr for partitions led by the dead broker', true);
+    await dot(POS.b[S.bctrl], POS.b[cands[1]], 'var(--warn)');
+    setPhase(`Failover complete — slow path: time grows with partition count (${n.toLocaleString()})`, 100);
+  } else {
+    if (S.dead >= 0) { logLine(logEl, 'Reset the cluster first'); running = false; return; }
+    const old = S.ctrl; S.dead = old; render();
+    logLine(logEl, `<b>ctrl-${old + 1} (active controller) crashed</b>`, true);
+    await progress('Voters detect missing leader heartbeats…', 500);
+    const cands = [0, 1, 2].filter(i => i !== old);
+    logLine(logEl, `ctrl-${cands[0] + 1} starts a Raft election (new epoch) and requests votes`);
+    await dot(POS.q[cands[0]], POS.q[cands[1]], 'var(--accent)', 400);
+    await dot(POS.q[cands[1]], POS.q[cands[0]], 'var(--ok)', 400);
+    S.ctrl = cands[0]; S.mlog.push('LeaderChange epoch+1'); render();
+    logLine(logEl, `ctrl-${S.ctrl + 1} is the new active controller — it already has the full metadata log in memory`, true);
+    await progress('New controller ready', 300);
+    await Promise.all(POS.b.map(b => dot(POS.q[S.ctrl], b, 'var(--accent)', 500)));
+    setPhase(`Failover complete — fast path: no reload, independent of partition count (${n.toLocaleString()})`, 100);
+  }
+  running = false;
+}
+
+document.querySelectorAll('#mode button').forEach(b => b.onclick = () => {
+  if (running) return;
+  document.querySelectorAll('#mode button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  mode = b.dataset.mode; reset();
+});
+document.getElementById('create').onclick = createTopic;
+document.getElementById('fail').onclick = failController;
+document.getElementById('restore').onclick = () => { if (!running) reset(); };
+document.getElementById('parts').oninput = e => { document.getElementById('partsv').textContent = PARTS[+e.target.value - 1].toLocaleString(); };
+document.getElementById('partsv').textContent = parts().toLocaleString();
+reset();
+
+renderQuiz('quiz', [
+  { q: 'In ZooKeeper mode, what was ZooKeeper primarily used for?',
+    options: ['Storing message data for topics', 'Storing cluster metadata and electing the controller', 'Load-balancing producer traffic', 'Compacting topics'],
+    answer: 1, explain: 'ZooKeeper held metadata (brokers, topics, configs, ACLs) and coordinated controller election. Message data always lived on brokers.' },
+  { q: 'Where is cluster metadata stored in KRaft mode?',
+    options: ['In an embedded ZooKeeper inside each broker', 'In the internal <code>__cluster_metadata</code> topic, replicated by the controller quorum via Raft', 'In <code>__consumer_offsets</code>', 'In a local file on each broker only'],
+    answer: 1, explain: 'KRaft stores metadata as an event log, replicated with the Raft consensus protocol across controller nodes.' },
+  { q: 'Why is controller failover faster in KRaft than in ZooKeeper mode?',
+    options: ['KRaft uses faster disks', 'Standby controllers already hold the replicated metadata log in memory, so no full reload is needed', 'KRaft skips leader election entirely', 'KRaft limits clusters to 1,000 partitions'],
+    answer: 1, explain: 'In ZK mode the new controller had to read all metadata from ZooKeeper — time grew with partition count. KRaft voters are already up to date.' },
+  { q: 'You are setting up a 3-node local lab where each node acts as both broker and controller. Which setting expresses that?',
+    options: ['<code>zookeeper.connect=localhost:2181</code>', '<code>process.roles=broker,controller</code>', '<code>controller.enable=true</code>', '<code>broker.id=-1</code>'],
+    answer: 1, explain: 'Combined mode (<code>process.roles=broker,controller</code>) is fine for development; production separates controller and broker nodes.' },
+  { q: 'A team plans to upgrade an existing ZooKeeper-based cluster straight to Apache Kafka 4.0. What must happen first?',
+    options: ['Nothing — 4.0 still supports ZooKeeper', 'Migrate the cluster to KRaft (on a 3.x bridge release) before upgrading to 4.0', 'Delete all topics and recreate them', 'Upgrade ZooKeeper to 4.0'],
+    answer: 1, explain: 'Kafka 4.0 removed ZooKeeper. Clusters must complete the ZK → KRaft migration on a supported 3.x release (e.g. 3.9) first.' }
+]);
+</script>
+</body>
+</html>

@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka Module 1 Visualizations</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .topics { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: 24px; }
+  .topic { display: block; text-decoration: none; color: var(--text); transition: border-color .15s, transform .15s; }
+  .topic:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .topic .num { font-family: var(--mono); color: var(--accent); font-size: 13px; font-weight: 600; }
+  .topic h3 { margin: 6px 0; }
+  .topic p { margin: 0 0 10px; color: var(--muted); font-size: 15px; }
+  .topic .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  ol.hands { margin: 0; padding-left: 20px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <span>Apache Kafka &amp; Confluent Kafka Administration</span>
+    <div class="nav"><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Module 1</div>
+  <h1>Messaging &amp; Kafka Fundamentals</h1>
+  <p class="lede">Interactive visualizations for each Module 1 topic. Each page has a hands-on simulation you can
+    play with, followed by a 5-question self-quiz with explanations.</p>
+  <p style="color:var(--muted);font-size:14px;margin:4px 0 0"><b style="color:var(--text)">Objective:</b> Understand messaging concepts and
+    core Apache Kafka architecture, components, and distributed design principles.</p>
+
+  <div class="topics">
+    <a class="card topic" href="01-messaging-models.html">
+      <div class="num">01</div><h3>Messaging models</h3>
+      <p>Queues vs. pub-sub vs. Kafka's durable log, compared with IBM MQ. Take consumers offline and replay history.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="02-kafka-overview.html">
+      <div class="num">02</div><h3>Kafka overview &amp; use cases</h3>
+      <p>Six real-world patterns as live data-flow diagrams, and why a Kafka backbone beats N×M integrations.</p>
+      <div class="tags"><span class="pill">explorer</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="03-ecosystem.html">
+      <div class="num">03</div><h3>Producers, consumers, brokers, topics, partitions</h3>
+      <p>Route keyed records to partitions and scale a consumer group to see rebalancing and idle consumers.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="04-architecture.html">
+      <div class="num">04</div><h3>Cluster architecture, offsets &amp; replicas</h3>
+      <p>Kill and restart brokers: leader election, ISR, high watermark, consumer lag and offline partitions.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="05-retention-compaction.html">
+      <div class="num">05</div><h3>Retention &amp; compaction</h3>
+      <p>Advance the clock to watch segments expire, then run the log cleaner on a keyed topic with tombstones.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="06-zookeeper-vs-kraft.html">
+      <div class="num">06</div><h3>ZooKeeper vs. KRaft</h3>
+      <p>Create topics and kill the controller in both modes to see how metadata flows and failover differs.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+  </div>
+
+  <h2>Hands-on for this module</h2>
+  <div class="card">
+    <ol class="hands">
+      <li>Docker Desktop and local environment setup</li>
+      <li>Install and run Apache Kafka locally (KRaft mode)</li>
+      <li>Explore Kafka CLI tools — <code>kafka-topics.sh</code>, <code>kafka-console-producer.sh</code>, <code>kafka-console-consumer.sh</code>, <code>kafka-consumer-groups.sh</code></li>
+    </ol>
+  </div>
+</div>
+</body>
+</html>

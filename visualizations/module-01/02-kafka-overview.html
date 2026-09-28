@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka Overview &amp; Use Cases</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .uc-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+  .uc-tabs button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .props .card h3 { display: flex; align-items: center; gap: 8px; }
+  .props .n { font-family: var(--mono); color: var(--accent); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 1 · Messaging &amp; Kafka Fundamentals</a>
+    <div class="nav"><span>2 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 2</div>
+  <h1>Kafka overview &amp; use cases</h1>
+  <p class="lede">Apache Kafka is a <b>distributed event streaming platform</b>: it lets many systems publish streams of records,
+    stores them durably and in order, and lets many other systems read them — in real time or later.</p>
+
+  <div class="grid grid-3 props" style="margin-top:20px">
+    <div class="card"><h3><span class="n">01</span> Publish &amp; subscribe</h3><p>Producers write events to topics; any number of consumer groups read them independently.</p></div>
+    <div class="card"><h3><span class="n">02</span> Store durably</h3><p>Events are written to disk and replicated across brokers, kept for a configured retention period.</p></div>
+    <div class="card"><h3><span class="n">03</span> Process in order</h3><p>Order is guaranteed within a partition, so related events (same key) are processed in sequence.</p></div>
+    <div class="card"><h3><span class="n">04</span> Scale horizontally</h3><p>Topics are split into partitions spread over brokers — add brokers and partitions to add throughput.</p></div>
+  </div>
+
+  <h2>Use-case explorer</h2>
+  <p class="lede" style="font-size:15px">Pick a pattern to see how data flows through Kafka. The same cluster usually serves many of these at once.</p>
+  <div class="card">
+    <div class="uc-tabs" id="tabs"></div>
+    <div class="stage" style="margin-top:14px"><svg id="svg" viewBox="0 0 900 330" role="img" aria-label="Use case data flow"></svg></div>
+    <div id="desc" style="margin-top:14px"></div>
+  </div>
+
+  <div class="callout">A useful mental model: Kafka is the <b>central nervous system</b> of a data platform. Instead of N×M point-to-point
+    integrations, each system connects once to Kafka — producers don't need to know who consumes, and new consumers can be
+    added without touching producers.</div>
+
+  <h2>Point-to-point integration vs. a Kafka backbone</h2>
+  <div class="card">
+    <div class="controls">
+      <label class="range">Systems on each side <input type="range" id="n" min="2" max="8" value="4"> <b id="nv">4</b></label>
+    </div>
+    <div class="grid grid-2">
+      <div><h3>Without Kafka</h3><div class="stage"><svg id="p2p" viewBox="0 0 400 260"></svg></div><p id="p2pc" class="mono"></p></div>
+      <div><h3>With Kafka</h3><div class="stage"><svg id="hub" viewBox="0 0 400 260"></svg></div><p id="hubc" class="mono"></p></div>
+    </div>
+  </div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="01-messaging-models.html"><small>← Previous</small>Messaging models</a>
+    <a class="next" href="03-ecosystem.html"><small>Next →</small>Producers, consumers, brokers, topics, partitions</a>
+  </div>
+</div>
+
+<script>
+const USE_CASES = [
+  { id: 'activity', name: 'Activity tracking',
+    sources: ['Web app', 'Mobile app', 'Kiosk'], topics: ['page-views', 'clicks'], sinks: ['Real-time dashboard', 'Recommendation engine', 'Data lake'],
+    text: 'The original LinkedIn use case. Every user action becomes an event. High volume, small records — Kafka’s batching and sequential disk I/O handle millions of events per second.' },
+  { id: 'logs', name: 'Log aggregation',
+    sources: ['App servers', 'Kubernetes pods', 'Firewalls'], topics: ['app-logs', 'audit-logs'], sinks: ['Elasticsearch / OpenSearch', 'SIEM', 'S3 archive'],
+    text: 'Replaces file shipping with a durable buffer. If the search cluster is down for maintenance, logs pile up in Kafka (within retention) instead of being lost.' },
+  { id: 'micro', name: 'Microservice events',
+    sources: ['Order service', 'Payment service'], topics: ['orders', 'payments'], sinks: ['Inventory service', 'Notification service', 'Shipping service'],
+    text: 'Services publish domain events instead of calling each other synchronously. Adding a new service means adding a consumer group — no change to the publisher.' },
+  { id: 'cdc', name: 'Change data capture',
+    sources: ['Oracle DB', 'PostgreSQL', 'Mainframe (DB2)'], topics: ['db.customers', 'db.accounts'], sinks: ['Cache (Redis)', 'Search index', 'Data warehouse'],
+    text: 'Kafka Connect + Debezium stream every row change out of databases. Compacted topics keep the latest state per primary key.' },
+  { id: 'stream', name: 'Stream processing',
+    sources: ['Card terminals', 'Online payments'], topics: ['transactions', 'fraud-alerts'], sinks: ['Fraud team alerts', 'Block card API', 'Case management'],
+    text: 'Kafka Streams / Flink read a topic, compute (filters, joins, windows) and write results to another topic — e.g. flagging fraud within milliseconds.' },
+  { id: 'mq', name: 'MQ offload / integration',
+    sources: ['IBM MQ', 'SFTP batch', 'REST gateway'], topics: ['legacy-events', 'partner-feed'], sinks: ['Cloud apps', 'Analytics', 'Partner APIs'],
+    text: 'An MQ source connector bridges existing queue-based systems into Kafka, letting new consumers tap legacy data without changing the mainframe side.' }
+];
+
+const svg = document.getElementById('svg');
+let current, particles = [], paths = [];
+
+function drawUseCase(uc) {
+  current = uc;
+  svg.innerHTML = '';
+  particles = []; paths = [];
+  const node = (x, y, w, label, kind) => {
+    const g = el('g', {}, svg);
+    el('rect', { x, y: y - 20, width: w, height: 40, rx: 9,
+      fill: kind === 'topic' ? 'var(--accent-soft)' : 'var(--surface)',
+      stroke: kind === 'topic' ? 'var(--accent)' : 'var(--border)' }, g);
+    el('text', { x: x + w / 2, y: y + 5, 'text-anchor': 'middle', 'font-size': 13, 'font-weight': kind === 'topic' ? 600 : 500,
+      class: kind === 'topic' ? 'mono' : '', text: label }, g);
+  };
+  const ys = (n, top, bottom) => Array.from({ length: n }, (_, i) => n === 1 ? (top + bottom) / 2 : top + i * (bottom - top) / (n - 1));
+
+  // kafka cluster outline
+  el('rect', { x: 330, y: 30, width: 240, height: 270, rx: 16, fill: 'none', stroke: 'var(--accent)', 'stroke-dasharray': '6 5' }, svg);
+  el('text', { x: 450, y: 52, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 700, style: 'fill:var(--accent)', text: 'KAFKA CLUSTER' }, svg);
+  el('text', { x: 20, y: 22, 'font-size': 12, class: 'muted', text: 'PRODUCERS (sources)' }, svg);
+  el('text', { x: 880, y: 22, 'text-anchor': 'end', 'font-size': 12, class: 'muted', text: 'CONSUMERS (sinks)' }, svg);
+
+  const sY = ys(uc.sources.length, 70, 270), tY = ys(uc.topics.length, 110, 230), kY = ys(uc.sinks.length, 70, 270);
+  const edgeLayer = el('g', {}, svg);
+  uc.sources.forEach((s, i) => uc.topics.forEach((t, j) => {
+    if ((i + j) % uc.topics.length === 0 || uc.sources.length <= 2) addPath(edgeLayer, 200, sY[i], 360, tY[j], j);
+  }));
+  uc.topics.forEach((t, j) => uc.sinks.forEach((k, i) => addPath(edgeLayer, 540, tY[j], 700, kY[i], j)));
+  uc.sources.forEach((s, i) => node(20, sY[i], 180, s));
+  uc.topics.forEach((t, j) => node(360, tY[j], 180, t, 'topic'));
+  uc.sinks.forEach((k, i) => node(700, kY[i], 180, k));
+
+  document.getElementById('desc').innerHTML = `<h3>${uc.name}</h3><p>${uc.text}</p>`;
+  document.querySelectorAll('#tabs button').forEach(b => b.setAttribute('aria-pressed', b.dataset.id === uc.id));
+}
+
+function addPath(layer, x1, y1, x2, y2, colorIdx) {
+  const d = `M${x1} ${y1} C ${x1 + 70} ${y1}, ${x2 - 70} ${y2}, ${x2} ${y2}`;
+  const p = el('path', { d, fill: 'none', stroke: 'var(--border)', 'stroke-width': 1.5 }, layer);
+  paths.push(p);
+  const len = p.getTotalLength();
+  for (let k = 0; k < 2; k++) {
+    const c = el('circle', { r: 4, fill: PCOLORS[colorIdx % 6] }, layer);
+    particles.push({ c, p, len, t: Math.random() });
+  }
+}
+
+function tick() {
+  if (!reducedMotion) {
+    particles.forEach(o => {
+      o.t = (o.t + 0.004) % 1;
+      const pt = o.p.getPointAtLength(o.t * o.len);
+      o.c.setAttribute('cx', pt.x); o.c.setAttribute('cy', pt.y);
+    });
+  } else {
+    particles.forEach(o => { const pt = o.p.getPointAtLength(o.t * o.len); o.c.setAttribute('cx', pt.x); o.c.setAttribute('cy', pt.y); });
+  }
+  requestAnimationFrame(tick);
+}
+
+const tabs = document.getElementById('tabs');
+USE_CASES.forEach(uc => {
+  const b = document.createElement('button');
+  b.textContent = uc.name; b.dataset.id = uc.id;
+  b.onclick = () => drawUseCase(uc);
+  tabs.appendChild(b);
+});
+drawUseCase(USE_CASES[0]);
+requestAnimationFrame(tick);
+
+// point-to-point vs hub
+function drawIntegration(n) {
+  document.getElementById('nv').textContent = n;
+  const p2p = document.getElementById('p2p'), hub = document.getElementById('hub');
+  p2p.innerHTML = ''; hub.innerHTML = '';
+  const ys = Array.from({ length: n }, (_, i) => 20 + (i + .5) * 220 / n);
+  ys.forEach(a => ys.forEach(b => el('line', { x1: 60, y1: a, x2: 340, y2: b, stroke: 'var(--bad)', 'stroke-opacity': .45 }, p2p)));
+  ys.forEach(y => {
+    el('line', { x1: 60, y1: y, x2: 200, y2: 130, stroke: 'var(--ok)' }, hub);
+    el('line', { x1: 200, y1: 130, x2: 340, y2: y, stroke: 'var(--ok)' }, hub);
+  });
+  [p2p, hub].forEach(s => ys.forEach(y => {
+    el('rect', { x: 20, y: y - 9, width: 40, height: 18, rx: 4, fill: 'var(--surface)', stroke: 'var(--border)' }, s);
+    el('rect', { x: 340, y: y - 9, width: 40, height: 18, rx: 4, fill: 'var(--surface)', stroke: 'var(--border)' }, s);
+  }));
+  el('rect', { x: 165, y: 105, width: 70, height: 50, rx: 10, fill: 'var(--accent)' }, hub);
+  el('text', { x: 200, y: 135, 'text-anchor': 'middle', 'font-weight': 700, style: 'fill:#fff', text: 'Kafka' }, hub);
+  document.getElementById('p2pc').textContent = `${n} × ${n} = ${n * n} integrations to build and run`;
+  document.getElementById('hubc').textContent = `${n} + ${n} = ${2 * n} connections to Kafka`;
+}
+const range = document.getElementById('n');
+range.oninput = () => drawIntegration(+range.value);
+drawIntegration(4);
+
+renderQuiz('quiz', [
+  { q: 'Which description best fits Apache Kafka?',
+    options: ['An in-memory cache for key-value lookups', 'A distributed, durable, partitioned commit log for event streams', 'A relational database with a streaming API', 'A job scheduler for batch ETL'],
+    answer: 1, explain: 'Kafka’s core is a replicated, partitioned, append-only log. Everything else (Connect, Streams, Schema Registry) builds on that.' },
+  { q: 'A log-analytics cluster goes down for 2 hours of maintenance. What does Kafka provide in this scenario?',
+    options: ['Nothing — logs produced during the outage are dropped', 'Producers are blocked until the cluster returns', 'Logs are buffered in the topic (within retention) and consumed when the cluster returns', 'Kafka automatically forwards logs to a backup cluster'],
+    answer: 2, explain: 'Kafka decouples producers and consumers in time. As long as retention is longer than the outage, the consumer picks up from its last committed offset.' },
+  { q: 'Which use case typically relies on log-compacted topics?',
+    options: ['Click-stream analytics', 'Change data capture of database tables', 'Application debug logs', 'Short-lived metrics'],
+    answer: 1, explain: 'CDC topics are keyed by primary key; compaction keeps the latest row state per key, so a new consumer can rebuild the full table.' },
+  { q: 'Connecting 6 source systems to 6 target systems point-to-point needs up to 36 integrations. With Kafka as the hub, roughly how many?',
+    options: ['6', '12', '36', '72'],
+    answer: 1, explain: 'Each system connects once to Kafka: 6 producers + 6 consumers = 12 connections, and new systems are added without touching existing ones.' },
+  { q: 'Where is ordering guaranteed in Kafka?',
+    options: ['Across the entire topic', 'Across the whole cluster', 'Within a single partition', 'Nowhere — ordering is never guaranteed'],
+    answer: 2, explain: 'Records within one partition are strictly ordered by offset. Use a key so related events land in the same partition.' }
+]);
+</script>
+</body>
+</html>

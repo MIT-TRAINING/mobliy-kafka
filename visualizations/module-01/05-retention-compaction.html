@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Retention &amp; Compaction</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .segs { display: flex; gap: 8px; flex-wrap: wrap; min-height: 96px; align-items: flex-start; }
+  .seg-box {
+    border: 1.5px solid var(--border); border-radius: 8px; padding: 6px; background: var(--surface);
+    transition: opacity .5s, transform .5s;
+  }
+  .seg-box.active { border-color: var(--accent); border-style: dashed; }
+  .seg-box.dying { opacity: 0; transform: translateY(-10px) scale(.95); }
+  .seg-box .fname { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-bottom: 4px; }
+  .cells { display: flex; gap: 3px; }
+  .cell {
+    width: 26px; height: 26px; border-radius: 4px; color: #fff; font-size: 10px; font-weight: 600;
+    display: grid; place-items: center; font-family: var(--mono);
+  }
+  .cell.empty { background: none; border: 1px dashed var(--border); }
+  .clog { display: flex; flex-wrap: wrap; gap: 6px; }
+  .rec {
+    width: 92px; border-radius: 6px; padding: 5px 7px; font-size: 12px; color: #fff; line-height: 1.3;
+    transition: opacity .6s, transform .6s;
+  }
+  .rec .o { font-family: var(--mono); font-size: 10px; opacity: .85; }
+  .rec.tomb { background: var(--surface-2) !important; color: var(--text); border: 1.5px dashed var(--bad); }
+  .rec.active-seg { outline: 2px dashed var(--accent); outline-offset: 1px; }
+  .rec.gone { opacity: 0; transform: scale(.8); }
+  .split { grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr); }
+  @media (max-width: 700px) { .split { grid-template-columns: 1fr; } }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-top: 10px; }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 1 · Messaging &amp; Kafka Fundamentals</a>
+    <div class="nav"><span>5 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 5</div>
+  <h1>Message retention &amp; log compaction</h1>
+  <p class="lede">Kafka never deletes a record because someone read it. Data leaves a partition only through its
+    <code>cleanup.policy</code>: <b>delete</b> (drop whole old segments by time or size) or <b>compact</b> (keep the latest value per key).</p>
+
+  <h2>1 · cleanup.policy=delete — time- and size-based retention</h2>
+  <div class="card">
+    <div class="controls">
+      <label class="range"><code>retention.ms</code> <input type="range" id="ret" min="2" max="24" value="12"> <b id="retv">12 h</b></label>
+      <label class="range"><code>retention.bytes</code> <input type="range" id="rbytes" min="12" max="61" value="61"> <b id="rbytesv">unlimited</b></label>
+    </div>
+    <div class="controls">
+      <label class="range">Records / hour <input type="range" id="rate" min="1" max="4" value="2"> <b id="ratev">2</b></label>
+      <button class="primary" id="tick">Advance 1 hour</button>
+      <button id="play">▶ Play</button>
+      <button id="rreset">Reset</button>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="clock">0 h</b><span>broker clock</span></div>
+      <div class="stat"><b id="lso">0</b><span>log start offset</span></div>
+      <div class="stat"><b id="leo">0</b><span>log end offset</span></div>
+      <div class="stat"><b id="size">0</b><span>records on disk</span></div>
+    </div>
+    <div class="stage" style="margin-top:12px"><div class="segs" id="segs"></div></div>
+    <div class="legend"><span><i style="background:var(--p0)"></i>newer record</span><span><i style="background:var(--muted)"></i>older record</span>
+      <span><i style="border:1.5px dashed var(--accent)"></i>active segment (never deleted)</span></div>
+    <div class="log" id="rlog" aria-live="polite"></div>
+  </div>
+  <div class="callout">Retention works on <b>whole segments</b>, not individual records. A segment (<code>.log</code> + <code>.index</code> +
+    <code>.timeindex</code> files) is eligible once its <em>newest</em> record is older than <code>retention.ms</code>, or when the partition
+    exceeds <code>retention.bytes</code>. The active segment rolls when it hits <code>segment.bytes</code> (default 1 GB) or
+    <code>segment.ms</code> (default 7 days) — here each segment holds 6 records to keep things visible. Default
+    <code>retention.ms</code> is 7 days; <code>retention.bytes</code> defaults to −1 (unlimited) and applies <b>per partition</b>.</div>
+
+  <h2>2 · cleanup.policy=compact — latest value per key</h2>
+  <div class="card">
+    <p style="margin-top:0">Topic <code>customer-address</code>, keyed by customer ID. Produce updates, then run the log cleaner.
+      The last 4 records sit in the <b>active segment</b> and are never compacted.</p>
+    <div class="controls">
+      <button class="primary" id="upd">Produce random update</button>
+      <button id="upd5">Produce 5 updates</button>
+      <button class="danger" id="tomb">Produce tombstone (delete a key)</button>
+      <button id="clean">🧹 Run log cleaner</button>
+      <button id="creset">Reset</button>
+    </div>
+    <div class="grid split">
+      <div>
+        <h3>Partition log</h3>
+        <div class="stage"><div class="clog" id="clog"></div></div>
+      </div>
+      <div>
+        <h3>What a new consumer rebuilds</h3>
+        <div class="table-wrap"><table><thead><tr><th>Key</th><th>Latest value</th></tr></thead><tbody id="view"></tbody></table></div>
+      </div>
+    </div>
+    <div class="log" id="clogtxt" aria-live="polite"></div>
+  </div>
+  <div class="grid grid-2" style="margin-top:16px">
+    <div class="card"><h3>What compaction guarantees</h3>
+      <ul style="margin:0;padding-left:20px">
+        <li>At least the <b>latest</b> record for every key is retained.</li>
+        <li><b>Offsets never change</b> — compaction leaves gaps (notice the missing numbers).</li>
+        <li>Order of the surviving records is preserved.</li>
+        <li>A consumer reading from offset 0 sees the full current state.</li>
+      </ul></div>
+    <div class="card"><h3>Tombstones</h3>
+      <p style="margin:0">A record with a key and a <code>null</code> value marks the key for deletion. It survives compaction for
+        <code>delete.retention.ms</code> (default 24 h) so consumers can see the delete, then it's removed too. In this demo a tombstone
+        is removed on the <em>second</em> cleaner run.</p></div>
+  </div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="04-architecture.html"><small>← Previous</small>Cluster architecture, offsets &amp; replicas</a>
+    <a class="next" href="06-zookeeper-vs-kraft.html"><small>Next →</small>ZooKeeper vs. KRaft</a>
+  </div>
+</div>
+
+<script>
+/* ---------- Part 1: delete policy ---------- */
+const SEG = 6;
+let R;
+const $ = id => document.getElementById(id);
+function rReset() { R = { t: 0, recs: [], next: 0 }; $('rlog').innerHTML = ''; rRender(); }
+const retH = () => +$('ret').value;
+const retRecs = () => +$('rbytes').value > 60 ? Infinity : +$('rbytes').value;
+
+function segments() {
+  const map = new Map();
+  R.recs.forEach(r => { const k = Math.floor(r.off / SEG); if (!map.has(k)) map.set(k, []); map.get(k).push(r); });
+  return [...map.entries()].map(([k, recs]) => ({ k, recs }));
+}
+
+function rRender(dying) {
+  const segs = segments();
+  const activeK = Math.floor((R.next - 1) / SEG);
+  const box = $('segs');
+  box.innerHTML = '';
+  const oldest = R.recs.length ? R.recs[0].ts : 0;
+  segs.forEach(s => {
+    const d = document.createElement('div');
+    d.className = 'seg-box' + (s.k === activeK ? ' active' : '') + (dying && dying.includes(s.k) ? ' dying' : '');
+    d.innerHTML = `<div class="fname">${String(s.k * SEG).padStart(8, '0')}.log</div>`;
+    const cells = document.createElement('div'); cells.className = 'cells';
+    for (let i = 0; i < SEG; i++) {
+      const r = s.recs.find(x => x.off === s.k * SEG + i);
+      const c = document.createElement('div');
+      if (r) {
+        const age = R.t - r.ts;
+        const mix = Math.max(0, Math.min(100, 100 - age / retH() * 100));
+        c.className = 'cell';
+        c.style.background = `color-mix(in srgb, var(--p0) ${mix}%, var(--muted))`;
+        c.title = `offset ${r.off} · written at ${r.ts} h · age ${age} h`;
+        c.textContent = r.off;
+      } else c.className = 'cell empty';
+      cells.appendChild(c);
+    }
+    d.appendChild(cells);
+    const newest = Math.max(...s.recs.map(x => x.ts));
+    const f = document.createElement('div'); f.className = 'fname'; f.style.marginTop = '4px';
+    f.textContent = s.k === activeK ? 'active' : `newest @${newest}h`;
+    d.appendChild(f);
+    box.appendChild(d);
+  });
+  if (!segs.length) box.innerHTML = '<span style="color:var(--muted);font-size:14px">Partition is empty — advance time to produce records.</span>';
+  $('clock').textContent = R.t + ' h';
+  $('lso').textContent = R.recs.length ? R.recs[0].off : R.next;
+  $('leo').textContent = R.next;
+  $('size').textContent = R.recs.length;
+}
+
+async function rTick() {
+  R.t++;
+  const rate = +$('rate').value;
+  for (let i = 0; i < rate; i++) R.recs.push({ off: R.next++, ts: R.t });
+  const segs = segments();
+  const activeK = Math.floor((R.next - 1) / SEG);
+  const del = [];
+  // time-based
+  segs.forEach(s => {
+    if (s.k === activeK) return;
+    const newest = Math.max(...s.recs.map(x => x.ts));
+    if (R.t - newest > retH()) { del.push(s.k); logLine($('rlog'), `segment ${String(s.k * SEG).padStart(8, '0')}.log deleted: newest record is ${R.t - newest} h old &gt; retention.ms`, true); }
+  });
+  // size-based
+  let size = R.recs.filter(r => !del.includes(Math.floor(r.off / SEG))).length;
+  for (const s of segs) {
+    if (size <= retRecs() || s.k === activeK) break;
+    if (del.includes(s.k)) continue;
+    del.push(s.k); size -= s.recs.length;
+    logLine($('rlog'), `segment ${String(s.k * SEG).padStart(8, '0')}.log deleted: partition size exceeds retention.bytes`, true);
+  }
+  if (del.length) {
+    rRender(null);
+    await sleep(20);
+    rRender(del);
+    await sleep(reducedMotion ? 0 : 500);
+    R.recs = R.recs.filter(r => !del.includes(Math.floor(r.off / SEG)));
+  }
+  rRender();
+}
+
+$('ret').oninput = () => { $('retv').textContent = retH() + ' h'; rRender(); };
+$('rbytes').oninput = () => { $('rbytesv').textContent = retRecs() === Infinity ? 'unlimited' : `${retRecs()} records`; };
+$('rate').oninput = () => { $('ratev').textContent = $('rate').value; };
+$('tick').onclick = rTick;
+$('rreset').onclick = rReset;
+let playT = null;
+$('play').onclick = e => {
+  if (playT) { clearInterval(playT); playT = null; e.target.textContent = '▶ Play'; }
+  else { playT = setInterval(rTick, 800); e.target.textContent = '⏸ Pause'; }
+};
+rReset();
+
+/* ---------- Part 2: compaction ---------- */
+const KEYS = ['C-101', 'C-102', 'C-103', 'C-104', 'C-105'];
+const CITIES = ['Pune', 'Chennai', 'Austin', 'Leeds', 'Dublin', 'Osaka', 'Lyon', 'Perth', 'Oslo', 'Quito'];
+const ACTIVE = 4;
+let C;
+function cReset() {
+  C = { recs: [], next: 0 };
+  KEYS.forEach(k => cProduce(k, CITIES[Math.floor(Math.random() * CITIES.length)], false, true));
+  $('clogtxt').innerHTML = '';
+  cRender();
+}
+function kcolor(k) { return PCOLORS[KEYS.indexOf(k) % 6]; }
+function cProduce(key, val, tomb, silent) {
+  key = key || KEYS[Math.floor(Math.random() * KEYS.length)];
+  if (!tomb && !val) val = CITIES[Math.floor(Math.random() * CITIES.length)];
+  C.recs.push({ off: C.next++, key, val: tomb ? null : val, tomb: !!tomb, seen: false });
+  if (!silent) { logLine($('clogtxt'), tomb ? `tombstone for <b>${key}</b> (value = null)` : `${key} → ${val}`); cRender(); }
+}
+function cRender(goneOffs) {
+  const box = $('clog'); box.innerHTML = '';
+  const activeStart = C.recs.length - ACTIVE;
+  C.recs.forEach((r, i) => {
+    const d = document.createElement('div');
+    d.className = 'rec' + (r.tomb ? ' tomb' : '') + (i >= activeStart ? ' active-seg' : '') + (goneOffs && goneOffs.includes(r.off) ? ' gone' : '');
+    d.style.background = kcolor(r.key);
+    d.innerHTML = `<div class="o">offset ${r.off}</div><b>${r.key}</b><div>${r.tomb ? '∅ tombstone' : r.val}</div>`;
+    box.appendChild(d);
+  });
+  const latest = new Map();
+  C.recs.forEach(r => latest.set(r.key, r));
+  $('view').innerHTML = KEYS.filter(k => latest.has(k) && !latest.get(k).tomb)
+    .map(k => `<tr><td class="mono"><span class="pill" style="background:${kcolor(k)};color:#fff">${k}</span></td><td>${latest.get(k).val}</td></tr>`).join('')
+    || '<tr><td colspan="2" style="color:var(--muted)">empty</td></tr>';
+}
+async function cClean() {
+  const activeStart = C.recs.length - ACTIVE;
+  const cleanable = C.recs.slice(0, Math.max(0, activeStart));
+  const lastIdx = new Map();
+  cleanable.forEach(r => lastIdx.set(r.key, r.off));
+  const remove = [];
+  cleanable.forEach(r => {
+    if (lastIdx.get(r.key) !== r.off) remove.push(r.off);
+    else if (r.tomb && r.seen) remove.push(r.off);
+  });
+  const tombDropped = cleanable.filter(r => r.tomb && r.seen).length;
+  if (!remove.length) {
+    logLine($('clogtxt'), 'Log cleaner: nothing to compact (produce more updates first)', true);
+  } else {
+    cRender(); await sleep(20); cRender(remove);
+    await sleep(reducedMotion ? 0 : 650);
+    C.recs = C.recs.filter(r => !remove.includes(r.off));
+    logLine($('clogtxt'), `Log cleaner removed ${remove.length} record(s)` + (tombDropped ? `, including ${tombDropped} expired tombstone(s)` : '') +
+      ` — offsets of the survivors are unchanged`, true);
+  }
+  C.recs.forEach((r, i) => { if (r.tomb && i < activeStart) r.seen = true; });
+  cRender();
+}
+$('upd').onclick = () => cProduce();
+$('upd5').onclick = () => { for (let i = 0; i < 5; i++) cProduce(); };
+$('tomb').onclick = () => {
+  const latest = new Map(); C.recs.forEach(r => latest.set(r.key, r));
+  const live = KEYS.filter(k => latest.has(k) && !latest.get(k).tomb);
+  if (!live.length) return;
+  cProduce(live[Math.floor(Math.random() * live.length)], null, true);
+};
+$('clean').onclick = cClean;
+$('creset').onclick = cReset;
+cReset();
+
+renderQuiz('quiz', [
+  { q: 'A topic has <code>retention.ms</code> = 7 days. A consumer group read every record yesterday. When are those records deleted?',
+    options: ['Immediately after the group commits its offset', 'When all consumer groups have read them', 'When their segment is closed and its newest record is older than 7 days', 'Never, unless an admin deletes the topic'],
+    answer: 2, explain: 'Consumption has no effect on retention. Deletion is by whole segment, based on age (or size), and never touches the active segment.' },
+  { q: '<code>retention.bytes</code> is set to 10 GB on a topic with 12 partitions. Roughly how much data can the topic hold?',
+    options: ['10 GB total', 'About 120 GB (10 GB per partition)', '10 GB per broker', '10 GB per consumer group'],
+    answer: 1, explain: '<code>retention.bytes</code> is enforced per partition, so the topic can hold ~12 × 10 GB (times the replication factor on disk).' },
+  { q: 'Which statement about log compaction is TRUE?',
+    options: ['Compaction renumbers offsets so they stay contiguous', 'Compaction keeps at least the latest record for each key', 'Compaction removes records that have been consumed', 'Compaction only works on topics without keys'],
+    answer: 1, explain: 'Compaction keeps the latest value per key and leaves offsets unchanged (creating gaps). It requires keyed records.' },
+  { q: 'How do you delete a key from a compacted topic?',
+    options: ['Run kafka-delete-records.sh with the key', 'Produce a record with that key and a null value (a tombstone)', 'Set the key’s TTL in the topic config', 'Lower min.insync.replicas'],
+    answer: 1, explain: 'A tombstone marks the key as deleted; after <code>delete.retention.ms</code> the cleaner removes the tombstone itself as well.' },
+  { q: 'Which is the best fit for <code>cleanup.policy=compact</code>?',
+    options: ['Web click-stream events', 'Application debug logs', 'Latest account settings per user, used to rebuild a cache', 'Sensor readings used for 30-day trend charts'],
+    answer: 2, explain: 'Compaction suits "current state per key" data. Event histories (clicks, logs, readings) use time-based delete retention.' }
+]);
+</script>
+</body>
+</html>

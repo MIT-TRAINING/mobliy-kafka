@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka Cluster Architecture</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .broker-ctl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+  .broker-ctl button { width: 100%; }
+  td.st-ok { color: var(--ok); font-weight: 600; }
+  td.st-bad { color: var(--bad); font-weight: 600; }
+  td.st-warn { color: var(--warn); font-weight: 600; }
+  dl.terms { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; font-size: 15px; }
+  dl.terms dt { font-family: var(--mono); font-weight: 600; font-size: 14px; }
+  dl.terms dd { margin: 0; color: var(--muted); }
+  @media (max-width: 560px) { dl.terms { grid-template-columns: 1fr; } dl.terms dd { margin-bottom: 8px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 1 · Messaging &amp; Kafka Fundamentals</a>
+    <div class="nav"><span>4 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 4</div>
+  <h1>Cluster architecture: brokers, replicas &amp; offsets</h1>
+  <p class="lede">A 3-broker cluster hosts topic <code>payments</code> with 3 partitions. Each partition is copied to
+    <em>replication factor</em> brokers: one <b>leader</b> handles reads and writes, <b>followers</b> fetch from it. Produce data,
+    kill a broker, and watch leader election, ISR shrink/expand and the high watermark.</p>
+
+  <div class="card" style="margin-top:20px">
+    <div class="controls">
+      <span style="font-size:14px;color:var(--muted)">Replication factor</span>
+      <div class="seg" role="group" aria-label="Replication factor" id="rf">
+        <button data-rf="1" aria-pressed="false">1</button><button data-rf="2" aria-pressed="false">2</button><button data-rf="3" aria-pressed="true">3</button>
+      </div>
+      <button class="primary" id="produce">Produce 3 records</button>
+      <button id="consume">▶ Start consumer</button>
+      <button id="ple">Preferred leader election</button>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 470" role="img" aria-label="Brokers, partition replicas and replica logs"></svg></div>
+    <div class="broker-ctl" id="bctl"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <div class="card table-wrap" style="margin-top:16px">
+    <p class="mono" style="margin:0 0 8px;font-size:13px;color:var(--muted)">$ kafka-topics.sh --describe --topic payments --bootstrap-server localhost:9092</p>
+    <table><thead><tr><th>Partition</th><th>Leader</th><th>Replicas</th><th>Isr</th><th>High watermark</th><th>Consumer offset / lag</th><th>Status</th></tr></thead>
+      <tbody id="tbl"></tbody></table>
+  </div>
+
+  <h2>Key terms</h2>
+  <div class="card">
+    <dl class="terms">
+      <dt>Cluster</dt><dd>A set of brokers working together; one acts as the <b>controller</b> managing leadership and metadata.</dd>
+      <dt>Replication factor</dt><dd>How many copies of each partition exist. RF=3 tolerates 2 broker failures for reads (with suitable <code>min.insync.replicas</code>).</dd>
+      <dt>Leader / follower</dt><dd>Clients produce to and (by default) consume from the leader. Followers continuously fetch to stay in sync.</dd>
+      <dt>ISR</dt><dd>In-Sync Replicas — replicas caught up with the leader (within <code>replica.lag.time.max.ms</code>). Only ISR members can become leader when unclean election is disabled.</dd>
+      <dt>LEO</dt><dd>Log End Offset — the offset of the next record to be written on a given replica.</dd>
+      <dt>High watermark</dt><dd>Highest offset replicated to all ISR members. Consumers can only read below it, so they never see data that could be lost on failover.</dd>
+      <dt>Consumer lag</dt><dd>How far a consumer group is behind: <code>log-end offset − committed offset</code>. The #1 metric admins watch.</dd>
+    </dl>
+  </div>
+
+  <div class="callout warn">Try this: set RF=1, produce, then kill broker-1. Partition P0 goes <b>offline</b> — no other copy exists.
+    With RF=3, the same failure causes only a brief leader election. Also note records above the high watermark on a dead leader
+    can be <b>truncated</b>: that's why producers use <code>acks=all</code> (covered in Module 3).</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="03-ecosystem.html"><small>← Previous</small>Producers, consumers, brokers, topics, partitions</a>
+    <a class="next" href="05-retention-compaction.html"><small>Next →</small>Retention &amp; compaction</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg');
+const logEl = document.getElementById('log');
+const NB = 3, NP = 3, WIN = 28;
+let RF = 3, brokers, P, consuming = false, seq = 0;
+
+function reset() {
+  brokers = Array.from({ length: NB }, (_, i) => ({ id: i + 1, up: true }));
+  P = Array.from({ length: NP }, (_, p) => {
+    const replicas = Array.from({ length: RF }, (_, i) => (p + i) % NB);
+    return { replicas, leader: replicas[0], isr: [...replicas], leo: Object.fromEntries(replicas.map(r => [r, 0])),
+             recs: [], hw: 0, committed: 0 };
+  });
+  seq = 0; logEl.innerHTML = '';
+  render();
+}
+
+function bname(b) { return 'broker-' + (b + 1); }
+
+function render() {
+  svg.innerHTML = '';
+  // brokers
+  const bw = 280, bx = i => 15 + i * 295;
+  brokers.forEach((b, i) => {
+    const x = bx(i);
+    el('rect', { x, y: 10, width: bw, height: 150, rx: 12, fill: b.up ? 'var(--surface)' : 'var(--bad-soft)',
+      stroke: b.up ? 'var(--border)' : 'var(--bad)', 'stroke-dasharray': b.up ? '' : '6 4', 'stroke-width': 1.5 }, svg);
+    el('text', { x: x + 14, y: 34, 'font-weight': 700, text: bname(i) }, svg);
+    el('text', { x: x + bw - 14, y: 34, 'text-anchor': 'end', 'font-size': 12, style: `fill:${b.up ? 'var(--ok)' : 'var(--bad)'}`, 'font-weight': 600, text: b.up ? '● running' : '✕ down' }, svg);
+    let row = 0;
+    P.forEach((p, pi) => {
+      if (!p.replicas.includes(i)) return;
+      const y = 50 + row * 34; row++;
+      const isLeader = p.leader === i, inIsr = p.isr.includes(i);
+      el('rect', { x: x + 12, y, width: bw - 24, height: 28, rx: 6,
+        fill: isLeader ? PCOLORS[pi] : 'var(--surface-2)', stroke: PCOLORS[pi], 'stroke-width': 1.5,
+        opacity: b.up ? 1 : .45 }, svg);
+      el('text', { x: x + 24, y: y + 19, 'font-size': 13, 'font-weight': 700, style: isLeader ? 'fill:#fff' : '', text: 'P' + pi }, svg);
+      el('text', { x: x + 56, y: y + 19, 'font-size': 12, style: isLeader ? 'fill:#fff' : '',
+        text: (isLeader ? 'LEADER' : 'follower') + (inIsr ? ' · ISR' : ' · out of ISR') }, svg);
+      el('text', { x: x + bw - 22, y: y + 19, 'text-anchor': 'end', 'font-size': 11, class: isLeader ? '' : 'muted',
+        style: isLeader ? 'fill:#fff' : '', text: 'LEO ' + p.leo[i] }, svg);
+    });
+  });
+
+  // replica logs per partition
+  el('text', { x: 15, y: 190, 'font-size': 12, class: 'muted', text: 'REPLICA LOGS  (each cell = one record, number = offset; dashed line = high watermark; ▼ = consumer offset)' }, svg);
+  const cw = 26, lx = 150;
+  let y = 205;
+  P.forEach((p, pi) => {
+    const start = Math.max(0, p.recs.length - WIN);
+    el('text', { x: 15, y: y + 14, 'font-weight': 700, style: `fill:${PCOLORS[pi]}`, text: 'P' + pi }, svg);
+    el('text', { x: 45, y: y + 14, 'font-size': 11, class: 'muted', text: p.leader == null ? 'OFFLINE' : `HW ${p.hw}` }, svg);
+    // consumer marker
+    const cx = lx + (p.committed - start) * cw;
+    if (p.committed >= start) el('path', { d: `M${cx - 5} ${y - 2} l10 0 l-5 7 z`, fill: 'var(--text)' }, svg);
+    p.replicas.forEach((r, ri) => {
+      const ry = y + 6 + ri * 22;
+      const up = brokers[r].up;
+      el('text', { x: lx - 8, y: ry + 13, 'text-anchor': 'end', 'font-size': 11, class: 'muted',
+        text: bname(r) + (p.leader === r ? ' ★' : '') }, svg);
+      for (let k = start; k < Math.min(p.recs.length, start + WIN); k++) {
+        const has = k < p.leo[r];
+        const x = lx + (k - start) * cw;
+        el('rect', { x: x + 1, y: ry, width: cw - 3, height: 18, rx: 3,
+          fill: has ? PCOLORS[pi] : 'none', stroke: has ? 'none' : 'var(--border)', 'stroke-dasharray': '2 2',
+          opacity: up ? (k < p.hw ? 1 : .55) : .3 }, svg);
+        if (has) el('text', { x: x + cw / 2 - .5, y: ry + 13, 'text-anchor': 'middle', 'font-size': 9, style: 'fill:#fff', text: k }, svg);
+      }
+    });
+    const hx = lx + (p.hw - start) * cw - 1;
+    if (p.hw >= start) el('line', { x1: hx, y1: y + 2, x2: hx, y2: y + 8 + p.replicas.length * 22, stroke: 'var(--text)', 'stroke-dasharray': '4 3', 'stroke-width': 1.5 }, svg);
+    y += 16 + p.replicas.length * 22 + 10;
+  });
+  svg.setAttribute('viewBox', `0 0 900 ${Math.max(300, y + 5)}`);
+
+  // broker buttons
+  const bctl = document.getElementById('bctl');
+  bctl.innerHTML = '';
+  brokers.forEach((b, i) => {
+    const btn = document.createElement('button');
+    btn.className = b.up ? 'danger' : 'primary';
+    btn.textContent = b.up ? `Kill ${bname(i)}` : `Restart ${bname(i)}`;
+    btn.onclick = () => b.up ? kill(i) : restart(i);
+    bctl.appendChild(btn);
+  });
+
+  // table
+  document.getElementById('tbl').innerHTML = P.map((p, pi) => {
+    const offline = p.leader == null, under = !offline && p.isr.length < p.replicas.length;
+    return `<tr><td class="mono">${pi}</td><td class="mono">${offline ? 'none' : p.leader + 1}</td>
+      <td class="mono">${p.replicas.map(r => r + 1).join(',')}</td><td class="mono">${p.isr.map(r => r + 1).join(',')}</td>
+      <td class="mono">${p.hw}</td><td class="mono">${p.committed} / lag ${p.recs.length - p.committed}</td>
+      <td class="${offline ? 'st-bad' : under ? 'st-warn' : 'st-ok'}">${offline ? 'OFFLINE' : under ? 'under-replicated' : 'healthy'}</td></tr>`;
+  }).join('');
+}
+
+function produce() {
+  let sent = 0;
+  P.forEach((p, pi) => {
+    if (p.leader == null) { logLine(logEl, `produce to P${pi} <b>failed</b>: no leader (partition offline)`, true); return; }
+    p.recs.push(seq++); p.leo[p.leader] = p.recs.length; sent++;
+  });
+  if (sent) logLine(logEl, `${sent} record(s) appended on partition leaders; followers will fetch them`);
+  render();
+}
+
+function kill(b) {
+  brokers[b].up = false;
+  logLine(logEl, `<b>${bname(b)} failed</b>`, true);
+  P.forEach((p, pi) => {
+    if (!p.replicas.includes(b)) return;
+    const others = p.isr.filter(r => r !== b && brokers[r].up);
+    if (p.leader === b) {
+      if (others.length) {
+        const nl = others[0];
+        p.leader = nl;
+        p.isr = p.isr.filter(r => r !== b);
+        if (p.leo[nl] < p.recs.length) {
+          logLine(logEl, `P${pi}: records ${p.leo[nl]}–${p.recs.length - 1} were above the HW and are <b>truncated</b> (never acknowledged with acks=all)`, true);
+          p.recs.length = p.leo[nl];
+          p.replicas.forEach(r => p.leo[r] = Math.min(p.leo[r], p.leo[nl]));
+        }
+        logLine(logEl, `P${pi}: controller elects <b>${bname(nl)}</b> as new leader (from ISR)`, true);
+      } else {
+        p.leader = null;
+        logLine(logEl, `P${pi}: no other in-sync replica → partition <b>OFFLINE</b>`, true);
+      }
+    } else if (others.length || p.leader != null) {
+      p.isr = p.isr.filter(r => r !== b);
+      logLine(logEl, `P${pi}: ${bname(b)} removed from ISR`);
+    }
+  });
+  render();
+}
+
+function restart(b) {
+  brokers[b].up = true;
+  logLine(logEl, `<b>${bname(b)} restarted</b> — its replicas start fetching to catch up`, true);
+  P.forEach((p, pi) => {
+    if (p.leader == null && p.isr.includes(b)) {
+      p.leader = b;
+      logLine(logEl, `P${pi}: ${bname(b)} was the last in-sync replica → becomes leader, partition back online`, true);
+    }
+  });
+  render();
+}
+
+// replication + consumer loop
+setInterval(() => {
+  let changed = false;
+  P.forEach((p, pi) => {
+    if (p.leader == null) return;
+    const lead = p.leo[p.leader];
+    p.replicas.forEach(r => {
+      if (r === p.leader || !brokers[r].up) return;
+      if (p.leo[r] > lead) { p.leo[r] = lead; changed = true; }
+      if (p.leo[r] < lead) { p.leo[r]++; changed = true; }
+      if (!p.isr.includes(r) && p.leo[r] === lead) {
+        p.isr.push(r); p.isr.sort(); changed = true;
+        logLine(logEl, `P${pi}: ${bname(r)} caught up → <b>rejoins ISR</b>`);
+      }
+    });
+    const hw = Math.min(...p.isr.filter(r => brokers[r].up).map(r => p.leo[r]));
+    if (hw > p.hw) { p.hw = hw; changed = true; }
+    if (consuming && p.committed < p.hw) { p.committed++; changed = true; }
+  });
+  if (changed) render();
+}, 600);
+
+document.querySelectorAll('#rf button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#rf button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  RF = +b.dataset.rf; reset();
+  logLine(logEl, `Topic recreated with replication factor ${RF}`, true);
+});
+document.getElementById('produce').onclick = produce;
+document.getElementById('consume').onclick = e => {
+  consuming = !consuming;
+  e.target.textContent = consuming ? '⏸ Pause consumer' : '▶ Start consumer';
+};
+document.getElementById('ple').onclick = () => {
+  P.forEach((p, pi) => {
+    const pref = p.replicas[0];
+    if (p.leader !== pref && brokers[pref].up && p.isr.includes(pref) && p.leader != null) {
+      p.leader = pref; logLine(logEl, `P${pi}: leadership moved back to preferred replica ${bname(pref)}`, true);
+    }
+  });
+  render();
+};
+reset();
+
+renderQuiz('quiz', [
+  { q: 'A topic has replication factor 3. How many replicas of each partition can accept writes from producers at a time?',
+    options: ['All 3', 'Exactly 1 — the leader', '2 — a majority', 'Whichever broker the producer connects to'],
+    answer: 1, explain: 'Each partition has a single leader. Followers only replicate from it; producers are routed to the leader via cluster metadata.' },
+  { q: 'What does the ISR (In-Sync Replicas) list contain?',
+    options: ['All brokers in the cluster', 'Replicas that are fully caught up with the leader (within the allowed lag)', 'Replicas that have been read by consumers', 'Brokers that host the controller'],
+    answer: 1, explain: 'ISR = leader + followers within <code>replica.lag.time.max.ms</code>. A replica that falls behind or goes down is removed, and re-added once it catches up.' },
+  { q: 'Why can a consumer only read up to the high watermark, not the leader’s log-end offset?',
+    options: ['To save network bandwidth', 'Records above the HW are not yet on all ISR replicas and could be lost on leader failover', 'The HW marks the retention boundary', 'Only the controller can read above the HW'],
+    answer: 1, explain: 'Exposing only committed (fully replicated) records guarantees consumers never see data that later disappears after an election.' },
+  { q: 'A consumer group’s committed offset on partition 2 is 1,200 and the log-end offset is 1,450. What is the lag?',
+    options: ['1,200', '250', '1,450', '2,650'],
+    answer: 1, explain: 'Lag = log-end offset − committed offset = 1,450 − 1,200 = 250 records.' },
+  { q: 'With RF=1, the broker hosting a partition fails. What is the result (unclean leader election disabled)?',
+    options: ['Another broker instantly takes over with a copy', 'The partition is offline until that broker returns', 'Kafka rebuilds the partition from consumer caches', 'Producers write to a different partition with no impact'],
+    answer: 1, explain: 'With a single copy there is no other replica to elect. This is why production topics typically use RF=3.' }
+]);
+</script>
+</body>
+</html>

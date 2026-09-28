@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka Core Components</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 1 · Messaging &amp; Kafka Fundamentals</a>
+    <div class="nav"><span>3 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 3</div>
+  <h1>The Kafka ecosystem: producers, consumers, brokers, topics, partitions</h1>
+  <p class="lede">Produce records with keys and watch the partitioner route them. Then scale the consumer group up and down to see how
+    partitions are shared — and what happens when there are more consumers than partitions.</p>
+
+  <div class="grid grid-3" style="margin:20px 0">
+    <div class="card"><h3>Producer</h3><p>Client that writes records (<code>key</code>, <code>value</code>, headers, timestamp) to a topic. Chooses the partition from the key.</p></div>
+    <div class="card"><h3>Topic &amp; partition</h3><p>A topic is a named stream split into <b>partitions</b>: ordered, append-only logs. Each record gets an increasing <b>offset</b>.</p></div>
+    <div class="card"><h3>Broker</h3><p>A Kafka server that stores partitions and serves reads/writes. Each partition has one <b>leader</b> broker at a time.</p></div>
+    <div class="card"><h3>Consumer</h3><p>Client that reads records by pulling from partitions, tracking its position with offsets.</p></div>
+    <div class="card"><h3>Consumer group</h3><p>Consumers sharing a <code>group.id</code>. Each partition is assigned to <b>one</b> member of the group.</p></div>
+    <div class="card"><h3>Rebalance</h3><p>When members join or leave, the group coordinator redistributes partitions across the remaining members.</p></div>
+  </div>
+
+  <div class="card">
+    <div class="controls">
+      <label class="range">Key <input type="text" id="key" value="cust-42" aria-label="Record key"></label>
+      <button class="primary" id="send">Produce</button>
+      <button id="burst">Produce 10 random keys</button>
+      <button id="nokey">Produce without key</button>
+    </div>
+    <div class="controls">
+      <label class="range">Partitions <input type="range" id="parts" min="1" max="6" value="3"> <b id="partsv">3</b></label>
+      <span style="width:12px"></span>
+      <span class="range" style="font-size:14px;color:var(--muted)">Consumers in group <code>order-processors</code>:</span>
+      <button id="rmc" aria-label="Remove consumer">−</button><b id="consv">2</b><button id="addc" aria-label="Add consumer">+</button>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 400" role="img" aria-label="Producer, topic partitions and consumer group"></svg></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <div class="callout">The default partitioner computes <code>murmur2(key) % numPartitions</code> (this page uses a simpler hash for display).
+    Same key → same partition → <b>ordered</b> processing per key. Records without a key are spread across partitions
+    (the modern <em>sticky</em> partitioner fills a batch for one partition, then moves on).</div>
+  <div class="callout warn"><b>Admin gotcha:</b> you can increase a topic's partition count but never decrease it — and increasing it
+    changes the <code>key → partition</code> mapping for new records, which can break per-key ordering. Try it with the slider: after
+    changing partitions, <code>cust-42</code> may land somewhere new.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="02-kafka-overview.html"><small>← Previous</small>Kafka overview &amp; use cases</a>
+    <a class="next" href="04-architecture.html"><small>Next →</small>Cluster architecture, offsets &amp; replicas</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg');
+const logEl = document.getElementById('log');
+const base = el('g', {}, svg), fx = el('g', {}, svg);
+const TX = [220, 620], CXs = 700, SHOW = 9;
+
+let N = 3, M = 2, parts, rr = 0, got, assignment;
+
+function hash(s) { let h = 7; for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; }
+function keyColor(k) { return k == null ? 'var(--muted)' : PCOLORS[hash(k + '#') % 6]; }
+
+function assign() {
+  assignment = Array.from({ length: M }, () => []);
+  const per = Math.floor(N / M), extra = N % M;
+  let p = 0;
+  for (let c = 0; c < M; c++) {
+    const n = per + (c < extra ? 1 : 0);
+    for (let k = 0; k < n; k++) assignment[c].push(p++);
+  }
+}
+function ownerOf(p) { return assignment.findIndex(a => a.includes(p)); }
+
+function rowY(p) { const h = Math.min(90, 330 / N); return 50 + h * p + h / 2; }
+function consY(c) { const h = Math.min(90, 330 / M); return 50 + h * c + h / 2; }
+function cellX(i) { return TX[0] + 150 + i * 28; }
+
+function resetTopic() {
+  parts = Array.from({ length: N }, () => []);
+  got = Array(M).fill(0);
+  fx.innerHTML = '';
+  assign(); render();
+}
+
+function render() {
+  base.innerHTML = '';
+  // producer
+  el('rect', { x: 20, y: 170, width: 130, height: 60, rx: 10, fill: 'var(--surface)', stroke: 'var(--border)' }, base);
+  el('text', { x: 85, y: 196, 'text-anchor': 'middle', 'font-weight': 600, text: 'Producer' }, base);
+  el('text', { x: 85, y: 215, 'text-anchor': 'middle', 'font-size': 11, class: 'muted', text: 'partitioner: hash(key)%' + N }, base);
+
+  // topic
+  el('rect', { x: TX[0], y: 24, width: TX[1] - TX[0], height: 366, rx: 12, fill: 'var(--surface)', stroke: 'var(--accent)', 'stroke-width': 1.5 }, base);
+  el('text', { x: TX[0] + 12, y: 42, 'font-size': 13, 'font-weight': 600, text: 'Topic: orders' }, base);
+  el('text', { x: TX[1] - 12, y: 42, 'text-anchor': 'end', 'font-size': 11, class: 'muted', text: '3 brokers · leaders shown per partition' }, base);
+  const rowH = Math.min(90, 330 / N);
+  for (let p = 0; p < N; p++) {
+    const y = rowY(p);
+    el('rect', { x: TX[0] + 8, y: y - rowH / 2 + 3, width: TX[1] - TX[0] - 16, height: rowH - 6, rx: 8, fill: 'var(--surface-2)' }, base);
+    el('text', { x: TX[0] + 18, y: y - 2, 'font-weight': 700, 'font-size': 14, text: 'P' + p }, base);
+    el('text', { x: TX[0] + 18, y: y + 13, 'font-size': 10, class: 'muted', text: `leader: broker-${p % 3 + 1}` }, base);
+    el('text', { x: TX[0] + 110, y: y + 4, 'text-anchor': 'end', 'font-size': 10, class: 'muted', text: `LEO ${parts[p].length}` }, base);
+    const recs = parts[p].slice(-SHOW), start = parts[p].length - recs.length;
+    recs.forEach((r, i) => {
+      const x = cellX(i);
+      el('rect', { x: x - 12, y: y - 11, width: 24, height: 22, rx: 4, fill: keyColor(r.key) }, base);
+      el('text', { x, y: y + 4, 'text-anchor': 'middle', 'font-size': 10, style: 'fill:#fff', 'font-weight': 600, text: start + i }, base);
+    });
+    // assignment line
+    const owner = ownerOf(p);
+    if (owner >= 0) {
+      base.prepend(el('path', { d: `M${TX[1]} ${y} C ${TX[1] + 40} ${y}, ${CXs - 40} ${consY(owner)}, ${CXs} ${consY(owner)}`,
+        fill: 'none', stroke: PCOLORS[owner % 6], 'stroke-width': 2, 'stroke-opacity': .7 }));
+    }
+  }
+  // consumers
+  const cH = Math.min(90, 330 / M);
+  el('text', { x: CXs, y: 42, 'font-size': 12, class: 'muted', text: 'group.id = order-processors' }, base);
+  for (let c = 0; c < M; c++) {
+    const y = consY(c), idle = !assignment[c].length;
+    el('rect', { x: CXs, y: y - cH / 2 + 4, width: 180, height: cH - 8, rx: 10,
+      fill: idle ? 'var(--surface-2)' : 'var(--surface)', stroke: idle ? 'var(--border)' : PCOLORS[c % 6],
+      'stroke-dasharray': idle ? '5 4' : '', 'stroke-width': 1.5 }, base);
+    el('text', { x: CXs + 12, y: y - (cH > 50 ? 4 : -4), 'font-weight': 600, 'font-size': 13, text: `consumer-${c + 1}` + (idle ? ' (idle)' : '') }, base);
+    if (cH > 50) el('text', { x: CXs + 12, y: y + 14, 'font-size': 11, class: 'muted',
+      text: idle ? 'no partition to read' : `P${assignment[c].join(', P')} · read ${got[c]}` }, base);
+  }
+}
+
+function recToken(r) {
+  const g = el('g', {}, fx);
+  el('rect', { x: -14, y: -11, width: 28, height: 22, rx: 4, fill: keyColor(r.key) }, g);
+  el('text', { x: 0, y: 4, 'text-anchor': 'middle', 'font-size': 9, style: 'fill:#fff', 'font-weight': 600, text: r.key ? r.key.replace(/^cust-/, 'c') : '∅' }, g);
+  return g;
+}
+
+async function produce(key) {
+  const p = key == null ? (rr++ % N) : hash(key) % N;
+  const r = { key };
+  const t = recToken(r);
+  const slot = Math.min(parts[p].length, SHOW - 1);
+  logLine(logEl, key == null ? `key=null → P${p} (spread across partitions)` : `key=<b>${key}</b> → hash % ${N} = <b>P${p}</b>`, true);
+  const myParts = parts;
+  await tween(t, 150, 200, cellX(slot), rowY(p), 500);
+  t.remove();
+  if (parts !== myParts) return;
+  parts[p].push(r);
+  const off = parts[p].length - 1;
+  render();
+  const owner = ownerOf(p);
+  if (owner < 0) return;
+  await sleep(250);
+  const c = recToken(r);
+  await tween(c, cellX(Math.min(off, SHOW - 1)), rowY(p), CXs + 90, consY(owner), 500);
+  c.remove();
+  if (parts !== myParts || owner >= M) return;
+  got[owner]++; render();
+}
+
+const KEYS = ['cust-7', 'cust-12', 'cust-42', 'cust-99', 'cust-3', 'cust-58'];
+document.getElementById('send').onclick = () => produce(document.getElementById('key').value.trim() || null);
+document.getElementById('nokey').onclick = () => produce(null);
+document.getElementById('burst').onclick = async () => {
+  for (let i = 0; i < 10; i++) { produce(KEYS[Math.floor(Math.random() * KEYS.length)]); await sleep(180); }
+};
+const partsEl = document.getElementById('parts');
+partsEl.oninput = () => {
+  N = +partsEl.value; document.getElementById('partsv').textContent = N;
+  logLine(logEl, `Topic recreated with ${N} partition(s) — key→partition mapping changed`, true);
+  resetTopic();
+};
+function setM(v) {
+  const before = M;
+  M = Math.max(1, Math.min(8, v));
+  if (M === before) return;
+  document.getElementById('consv').textContent = M;
+  got = Array.from({ length: M }, (_, i) => got[i] || 0);
+  assign(); render();
+  logLine(logEl, `<b>Rebalance</b>: consumer ${M > before ? 'joined' : 'left'} → ` +
+    assignment.map((a, i) => `c${i + 1}:[${a.map(p => 'P' + p).join(',') || 'idle'}]`).join(' '), true);
+}
+document.getElementById('addc').onclick = () => setM(M + 1);
+document.getElementById('rmc').onclick = () => setM(M - 1);
+resetTopic();
+
+renderQuiz('quiz', [
+  { q: 'A topic has 4 partitions. You start 6 consumers in the same consumer group. What happens?',
+    options: ['Each partition is read by 1.5 consumers on average', '4 consumers get one partition each; 2 sit idle', 'Kafka automatically adds 2 partitions', 'All 6 consumers read all 4 partitions'],
+    answer: 1, explain: 'Within a group a partition is owned by at most one consumer, so parallelism is capped at the partition count. Extra members are idle standbys.' },
+  { q: 'Why would a producer set <code>customerId</code> as the record key?',
+    options: ['To encrypt records per customer', 'So all events for a customer go to the same partition and stay in order', 'To make the topic compacted automatically', 'Keys are required for every record'],
+    answer: 1, explain: 'The default partitioner hashes the key, so every record with the same key lands in the same partition — giving per-customer ordering.' },
+  { q: 'What uniquely identifies a single record’s position in Kafka?',
+    options: ['Topic + offset', 'Topic + partition + offset', 'Broker + offset', 'Key + timestamp'],
+    answer: 1, explain: 'Offsets are only unique within a partition, so you need topic, partition and offset together.' },
+  { q: 'A consumer in a 3-member group crashes. What does the group coordinator do?',
+    options: ['Stops the whole group until the consumer is restarted', 'Triggers a rebalance and reassigns its partitions to the remaining members', 'Deletes the crashed consumer’s partitions', 'Moves its partitions to a different topic'],
+    answer: 1, explain: 'When a member leaves (or misses heartbeats), a rebalance redistributes its partitions; they resume from the group’s last committed offsets.' },
+  { q: 'An admin increases partitions on <code>orders</code> from 3 to 6. What is a side effect to warn developers about?',
+    options: ['All existing data is deleted', 'Consumer groups must be renamed', 'New records for an existing key may go to a different partition, affecting per-key ordering', 'Nothing — partition changes are invisible to clients'],
+    answer: 2, explain: '<code>hash(key) % 6</code> differs from <code>hash(key) % 3</code>. Existing data stays put, but new records for a key may land elsewhere. Partitions can never be decreased.' }
+]);
+</script>
+</body>
+</html>
