@@ -1,0 +1,61 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Apple Pages / Keynote source files (export PDFs instead)
+*.pages
+*.key
+*.numbers
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# SSH / cloud credentials (private keys must never be committed)
+*.pem
+*.ppk
+id_rsa
+id_ed25519
+labs/setup/*.pem
+
+# Lab fleet credentials (per-user passwords / URL mappings — never commit)
+*credentials*.csv
+*.local.csv
+labs/setup/fleet-*.csv
+*.secrets
+
+# OpenShift cluster provisioning (labs/setup/ocp-cluster) — secrets + installer state
+labs/setup/ocp-cluster/pull-secret.local.json
+labs/setup/ocp-cluster/pull-secret.txt
+labs/setup/ocp-cluster/cluster-ssh-key
+labs/setup/ocp-cluster/cluster-ssh-key.pub
+labs/setup/ocp-cluster/cluster/
+labs/setup/ocp-cluster/*.local.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Node
+node_modules/
+.npm/
+
+# Editor
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
