@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Installation Options: Linux, Docker &amp; KRaft</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .method-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+  .method-tabs button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .req-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 12px; }
+  .req-grid .stat b { font-size: 15px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 2 · Kafka Installation, Setup &amp; CLI Operations</a>
+    <div class="nav"><span>1 / 4</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 1</div>
+  <h1>System requirements &amp; installation options</h1>
+  <p class="lede">Every Kafka node today runs in <b>KRaft mode</b> (Kafka 3.3+, mandatory since 4.0 — see Module 1, Topic 6):
+    there is no ZooKeeper to install. What changes between environments is how many nodes you run and whether the
+    <em>controller</em> and <em>broker</em> roles share a process. Pick a topology to see the exact commands.</p>
+
+  <div class="req-grid">
+    <div class="stat"><b>Java 21</b><span>Kafka runs on the JVM</span></div>
+    <div class="stat"><b>16 GB RAM</b><span>recommended for a multi-broker dev cluster</span></div>
+    <div class="stat"><b>Docker Desktop</b><span>fastest path to a local cluster</span></div>
+    <div class="stat"><b>Ports 9092 / 9093</b><span>client and controller listeners</span></div>
+  </div>
+
+  <div class="card" style="margin-top:20px">
+    <div class="controls">
+      <div class="seg" role="group" aria-label="Topology" id="topo">
+        <button data-t="single" aria-pressed="true">Single node (dev)</button>
+        <button data-t="combined">3-broker cluster (combined KRaft)</button>
+        <button data-t="dedicated">3 brokers + 3 dedicated controllers</button>
+      </div>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 260" role="img" aria-label="Node topology"></svg></div>
+
+    <div class="method-tabs" id="methods" style="margin-top:14px">
+      <button data-m="docker" aria-pressed="true">Docker</button>
+      <button data-m="binary" aria-pressed="false">Linux binary</button>
+    </div>
+    <div class="term" id="term"></div>
+  </div>
+
+  <div class="callout">Every node needs a <b>role</b> (<code>process.roles=broker</code>, <code>controller</code>, or both) and every
+    node needs to agree on the controller quorum via <code>controller.quorum.voters=id@host:port,...</code>. That list is what
+    replaces ZooKeeper's ensemble configuration.</div>
+  <div class="callout warn"><b>Why an odd number of controllers?</b> The metadata quorum uses Raft, which needs a
+    <b>majority</b> to elect a leader and commit metadata changes. 3 controllers tolerate 1 failure; 5 tolerate 2. An even
+    number (e.g. 2 or 4) wastes a node without buying extra fault tolerance.</div>
+
+  <h2>Binary vs. Docker</h2>
+  <div class="grid grid-2">
+    <div class="card">
+      <h3>Linux binary (tar.gz)</h3>
+      <p style="color:var(--muted);font-size:14px">Extract the release, edit <code>server.properties</code>, format storage, start the
+        process directly. Full control over JVM flags, disks and systemd units — the normal path for production hosts.</p>
+    </div>
+    <div class="card">
+      <h3>Docker / Docker Compose</h3>
+      <p style="color:var(--muted);font-size:14px">Pull an image, pass config as environment variables. Fastest way to stand up a
+        multi-broker cluster on a laptop, and what this course's hands-on labs use.</p>
+    </div>
+  </div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="index.html"><small>← Back</small>Module overview</a>
+    <a class="next" href="02-cli-tools-overview.html"><small>Next →</small>Kafka CLI tools overview</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg');
+const term = document.getElementById('term');
+let topo = 'single', method = 'docker';
+
+const TOPOS = {
+  single: { nodes: [{ id: 1, roles: ['broker', 'controller'] }] },
+  combined: { nodes: [1, 2, 3].map(id => ({ id, roles: ['broker', 'controller'] })) },
+  dedicated: { nodes: [
+    { id: 1, roles: ['controller'] }, { id: 2, roles: ['controller'] }, { id: 3, roles: ['controller'] },
+    { id: 4, roles: ['broker'] }, { id: 5, roles: ['broker'] }, { id: 6, roles: ['broker'] },
+  ] }
+};
+
+function roleColor(roles) {
+  if (roles.length === 2) return 'var(--accent)';
+  return roles[0] === 'controller' ? 'var(--p2)' : 'var(--p0)';
+}
+
+function render() {
+  svg.innerHTML = '';
+  const nodes = TOPOS[topo].nodes;
+  const w = 900 / nodes.length;
+  const boxW = Math.min(190, w - 24);
+  const controllers = nodes.filter(n => n.roles.includes('controller'));
+
+  // quorum ring among controller nodes
+  if (controllers.length > 1) {
+    const pts = controllers.map(n => {
+      const i = nodes.indexOf(n);
+      return [i * w + w / 2, 70];
+    });
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      if (pts.length === 2 && i === 1) continue;
+      el('line', { x1: a[0], y1: a[1], x2: b[0], y2: b[1], stroke: 'var(--p2)', 'stroke-width': 1.5, 'stroke-dasharray': '5 4', opacity: .6 }, svg);
+    }
+    el('text', { x: 450, y: 24, 'text-anchor': 'middle', 'font-size': 12, class: 'muted',
+      text: `Raft metadata quorum — ${controllers.length} controller${controllers.length > 1 ? 's' : ''}, needs ${Math.floor(controllers.length / 2) + 1} for a majority` }, svg);
+  }
+
+  nodes.forEach((n, i) => {
+    const x = i * w + (w - boxW) / 2, y = 90;
+    el('rect', { x, y, width: boxW, height: 110, rx: 12, fill: 'var(--surface)', stroke: roleColor(n.roles), 'stroke-width': 1.5 }, svg);
+    el('text', { x: x + boxW / 2, y: y + 26, 'text-anchor': 'middle', 'font-weight': 700, text: `node-${n.id}` }, svg);
+    el('text', { x: x + boxW / 2, y: y + 46, 'text-anchor': 'middle', 'font-size': 11, class: 'muted', text: `node.id=${n.id}` }, svg);
+    n.roles.forEach((r, ri) => {
+      const py = y + 66 + ri * 20;
+      el('rect', { x: x + boxW / 2 - 46, y: py - 12, width: 92, height: 18, rx: 9,
+        fill: r === 'controller' ? 'var(--ok-soft)' : 'var(--accent-soft)' }, svg);
+      el('text', { x: x + boxW / 2, y: py + 1, 'text-anchor': 'middle', 'font-size': 10, 'font-weight': 600,
+        style: `fill:${r === 'controller' ? 'var(--ok)' : 'var(--accent)'}`, text: r }, svg);
+    });
+  });
+}
+
+function voters(controllers) { return controllers.map(n => `${n.id}@node-${n.id}:9093`).join(','); }
+
+function listenersFor(roles) {
+  const parts = [];
+  if (roles.includes('broker')) parts.push('PLAINTEXT://:9092');
+  if (roles.includes('controller')) parts.push('CONTROLLER://:9093');
+  return parts.join(',');
+}
+
+function dockerSnippet() {
+  const nodes = TOPOS[topo].nodes;
+  const controllers = nodes.filter(n => n.roles.includes('controller'));
+  const v = voters(controllers);
+  if (topo === 'single') {
+    return [
+`docker run -d --name kafka -p 9092:9092 \\
+  -e KAFKA_NODE_ID=1 \\
+  -e KAFKA_PROCESS_ROLES=broker,controller \\
+  -e KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093 \\
+  -e KAFKA_CONTROLLER_QUORUM_VOTERS=${v} \\
+  -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092 \\
+  -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \\
+  apache/kafka:latest`];
+  }
+  const svc = n => `  ${`node-${n.id}`}:\n` +
+`    image: apache/kafka:latest
+    environment:
+      KAFKA_NODE_ID: ${n.id}
+      KAFKA_PROCESS_ROLES: ${n.roles.join(',')}
+      KAFKA_CONTROLLER_QUORUM_VOTERS: ${v}
+      KAFKA_LISTENERS: ${listenersFor(n.roles)}
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER`;
+  return ['# docker-compose.yml\nservices:\n' + nodes.map(svc).join('\n')];
+}
+
+function binarySnippet() {
+  const nodes = TOPOS[topo].nodes;
+  const controllers = nodes.filter(n => n.roles.includes('controller'));
+  const v = voters(controllers);
+  const n0 = nodes[0];
+  return [
+`# on each node: edit config/kraft/server.properties
+process.roles=${n0.roles.join(',')}
+node.id=${n0.id}
+controller.quorum.voters=${v}
+listeners=${listenersFor(n0.roles)}
+
+# format storage (once per node, same cluster id everywhere)
+KAFKA_CLUSTER_ID=$(kafka-storage.sh random-uuid)
+kafka-storage.sh format -t $KAFKA_CLUSTER_ID -c config/kraft/server.properties
+
+# start
+kafka-server-start.sh config/kraft/server.properties`
+  ];
+}
+
+function renderTerm() {
+  term.innerHTML = '';
+  const lines = (method === 'docker' ? dockerSnippet() : binarySnippet())[0].split('\n');
+  const cmd = lines[0];
+  const rest = lines.slice(1).map(l => l.replace(/</g, '&lt;'));
+  termRun(term, cmd.replace(/</g, '&lt;'), rest);
+}
+
+document.querySelectorAll('#topo button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#topo button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  topo = b.dataset.t; render(); renderTerm();
+});
+document.querySelectorAll('#methods button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#methods button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  method = b.dataset.m; renderTerm();
+});
+render(); renderTerm();
+
+renderQuiz('quiz', [
+  { q: 'Which component does KRaft mode remove entirely from a Kafka deployment?',
+    options: ['The broker process', 'ZooKeeper', 'The producer client', 'Topic partitions'],
+    answer: 1, explain: 'KRaft (KIP-500) replaces ZooKeeper with a Raft-based metadata quorum run by Kafka\'s own controller nodes.' },
+  { q: 'What does <code>controller.quorum.voters</code> configure?',
+    options: ['Which brokers can accept producer writes', 'The list of controller nodes that form the metadata Raft quorum', 'Consumer group membership', 'The replication factor of new topics'],
+    answer: 1, explain: 'It lists every controller as <code>id@host:port</code> so all nodes agree on quorum membership before the cluster can elect an active controller.' },
+  { q: 'Why do production KRaft clusters typically run 3 or 5 dedicated controllers rather than 1?',
+    options: ['More controllers make producers faster', 'An odd number gives Raft a majority to keep making progress if some controllers fail', 'Controllers store partition data, so more means more capacity', 'It is required by the broker role'],
+    answer: 1, explain: 'Raft needs a majority (quorum) to elect a leader and commit metadata. 3 controllers tolerate 1 failure, 5 tolerate 2; an even count adds no extra tolerance.' },
+  { q: 'A node is configured with <code>process.roles=broker</code> only. What can it NOT do?',
+    options: ['Host partition replicas', 'Serve producer and consumer traffic', 'Participate in the metadata Raft quorum as a voter', 'Be part of a Kafka cluster'],
+    answer: 2, explain: 'Only nodes with the <code>controller</code> role are Raft voters for cluster metadata; broker-only nodes just serve topic traffic and read metadata from the quorum.' },
+  { q: 'For a quick local test, which install path gets you a running broker with the fewest manual steps?',
+    options: ['Downloading the source and compiling it', 'A single <code>docker run</code> with KRaft environment variables', 'Manually writing a Raft implementation', 'Installing ZooKeeper first, then Kafka'],
+    answer: 1, explain: 'A single-node Docker container with <code>KAFKA_PROCESS_ROLES=broker,controller</code> needs no separate ZooKeeper and no manual storage formatting step from you.' }
+]);
+</script>
+</body>
+</html>

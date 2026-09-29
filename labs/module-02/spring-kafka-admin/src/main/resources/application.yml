@@ -1,0 +1,48 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: spring-kafka-admin
+  kafka:
+    # The three EXTERNAL listeners published by labs/module-02/docker-compose.yml.
+    # One reachable broker is enough to bootstrap; listing all three survives
+    # a broker being down when the app starts.
+    bootstrap-servers: localhost:9092,localhost:9094,localhost:9096
+
+    admin:
+      # Stop the application at startup if the cluster cannot be reached or a
+      # declared topic cannot be created (for example RF 3 on a 1-broker cluster)
+      fail-fast: true
+      # Bring topic-level configs back to what the NewTopic beans declare
+      modify-topic-configs: true
+
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      properties:
+        enable.idempotence: true
+        linger.ms: 5
+
+    consumer:
+      group-id: cdr-billing
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+# Names used by the lab, in one place
+lab:
+  topics:
+    cdr: cdr.data
+    # Override at startup to see what KafkaAdmin does, e.g.
+    #   java -jar target/spring-kafka-admin-1.0.0.jar --lab.topics.cdr-partitions=8
+    cdr-partitions: 6
+    cdr-replicas: 3
+    subscriber: subscriber.profile
+
+logging:
+  level:
+    # Kafka clients are chatty at INFO; keep the lab output readable
+    org.apache.kafka: WARN
+    com.training.kafka: INFO

@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka CLI Tools Overview</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 2 · Kafka Installation, Setup &amp; CLI Operations</a>
+    <div class="nav"><span>2 / 4</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 2</div>
+  <h1>Kafka CLI tools overview</h1>
+  <p class="lede">Every <code>kafka-*.sh</code> script (<code>.bat</code> on Windows) ships in <code>bin/</code> alongside the broker.
+    Pick a tool below to see what it's for, its key flags, and a simulated run against a small cluster.</p>
+
+  <div class="card">
+    <div class="tool-grid" id="tools"></div>
+    <div class="callout" id="desc" style="margin:14px 0 0"></div>
+    <div class="table-wrap">
+      <table id="flags"><thead><tr><th>Flag</th><th>Meaning</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="controls">
+      <button class="primary" id="run">▶ Run example</button>
+      <span class="pill" id="examplecmd" style="font-family:var(--mono)"></span>
+    </div>
+    <div class="term" id="term"><div class="term-empty">Output will appear here.</div></div>
+  </div>
+
+  <div class="callout warn">All modern tools connect with <code>--bootstrap-server host:port</code>. The old
+    <code>--zookeeper</code> flag on <code>kafka-topics.sh</code> was removed once clusters moved to KRaft — see Module 1, Topic 6.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="01-installation-options.html"><small>← Previous</small>System requirements &amp; installation options</a>
+    <a class="next" href="03-topic-lifecycle.html"><small>Next →</small>Create, list, describe &amp; delete topics</a>
+  </div>
+</div>
+
+<script>
+const TOOLS = [
+  { id: 'topics', name: 'kafka-topics.sh', role: 'Manage topics',
+    desc: 'Create, list, describe, alter and delete topics — the tool covered in depth on the next page.',
+    flags: [['--create / --list / --describe / --alter / --delete', 'the action to perform'],
+      ['--topic &lt;name&gt;', 'target topic'],
+      ['--partitions &lt;n&gt;', 'partition count on create/alter'],
+      ['--replication-factor &lt;n&gt;', 'copies per partition, create only'],
+      ['--bootstrap-server &lt;host:port&gt;', 'a broker to connect through']],
+    example: 'kafka-topics.sh --bootstrap-server localhost:9092 --list',
+    out: ['orders', 'payments', '__consumer_offsets'] },
+  { id: 'producer', name: 'kafka-console-producer.sh', role: 'Produce from stdin',
+    desc: 'Reads lines you type (or pipe in) and publishes each as a record. Useful for quick manual tests, covered next topic.',
+    flags: [['--topic &lt;name&gt;', 'topic to publish to'],
+      ['--property parse.key=true', 'treat input as key:value'],
+      ['--property key.separator=:', 'the key/value delimiter'],
+      ['--bootstrap-server &lt;host:port&gt;', 'a broker to connect through']],
+    example: 'kafka-console-producer.sh --topic orders --bootstrap-server localhost:9092',
+    out: ['&gt;hello world', '&gt;'] },
+  { id: 'consumer', name: 'kafka-console-consumer.sh', role: 'Consume to stdout',
+    desc: 'Prints records from a topic as they arrive. Without --group, each run is a fresh, unnamed group with no saved position.',
+    flags: [['--topic &lt;name&gt;', 'topic to read from'],
+      ['--from-beginning', 'start at the earliest offset instead of the end'],
+      ['--group &lt;id&gt;', 'join a named, offset-tracking consumer group'],
+      ['--bootstrap-server &lt;host:port&gt;', 'a broker to connect through']],
+    example: 'kafka-console-consumer.sh --topic orders --from-beginning --bootstrap-server localhost:9092',
+    out: ['hello world', '^CProcessed a total of 1 messages'] },
+  { id: 'groups', name: 'kafka-consumer-groups.sh', role: 'Inspect / reset offsets',
+    desc: 'Lists consumer groups, describes per-partition lag, and can reset committed offsets. The #1 troubleshooting tool for "why isn\'t my consumer catching up".',
+    flags: [['--list', 'show all consumer group ids'],
+      ['--describe --group &lt;id&gt;', 'per-partition current offset, log-end offset and lag'],
+      ['--reset-offsets --to-earliest', 'rewind a group (needs --execute to apply)'],
+      ['--bootstrap-server &lt;host:port&gt;', 'a broker to connect through']],
+    example: 'kafka-consumer-groups.sh --describe --group order-processors --bootstrap-server localhost:9092',
+    out: ['GROUP            TOPIC   PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG',
+          'order-processors orders  0          118             120             2'] },
+  { id: 'configs', name: 'kafka-configs.sh', role: 'View / alter configs',
+    desc: 'Reads and changes dynamic configuration for topics, brokers, users and more — e.g. tightening a topic\'s retention without restarting anything.',
+    flags: [['--entity-type topics --entity-name &lt;name&gt;', 'target a topic'],
+      ['--describe', 'show current overrides'],
+      ['--alter --add-config k=v', 'set one or more configs'],
+      ['--bootstrap-server &lt;host:port&gt;', 'a broker to connect through']],
+    example: 'kafka-configs.sh --alter --entity-type topics --entity-name orders --add-config retention.ms=86400000 --bootstrap-server localhost:9092',
+    out: ['Completed updating config for topic orders.'] },
+  { id: 'reassign', name: 'kafka-reassign-partitions.sh', role: 'Move partitions',
+    desc: 'Moves partition replicas between brokers — for rebalancing load after adding/removing brokers (Module 5).',
+    flags: [['--generate', 'propose a reassignment plan as JSON'],
+      ['--execute', 'start moving replicas per a plan file'],
+      ['--verify', 'check whether a reassignment has finished'],
+      ['--bootstrap-server &lt;host:port&gt;', 'a broker to connect through']],
+    example: 'kafka-reassign-partitions.sh --bootstrap-server localhost:9092 --reassignment-json-file plan.json --execute',
+    out: ['Current partition replica assignment saved.', 'Successfully started partition reassignments.'] },
+  { id: 'storage', name: 'kafka-storage.sh', role: 'Format KRaft storage',
+    desc: 'One-time setup per node: generates a cluster id and formats the log directories before the broker/controller can start (see Topic 1).',
+    flags: [['random-uuid', 'print a new cluster id'],
+      ['format -t &lt;id&gt;', 'write cluster metadata to the log dirs'],
+      ['-c &lt;file&gt;', 'the server.properties to format for']],
+    example: 'kafka-storage.sh format -t 5L6g3nShT-eMCtK--X86sw -c config/kraft/server.properties',
+    out: ['Formatting /tmp/kraft-combined-logs with metadata.version 3.9-IV0.'] },
+];
+
+const toolsEl = document.getElementById('tools');
+const descEl = document.getElementById('desc');
+const flagsEl = document.querySelector('#flags tbody');
+const termEl = document.getElementById('term');
+const cmdPill = document.getElementById('examplecmd');
+let current = TOOLS[0];
+
+TOOLS.forEach(t => {
+  const b = document.createElement('button');
+  b.className = 'tool-card';
+  b.setAttribute('aria-pressed', t === current);
+  b.innerHTML = `<span class="name">${t.name}</span><span class="role">${t.role}</span>`;
+  b.onclick = () => select(t);
+  toolsEl.appendChild(b);
+});
+
+function select(t) {
+  current = t;
+  [...toolsEl.children].forEach((b, i) => b.setAttribute('aria-pressed', TOOLS[i] === t));
+  descEl.textContent = t.desc;
+  flagsEl.innerHTML = t.flags.map(([f, m]) => `<tr><td class="mono">${f}</td><td>${m}</td></tr>`).join('');
+  cmdPill.textContent = t.example;
+}
+
+document.getElementById('run').onclick = () => {
+  termRun(termEl, current.example.replace(/</g, '&lt;'), current.out);
+};
+
+select(current);
+
+renderQuiz('quiz', [
+  { q: 'Which flag does every modern Kafka CLI tool use to connect to the cluster?',
+    options: ['--zookeeper', '--bootstrap-server', '--broker-list-only', '--cluster-id'],
+    answer: 1, explain: '--bootstrap-server points at one or more brokers, which is enough for the client to discover the rest of the cluster via metadata.' },
+  { q: 'Which command shows how far behind a consumer group is on each partition?',
+    options: ['kafka-topics.sh --describe', 'kafka-consumer-groups.sh --describe --group &lt;id&gt;', 'kafka-console-consumer.sh --from-beginning', 'kafka-configs.sh --describe'],
+    answer: 1, explain: 'kafka-consumer-groups.sh --describe prints CURRENT-OFFSET, LOG-END-OFFSET and LAG per partition for a group.' },
+  { q: 'What must you run once on a brand-new node before its broker or controller process can start in KRaft mode?',
+    options: ['kafka-topics.sh --create', 'kafka-storage.sh format', 'kafka-console-producer.sh', 'kafka-reassign-partitions.sh --generate'],
+    answer: 1, explain: 'kafka-storage.sh format writes the cluster id and initial metadata to the configured log directories.' },
+  { q: 'You need to lower a single topic\'s retention.ms without restarting any broker. Which tool does that?',
+    options: ['kafka-configs.sh --alter', 'kafka-topics.sh --delete', 'kafka-console-consumer.sh', 'kafka-storage.sh'],
+    answer: 0, explain: 'kafka-configs.sh changes dynamic configuration (topic, broker, client) on the fly, no restart needed.' },
+  { q: 'What is kafka-reassign-partitions.sh used for?',
+    options: ['Renaming a topic', 'Moving partition replicas between brokers to rebalance load', 'Resetting a consumer group\'s offsets', 'Producing test messages'],
+    answer: 1, explain: 'It generates and executes a plan that moves replicas to different brokers — used after adding/removing brokers or fixing uneven load (Module 5).' }
+]);
+</script>
+</body>
+</html>

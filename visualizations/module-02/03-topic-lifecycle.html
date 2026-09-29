@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic Lifecycle: Create, List, Describe, Delete</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .row-actions { display: flex; gap: 6px; margin-top: 8px; }
+  .row-actions button { padding: 4px 10px; font-size: 12px; }
+  .field-optional { opacity: .55; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 2 · Kafka Installation, Setup &amp; CLI Operations</a>
+    <div class="nav"><span>3 / 4</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 3</div>
+  <h1>Creating, listing, describing &amp; deleting topics</h1>
+  <p class="lede">Build a real <code>kafka-topics.sh</code> command against a simulated 3-broker cluster and run it. Errors
+    (duplicate names, too high a replication factor, shrinking partitions) look exactly like the real CLI's.</p>
+
+  <div class="card">
+    <div class="cli-form">
+      <label>Action
+        <select id="action">
+          <option value="create">--create</option>
+          <option value="list">--list</option>
+          <option value="describe">--describe</option>
+          <option value="alter">--alter</option>
+          <option value="delete">--delete</option>
+        </select>
+      </label>
+      <label id="f-name">Topic name
+        <input type="text" id="name" placeholder="orders">
+      </label>
+      <label id="f-parts">Partitions
+        <input type="number" id="parts" min="1" max="12" value="3">
+      </label>
+      <label id="f-rf">Replication factor
+        <input type="number" id="rf" min="1" max="3" value="1">
+      </label>
+      <label id="f-config" class="field-optional">Config (optional)
+        <input type="text" id="config" placeholder="cleanup.policy=compact">
+      </label>
+      <button class="primary" id="run">▶ Run</button>
+    </div>
+    <div class="cli-preview" id="preview"></div>
+    <div class="controls" style="margin-top:10px">
+      <span style="font-size:13px;color:var(--muted)">Presets:</span>
+      <button id="preset1">orders (3p, RF=3)</button>
+      <button id="preset2">payments (6p, RF=3, compact)</button>
+    </div>
+    <div class="term" id="term"><div class="term-empty">Run a command to see CLI output here.</div></div>
+  </div>
+
+  <h2>Cluster state</h2>
+  <div class="card">
+    <p style="margin:0;color:var(--muted);font-size:14px">3 brokers available. Click a topic to load it into the form above.</p>
+    <div class="topics-state" id="state"></div>
+  </div>
+
+  <div class="callout warn"><b>Admin gotcha:</b> partitions can only go up, never down — try altering <code>orders</code> to fewer
+    partitions than it has. Increasing partitions is allowed but changes the <code>key → partition</code> mapping for new
+    records (Module 1, Topic 3).</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="02-cli-tools-overview.html"><small>← Previous</small>Kafka CLI tools overview</a>
+    <a class="next" href="04-produce-consume-cli.html"><small>Next →</small>Producing &amp; consuming via CLI</a>
+  </div>
+</div>
+
+<script>
+const BROKERS = 3;
+let topics = [];
+
+const nameEl = document.getElementById('name'), partsEl = document.getElementById('parts'),
+  rfEl = document.getElementById('rf'), configEl = document.getElementById('config'),
+  actionEl = document.getElementById('action'), previewEl = document.getElementById('preview'),
+  termEl = document.getElementById('term'), stateEl = document.getElementById('state');
+
+function fieldVisibility() {
+  const a = actionEl.value;
+  document.getElementById('f-parts').style.display = (a === 'create' || a === 'alter') ? '' : 'none';
+  document.getElementById('f-rf').style.display = (a === 'create') ? '' : 'none';
+  document.getElementById('f-config').style.display = (a === 'create') ? '' : 'none';
+  document.getElementById('f-name').style.display = (a === 'list') ? 'none' : '';
+}
+
+function buildCmd() {
+  const a = actionEl.value, name = nameEl.value.trim();
+  let cmd = `kafka-topics.sh --${a}`;
+  if (a !== 'list' && name) cmd += ` --topic ${name}`;
+  if (a === 'create' || a === 'alter') cmd += ` --partitions ${partsEl.value}`;
+  if (a === 'create') cmd += ` --replication-factor ${rfEl.value}`;
+  if (a === 'create' && configEl.value.trim()) cmd += ` --config ${configEl.value.trim()}`;
+  cmd += ' --bootstrap-server localhost:9092';
+  return cmd;
+}
+
+function updatePreview() { previewEl.textContent = buildCmd(); }
+
+function find(name) { return topics.find(t => t.name === name); }
+
+function describeLines(t) {
+  const parts = Array.from({ length: t.partitions }, (_, p) => p);
+  const cfg = Object.entries(t.configs).map(([k, v]) => `${k}=${v}`).join(',');
+  const head = `Topic: ${t.name}\tTopicId: sim-${t.name}\tPartitionCount: ${t.partitions}\tReplicationFactor: ${t.rf}\tConfigs: ${cfg}`;
+  const rows = parts.map(p => {
+    const replicas = Array.from({ length: t.rf }, (_, i) => (p + i) % BROKERS + 1);
+    return `\tTopic: ${t.name}\tPartition: ${p}\tLeader: ${replicas[0]}\tReplicas: ${replicas.join(',')}\tIsr: ${replicas.join(',')}`;
+  });
+  return [head, ...rows];
+}
+
+function run() {
+  const a = actionEl.value, name = nameEl.value.trim();
+  const cmd = buildCmd();
+
+  if (a !== 'list' && !name) { termRun(termEl, cmd, ['Error: you must specify --topic']); return; }
+
+  if (a === 'create') {
+    if (find(name)) { termRun(termEl, cmd, [`Error while executing topic command : Topic '${name}' already exists.`], true); return; }
+    const rf = +rfEl.value, parts = +partsEl.value;
+    if (rf > BROKERS) { termRun(termEl, cmd, [`Error while executing topic command : Replication factor: ${rf} larger than available brokers: ${BROKERS}.`], true); return; }
+    const configs = {};
+    if (configEl.value.trim() && configEl.value.includes('=')) {
+      const [k, v] = configEl.value.trim().split('=');
+      configs[k] = v;
+    }
+    topics.push({ name, partitions: parts, rf, configs });
+    termRun(termEl, cmd, [`Created topic ${name}.`]);
+  } else if (a === 'list') {
+    const names = ['__consumer_offsets', ...topics.map(t => t.name)];
+    termRun(termEl, cmd, names);
+  } else if (a === 'describe') {
+    if (!name) {
+      if (!topics.length) { termRun(termEl, cmd, ['(no user topics yet — try --create first)']); return; }
+      termRun(termEl, cmd, topics.flatMap(describeLines));
+    } else {
+      const t = find(name);
+      if (!t) { termRun(termEl, cmd, [`Error while executing topic command : Topic '${name}' does not exist as expected`], true); return; }
+      termRun(termEl, cmd, describeLines(t));
+    }
+  } else if (a === 'alter') {
+    const t = find(name);
+    if (!t) { termRun(termEl, cmd, [`Error while executing topic command : Topic '${name}' does not exist as expected`], true); return; }
+    const newParts = +partsEl.value;
+    if (newParts < t.partitions) {
+      termRun(termEl, cmd, [`Error while executing topic command : Topic currently has ${t.partitions} partition(s), which is higher than the requested ${newParts}.`], true);
+      return;
+    }
+    if (newParts === t.partitions) { termRun(termEl, cmd, [`No change: ${name} already has ${t.partitions} partition(s).`]); return; }
+    t.partitions = newParts;
+    termRun(termEl, cmd, [`WARNING: If partitions are increased for a topic that has a key, the partition logic or ordering of the messages will be affected.`,
+      `Updated topic ${name}.`]);
+  } else if (a === 'delete') {
+    const t = find(name);
+    if (!t) { termRun(termEl, cmd, [`Error while executing topic command : Topic '${name}' does not exist as expected`], true); return; }
+    topics = topics.filter(x => x !== t);
+    termRun(termEl, cmd, [`Topic ${name} is marked for deletion.`, `Note: This will have no impact if delete.topic.enable is not set to true.`]);
+  }
+  renderState();
+}
+
+function renderState() {
+  stateEl.innerHTML = '';
+  if (!topics.length) { stateEl.innerHTML = '<p style="color:var(--muted);font-size:14px;margin:8px 0 0">No user topics yet. Try a preset or --create.</p>'; return; }
+  topics.forEach(t => {
+    const row = document.createElement('div');
+    row.className = 'topic-row';
+    const cfg = Object.entries(t.configs).map(([k, v]) => `${k}=${v}`).join(', ');
+    row.innerHTML = `<div class="head"><span class="name">${t.name}</span>
+        <span><span class="pill">RF ${t.rf}</span> ${cfg ? `<span class="pill warn">${cfg}</span>` : ''}</span></div>
+      <div class="parts">${Array.from({ length: t.partitions }, (_, p) => `<span class="p" style="background:${PCOLORS[p % 6]}">P${p}</span>`).join('')}</div>
+      <div class="row-actions">
+        <button data-a="describe">Describe</button>
+        <button data-a="alter">Alter</button>
+        <button data-a="delete">Delete</button>
+      </div>`;
+    row.querySelectorAll('[data-a]').forEach(b => b.onclick = (e) => {
+      e.stopPropagation();
+      actionEl.value = b.dataset.a;
+      nameEl.value = t.name;
+      if (b.dataset.a === 'alter') partsEl.value = t.partitions + 1;
+      fieldVisibility(); updatePreview();
+    });
+    row.onclick = () => { actionEl.value = 'describe'; nameEl.value = t.name; fieldVisibility(); updatePreview(); };
+    stateEl.appendChild(row);
+  });
+}
+
+[actionEl, nameEl, partsEl, rfEl, configEl].forEach(elm => elm.addEventListener('input', () => { fieldVisibility(); updatePreview(); }));
+document.getElementById('run').onclick = run;
+document.getElementById('preset1').onclick = () => {
+  actionEl.value = 'create'; nameEl.value = 'orders'; partsEl.value = 3; rfEl.value = 3; configEl.value = '';
+  fieldVisibility(); updatePreview();
+};
+document.getElementById('preset2').onclick = () => {
+  actionEl.value = 'create'; nameEl.value = 'payments'; partsEl.value = 6; rfEl.value = 3; configEl.value = 'cleanup.policy=compact';
+  fieldVisibility(); updatePreview();
+};
+
+fieldVisibility(); updatePreview(); renderState();
+
+renderQuiz('quiz', [
+  { q: 'What is the difference between <code>--list</code> and <code>--describe</code> on kafka-topics.sh?',
+    options: ['They are the same command', '--list shows only topic names; --describe shows partitions, replicas, ISR and configs per topic', '--describe only works on internal topics', '--list requires a --topic flag and --describe does not'],
+    answer: 1, explain: '--list is a quick inventory; --describe gives the full per-partition detail you need to diagnose replication or config issues.' },
+  { q: 'You try to create a topic with <code>--replication-factor 5</code> on a 3-broker cluster. What happens?',
+    options: ['Kafka creates 5 brokers automatically', 'The command fails: replication factor cannot exceed the number of brokers', 'The topic is created with RF=3 silently', 'It works, but only 3 replicas are ever written to'],
+    answer: 1, explain: 'You cannot ask for more copies of a partition than there are brokers to host them — the CLI rejects it outright.' },
+  { q: 'Why does kafka-topics.sh refuse to let you reduce a topic\'s partition count?',
+    options: ['It is a licensing restriction', 'Shrinking would require deleting data and would break the key→partition hash mapping for existing keys', 'The CLI has a bug', 'Partitions can only be changed by restarting the broker'],
+    answer: 1, explain: 'There is no safe way to merge partitions without losing data or silently changing which partition a key\'s future records land on, so Kafka disallows it.' },
+  { q: 'You run <code>--delete --topic orders</code> and the cluster has <code>delete.topic.enable=false</code>. What does the CLI warn?',
+    options: ['Nothing, it fails silently', 'That the delete will have no impact unless delete.topic.enable is set to true', 'That the topic will be renamed instead', 'That all consumer groups will be deleted too'],
+    answer: 1, explain: 'The marking succeeds, but the broker will not actually remove the topic\'s data unless deletion is enabled cluster-wide.' },
+  { q: 'What must you set at <code>--create</code> time if you want a topic to use log compaction instead of time/size-based deletion?',
+    options: ['--replication-factor compact', '--config cleanup.policy=compact', '--partitions compact', 'It is the default for every topic'],
+    answer: 1, explain: 'cleanup.policy=compact switches the topic from delete semantics to compaction, covered in Module 1, Topic 5.' }
+]);
+</script>
+</body>
+</html>

@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Producing &amp; Consuming via CLI</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .tape { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 10px; }
+  .tape .cell { min-width: 34px; height: 26px; border-radius: 5px; display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 700; color: #fff; }
+  .tape-empty { color: var(--muted); font-size: 13px; }
+  .markers { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; font-size: 13px; font-family: var(--mono); color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 2 · Kafka Installation, Setup &amp; CLI Operations</a>
+    <div class="nav"><span>4 / 4</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 4</div>
+  <h1>Producing &amp; consuming messages using CLI</h1>
+  <p class="lede">A single-partition topic <code>orders</code> keeps offsets simple (partitioning was Module 1, Topic 3). Send a few
+    records, then start a consumer with different <code>--group</code> and <code>--from-beginning</code> combinations to see
+    which ones replay history and which ones don't.</p>
+
+  <div class="grid grid-2">
+    <div class="card">
+      <h3>Producer</h3>
+      <div class="cli-form">
+        <label>Key (optional)<input type="text" id="pkey" placeholder="cust-1"></label>
+        <label>Value<input type="text" id="pval" placeholder="order placed" value="order placed"></label>
+        <button class="primary" id="send">Send</button>
+      </div>
+      <div class="cli-preview" id="ppreview"></div>
+      <div class="term" id="pterm"><div class="term-empty">Sent records appear here.</div></div>
+    </div>
+
+    <div class="card">
+      <h3>Consumer</h3>
+      <div class="cli-form">
+        <label>--group (blank = ephemeral)<input type="text" id="cgroup" placeholder="order-svc"></label>
+        <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="cbeg" style="width:auto"> --from-beginning</label>
+        <button class="primary" id="cstart">▶ Start</button>
+      </div>
+      <div class="cli-preview" id="cpreview"></div>
+      <div class="term" id="cterm"><div class="term-empty">Consumed records appear here.</div></div>
+    </div>
+  </div>
+
+  <h2>Topic state</h2>
+  <div class="card">
+    <p style="margin:0;color:var(--muted);font-size:14px">Log for <code>orders</code> (partition 0) — each box is one record at its offset.</p>
+    <div class="tape" id="tape"><span class="tape-empty">No records yet — send one from the producer.</span></div>
+    <div class="markers" id="markers"></div>
+  </div>
+
+  <div class="card">
+    <h3>kafka-consumer-groups.sh --describe</h3>
+    <div class="cli-form">
+      <label>--group<input type="text" id="dgroup" placeholder="order-svc"></label>
+      <button id="describe">Describe</button>
+    </div>
+    <div class="term" id="dterm"><div class="term-empty">Only named groups (non-blank --group) can be described — ephemeral console-consumer groups disappear once you stop them.</div></div>
+  </div>
+
+  <div class="callout warn"><b>Try this:</b> start a consumer with no <code>--group</code> and no <code>--from-beginning</code>
+    after sending a few records — it reads nothing until you send new ones. Then start one with <code>--group order-svc</code>
+    and <code>--from-beginning</code>, stop it, send more records, and start it again with the <b>same group</b> but
+    <em>without</em> --from-beginning: it resumes exactly where it left off.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="03-topic-lifecycle.html"><small>← Previous</small>Create, list, describe &amp; delete topics</a>
+    <a class="next" href="index.html"><small>Done →</small>Back to Module 2 overview</a>
+  </div>
+</div>
+
+<script>
+let log = [];
+const groups = {}; // name -> committed offset
+let activeGroup = null, activeTimer = null;
+
+const pkey = document.getElementById('pkey'), pval = document.getElementById('pval');
+const cgroup = document.getElementById('cgroup'), cbeg = document.getElementById('cbeg');
+const ppreview = document.getElementById('ppreview'), cpreview = document.getElementById('cpreview');
+const pterm = document.getElementById('pterm'), cterm = document.getElementById('cterm'), dterm = document.getElementById('dterm');
+const tapeEl = document.getElementById('tape'), markersEl = document.getElementById('markers');
+const startBtn = document.getElementById('cstart');
+
+function hash(s) { let h = 7; for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; }
+function keyColor(k) { return k ? PCOLORS[hash(k) % 6] : 'var(--muted)'; }
+
+function outLine(el, html, isErr) {
+  const d = document.createElement('div');
+  d.className = 'term-line ' + (isErr ? 'err' : 'out');
+  d.innerHTML = html;
+  el.appendChild(d);
+  el.scrollTop = el.scrollHeight;
+}
+
+function buildProducerCmd() {
+  let cmd = 'kafka-console-producer.sh --topic orders --bootstrap-server localhost:9092';
+  if (pkey.value.trim()) cmd += ' --property "parse.key=true" --property "key.separator=:"';
+  return cmd;
+}
+function buildConsumerCmd() {
+  let cmd = 'kafka-console-consumer.sh --topic orders --bootstrap-server localhost:9092';
+  if (cgroup.value.trim()) cmd += ` --group ${cgroup.value.trim()}`;
+  if (cbeg.checked) cmd += ' --from-beginning';
+  return cmd;
+}
+function updatePreviews() { ppreview.textContent = buildProducerCmd(); cpreview.textContent = buildConsumerCmd(); }
+
+function renderTape() {
+  if (!log.length) { tapeEl.innerHTML = '<span class="tape-empty">No records yet — send one from the producer.</span>'; }
+  else {
+    tapeEl.innerHTML = log.map(r => `<span class="cell" style="background:${keyColor(r.key)}" title="${r.key ? r.key + ' = ' : ''}${r.value}">${r.offset}</span>`).join('');
+  }
+  const names = Object.keys(groups);
+  markersEl.innerHTML = names.length ? names.map(g => {
+    const c = groups[g], lag = log.length - c;
+    return `${g === activeGroup ? '▶' : '⏸'} ${g} → committed offset ${c} (lag ${lag})`;
+  }).join('<br>') : '<span class="tape-empty">No named consumer groups yet.</span>';
+}
+
+document.getElementById('send').onclick = () => {
+  const key = pkey.value.trim() || null, value = pval.value.trim() || '(empty)';
+  const r = { offset: log.length, key, value };
+  log.push(r);
+  const cmd = buildProducerCmd();
+  termRun(pterm, cmd, [`&gt;${key ? key + ':' : ''}${value}`, `&gt;`]);
+  renderTape();
+};
+
+function startConsumer() {
+  if (activeTimer) stopConsumer();
+  let group = cgroup.value.trim();
+  const ephemeral = !group;
+  if (ephemeral) group = 'console-consumer-' + Math.floor(10000 + Math.random() * 89999);
+  const hadCommitted = Object.prototype.hasOwnProperty.call(groups, group);
+  let position;
+  if (hadCommitted) {
+    position = groups[group];
+    if (cbeg.checked) termRun(cterm, buildConsumerCmd(), [`Group '${group}' already has a committed offset (${position}) — --from-beginning is ignored.`], true);
+  } else {
+    position = cbeg.checked ? 0 : log.length;
+    groups[group] = position;
+  }
+  activeGroup = group;
+  const cmd = buildConsumerCmd();
+  termRun(cterm, cmd, [ephemeral
+    ? `New ephemeral group <span class="hl">${group}</span> (no --group given) — starts at ${cbeg.checked ? 'earliest' : 'latest'} offset (${position}), can never be resumed.`
+    : `Joined group <span class="hl">${group}</span> at offset ${position}.`]);
+  startBtn.textContent = '⏹ Stop';
+  activeTimer = setInterval(() => {
+    if (groups[group] < log.length) {
+      const r = log[groups[group]];
+      outLine(cterm, `${r.key ? r.key + ' = ' : ''}${r.value} <span class="hl">(offset ${r.offset})</span>`);
+      groups[group]++;
+      renderTape();
+    }
+  }, 700);
+}
+function stopConsumer() {
+  clearInterval(activeTimer); activeTimer = null;
+  if (activeGroup) outLine(cterm, `Consumer stopped. Committed offset for '${activeGroup}' stays at ${groups[activeGroup]}.`);
+  activeGroup = null;
+  startBtn.textContent = '▶ Start';
+  renderTape();
+}
+startBtn.onclick = () => activeTimer ? stopConsumer() : startConsumer();
+
+document.getElementById('describe').onclick = () => {
+  const g = document.getElementById('dgroup').value.trim();
+  const cmd = `kafka-consumer-groups.sh --describe --group ${g || '<group>'} --bootstrap-server localhost:9092`;
+  if (!g) { termRun(dterm, cmd, ['Error: you must specify --group']); return; }
+  if (!Object.prototype.hasOwnProperty.call(groups, g)) { termRun(dterm, cmd, [`Consumer group '${g}' does not exist.`], true); return; }
+  const cur = groups[g], end = log.length, lag = end - cur;
+  termRun(dterm, cmd, [
+    'GROUP     TOPIC   PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG    CONSUMER-ID',
+    `${g}  orders  0          ${cur}               ${end}               ${lag}    ${g === activeGroup ? g + '-1' : '-'}`
+  ]);
+};
+
+[pkey, pval, cgroup].forEach(i => i.addEventListener('input', updatePreviews));
+cbeg.addEventListener('change', updatePreviews);
+updatePreviews(); renderTape();
+
+renderQuiz('quiz', [
+  { q: 'You run kafka-console-consumer.sh with no <code>--group</code> and no <code>--from-beginning</code>. What do you see?',
+    options: ['Every record ever produced to the topic', 'Only records produced after the consumer starts', 'An error — --group is mandatory', 'The last 10 records only'],
+    answer: 1, explain: 'Without --group, an ephemeral group is created that starts at the end of the log by default, and it can never be resumed once you stop it.' },
+  { q: 'A named group <code>order-svc</code> already has a committed offset. You restart the consumer with <code>--group order-svc --from-beginning</code>. What happens?',
+    options: ['It replays every record from offset 0', 'It resumes from its committed offset; --from-beginning is ignored', 'It errors out because the flags conflict', 'It skips to the newest offset'],
+    answer: 1, explain: '--from-beginning only decides where to start when a group has no existing committed offset. An already-tracked group always resumes from its own committed position.' },
+  { q: 'What does the LAG column in kafka-consumer-groups.sh --describe represent?',
+    options: ['Network latency to the broker', 'log-end offset minus the group\'s committed offset', 'The number of partitions in the topic', 'How many consumers are in the group'],
+    answer: 1, explain: 'Lag is how many records the group has not yet consumed: LOG-END-OFFSET − CURRENT-OFFSET.' },
+  { q: 'Why can\'t you describe an ephemeral console-consumer group after you stop it?',
+    options: ['kafka-consumer-groups.sh only works with Java clients', 'An ephemeral group has no durable identity — nothing persists once its one consumer disconnects', 'Describing groups requires --from-beginning', 'It is a CLI bug'],
+    answer: 1, explain: 'Only a named --group has offsets committed to __consumer_offsets under a stable id, so only named groups remain inspectable between runs.' },
+  { q: 'What do <code>--property parse.key=true</code> and <code>--property key.separator=:</code> do for kafka-console-producer.sh?',
+    options: ['Encrypt the key', 'Tell the producer to split each input line into a record key and value at the separator', 'Set the partition count', 'Enable compression'],
+    answer: 1, explain: 'Without parse.key=true, the whole input line becomes the value with a null key; these properties let you type key:value on stdin.' }
+]);
+</script>
+</body>
+</html>

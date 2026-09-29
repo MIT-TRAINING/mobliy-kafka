@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka Module 2 Visualizations</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .topics { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: 24px; }
+  .topic { display: block; text-decoration: none; color: var(--text); transition: border-color .15s, transform .15s; }
+  .topic:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .topic .num { font-family: var(--mono); color: var(--accent); font-size: 13px; font-weight: 600; }
+  .topic h3 { margin: 6px 0; }
+  .topic p { margin: 0 0 10px; color: var(--muted); font-size: 15px; }
+  .topic .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  ol.hands { margin: 0; padding-left: 20px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <span>Apache Kafka &amp; Confluent Kafka Administration</span>
+    <div class="nav"><a href="../module-01/index.html">← Module 1</a><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Module 2</div>
+  <h1>Kafka Installation, Setup &amp; CLI Operations</h1>
+  <p class="lede">Interactive visualizations for each Module 2 topic. Each page has a hands-on simulation you can
+    play with, followed by a 5-question self-quiz with explanations.</p>
+  <p style="color:var(--muted);font-size:14px;margin:4px 0 0"><b style="color:var(--text)">Objective:</b> Install, configure, and
+    perform core administration on Apache Kafka clusters.</p>
+
+  <div class="topics">
+    <a class="card topic" href="01-installation-options.html">
+      <div class="num">01</div><h3>System requirements &amp; installation options</h3>
+      <p>Pick a deployment topology — single-node dev, combined-KRaft cluster, or dedicated controllers — and get the matching commands.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="02-cli-tools-overview.html">
+      <div class="num">02</div><h3>Kafka CLI tools overview</h3>
+      <p>An interactive catalog of the admin CLI: what each script does, its key flags, and a live simulated run.</p>
+      <div class="tags"><span class="pill">explorer</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="03-topic-lifecycle.html">
+      <div class="num">03</div><h3>Create, list, describe &amp; delete topics</h3>
+      <p>Build real <code>kafka-topics.sh</code> commands against a simulated cluster and see the exact CLI output, including its errors.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="04-produce-consume-cli.html">
+      <div class="num">04</div><h3>Producing &amp; consuming via CLI</h3>
+      <p>Run a producer and consumer side by side, then see why <code>--group</code> and <code>--from-beginning</code> change what you read.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+  </div>
+
+  <h2>Hands-on for this module</h2>
+  <div class="card">
+    <ol class="hands">
+      <li>Multi-broker local cluster setup</li>
+      <li>Topic create / list / describe / delete via CLI</li>
+      <li>Produce and consume test messages</li>
+    </ol>
+  </div>
+</div>
+</body>
+</html>
