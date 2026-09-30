@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Broker Configuration Parameters</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .layer-card { display: flex; flex-direction: column; gap: 14px; align-items: flex-start; }
+  @media (min-width: 760px) { .sim { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 18px; align-items: start; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 3 · Cluster Configuration, Storage &amp; Retention</a>
+    <div class="nav"><span>1 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 1</div>
+  <h1>Broker configuration parameters: defaults, static &amp; dynamic layers</h1>
+  <p class="lede">One property — <code>retention.ms</code> on <code>cdr.voice</code> — can be set at five different layers. Toggle the
+    layers below and watch the <b>effective value</b> resolve differently on broker 1 and broker 2. The trap this page exists to
+    teach: a per-broker override applies to the partitions that broker leads, <em>not</em> to the whole topic.</p>
+
+  <div class="card">
+    <div class="sim">
+      <div class="layer-card">
+        <div class="checks">
+          <label><input type="checkbox" id="cb-topic" checked> Topic override <code>retention.ms=43200000</code></label>
+          <label><input type="checkbox" id="cb-perbroker" checked> Per-broker dynamic (broker 1) <code>log.retention.ms=86400000</code></label>
+          <label><input type="checkbox" id="cb-cluster" checked> Cluster-wide dynamic default <code>log.retention.ms=259200000</code></label>
+          <label><input type="checkbox" id="cb-static" checked> Static <code>server.properties</code> <code>log.retention.hours=720</code></label>
+          <label><input type="checkbox" disabled checked> Built-in default <code>log.retention.ms=604800000</code></label>
+        </div>
+        <button id="reset">Reset to defaults</button>
+        <p style="margin:0;font-size:13px;color:var(--muted)">Highest priority wins: topic → per-broker → cluster-wide → static → built-in.
+          The built-in default can never be unset.</p>
+      </div>
+      <div>
+        <div class="stage"><svg id="svg" viewBox="0 0 640 400" role="img" aria-label="Configuration precedence layers resolving to per-broker effective values"></svg></div>
+        <div class="log" id="log" aria-live="polite"></div>
+      </div>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="term" id="term" style="margin-top:12px"></div>
+  </div>
+
+  <div class="callout warn"><b>Admin trap:</b> set a dynamic config per broker and the <em>same topic</em> behaves differently
+    depending on which broker leads each partition. Use <code>--entity-default</code> for cluster-wide intentions and reserve
+    <code>--entity-name N</code> for genuinely node-specific resources such as <code>num.io.threads</code>. Always confirm with
+    <code>kafka-configs.sh --describe</code> — the <code>synonyms</code> tell you which layer actually won.</div>
+
+  <h2>Static vs. dynamic — what can change without a restart?</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Property</th><th>Static (<code>server.properties</code>, restart)</th><th>Dynamic (no restart)</th></tr></thead>
+      <tbody>
+        <tr><td><code>log.dirs</code></td><td>✓ — topology/identity settings are static</td><td>—</td></tr>
+        <tr><td><code>node.id</code>, <code>process.roles</code></td><td>✓</td><td>—</td></tr>
+        <tr><td><code>controller.quorum.voters</code></td><td>✓</td><td>—</td></tr>
+        <tr><td><code>log.retention.ms</code> / <code>log.retention.bytes</code></td><td>✓ (can also be set here)</td><td>✓ — most common dynamic change</td></tr>
+        <tr><td><code>log.segment.bytes</code> / <code>log.roll.ms</code></td><td>✓</td><td>✓</td></tr>
+        <tr><td><code>min.insync.replicas</code></td><td>✓</td><td>✓</td></tr>
+        <tr><td><code>num.io.threads</code>, <code>num.network.threads</code></td><td>✓</td><td>✓ — node-specific by nature</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout">In KRaft, a dynamic config change is appended to the <code>__cluster_metadata</code> log by the active
+    controller; brokers pull the new record and update their cache — no restart and no ZooKeeper (Module 1, Topic 6). Static
+    changes are applied with a rolling restart and ISR watching (Module 5).</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="index.html"><small>← Back</small>Module overview</a>
+    <a class="next" href="02-log-directories-segments.html"><small>Next →</small>Log directories &amp; segment management</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg');
+const logEl = document.getElementById('log');
+const termEl = document.getElementById('term');
+const statsEl = document.getElementById('stats');
+
+const LAYERS = [
+  { key: 'topic',     name: 'DYNAMIC_TOPIC_CONFIG',           prio: 1, value: 43200000,   desc: 'kafka-configs --entity-type topics --entity-name cdr.voice', brokers: 'all' },
+  { key: 'perbroker', name: 'DYNAMIC_BROKER_CONFIG',          prio: 2, value: 86400000,   desc: 'kafka-configs --entity-type brokers --entity-name 1', brokers: [1] },
+  { key: 'cluster',   name: 'DYNAMIC_DEFAULT_BROKER_CONFIG',  prio: 3, value: 259200000,  desc: 'kafka-configs --entity-type brokers --entity-default', brokers: 'all' },
+  { key: 'static',    name: 'STATIC_BROKER_CONFIG',           prio: 4, value: 2592000000, desc: 'server.properties: log.retention.hours=720', brokers: 'all' },
+  { key: 'default',   name: 'DEFAULT_CONFIG',                 prio: 5, value: 604800000,  desc: 'built-in Kafka default: log.retention.ms=604800000', brokers: 'all' },
+];
+let enabled = { topic: true, perbroker: true, cluster: true, static: true };
+const cb = {
+  topic: document.getElementById('cb-topic'), perbroker: document.getElementById('cb-perbroker'),
+  cluster: document.getElementById('cb-cluster'), static: document.getElementById('cb-static'),
+};
+
+const fmt = ms => ({ 43200000: '12 hours', 86400000: '1 day', 259200000: '3 days', 2592000000: '30 days', 604800000: '7 days' }[ms]);
+const applies = (layer, broker) => layer.brokers === 'all' || (Array.isArray(layer.brokers) && layer.brokers.includes(broker));
+const isSet = layer => layer.key === 'default' || enabled[layer.key];
+
+function winner(broker) {
+  for (const l of LAYERS) if (applies(l, broker) && isSet(l)) return l;
+}
+
+function render() {
+  svg.innerHTML = '';
+  const rowH = 52, gap = 10, x = 16, w = 400;
+  el('text', { x: 16, y: 22, 'font-size': 12, class: 'muted', text: 'CONFIGURATION LAYERS (retention.ms for topic cdr.voice)' }, svg);
+
+  LAYERS.forEach((l, i) => {
+    const y = 36 + i * (rowH + gap);
+    const set = isSet(l);
+    const wins1 = winner(1) === l, wins2 = winner(2) === l;
+    el('rect', { x, y, width: w, height: rowH, rx: 10, fill: 'var(--surface)',
+      stroke: wins1 ? 'var(--accent)' : 'var(--border)', 'stroke-width': wins1 ? 2 : 1, 'stroke-dasharray': set ? '' : '5 4' }, svg);
+    el('text', { x: x + 14, y: y + 19, 'font-size': 12, 'font-weight': 700, class: 'mono',
+      style: `fill:${wins1 ? 'var(--accent)' : 'var(--muted)'}`, text: l.name }, svg);
+    el('text', { x: x + 14, y: y + 37, 'font-size': 11, class: 'muted', text: l.desc }, svg);
+    el('text', { x: x + w - 14, y: y + 19, 'text-anchor': 'end', 'font-size': 12, 'font-weight': 600,
+      style: `fill:${set ? (wins1 ? 'var(--ok)' : 'var(--warn)') : 'var(--muted)'}`,
+      text: !set ? 'not set' : wins1 ? 'ACTIVE' : 'overridden' }, svg);
+    el('text', { x: x + w - 14, y: y + 37, 'text-anchor': 'end', 'font-size': 11, class: 'muted', text: `priority ${l.prio}` }, svg);
+    if (i < LAYERS.length - 1) {
+      el('line', { x1: x + w / 2, y1: y + rowH, x2: x + w / 2, y2: y + rowH + gap, stroke: 'var(--border)', 'stroke-dasharray': '3 3' }, svg);
+    }
+    if (wins1 && wins2) {
+      el('line', { x1: x + w, y1: y + rowH / 2, x2: 470, y2: y + rowH / 2, stroke: 'var(--accent)', 'stroke-width': 1.5 }, svg);
+    }
+  });
+
+  const bx = 480, bw = 150;
+  [{ id: 1, y: 60 }, { id: 2, y: 230 }].forEach(({ id, y }) => {
+    const win = winner(id);
+    const other = id === 1 && enabled.perbroker ? fmt(LAYERS.find(l => l.key === 'cluster').value) : null;
+    el('rect', { x: bx, y, width: bw, height: 120, rx: 12, fill: 'var(--surface)', stroke: win === LAYERS[0] ? 'var(--accent)' : 'var(--border)', 'stroke-width': 1.5 }, svg);
+    el('text', { x: bx + bw / 2, y: y + 24, 'text-anchor': 'middle', 'font-weight': 700, text: `broker ${id}` }, svg);
+    el('text', { x: bx + bw / 2, y: y + 42, 'text-anchor': 'middle', 'font-size': 10, class: 'muted', text: `cdr.voice-${id === 1 ? '0, 2' : '1'}` }, svg);
+    el('text', { x: bx + bw / 2, y: y + 72, 'text-anchor': 'middle', 'font-size': 18, 'font-weight': 700, style: 'fill:var(--accent)', text: fmt(win.value) }, svg);
+    el('text', { x: bx + bw / 2, y: y + 92, 'text-anchor': 'middle', 'font-size': 10, class: 'muted', text: 'winning source' }, svg);
+    el('text', { x: bx + bw / 2, y: y + 107, 'text-anchor': 'middle', 'font-size': 10, class: 'mono', text: win.name.replace('DYNAMIC_', 'D_') }, svg);
+    if (other) el('text', { x: bx + bw / 2, y: y + 8 + 116, 'text-anchor': 'middle', 'font-size': 10, style: 'fill:var(--bad)', text: `diverges from broker 2 (${other})` }, svg);
+  });
+  el('text', { x: bx + bw / 2, y: 44, 'text-anchor': 'middle', 'font-size': 12, class: 'muted', text: 'EFFECTIVE VALUE PER BROKER' }, svg);
+
+  const w1 = winner(1), w2 = winner(2);
+  statsEl.innerHTML = `
+    <div class="stat"><b>${fmt(w1.value)}</b><span>effective on broker 1</span></div>
+    <div class="stat"><b>${fmt(w2.value)}</b><span>effective on broker 2</span></div>
+    <div class="stat"><b>${w1 === w2 ? 'same' : 'different!'}</b><span>${w1 === w2 ? w1.name : 'per-broker divergence'}</span></div>`;
+  renderDescribes();
+}
+
+function renderDescribes() {
+  const lines = [];
+  lines.push(`<span class="prompt">$</span> <span class="cmd">kafka-configs.sh --bootstrap-server $BS --describe --entity-type topics --entity-name cdr.voice</span>`);
+  lines.push('Dynamic configs for topic cdr.voice are:');
+  const syn = [];
+  if (enabled.topic) syn.push('DYNAMIC_TOPIC_CONFIG:retention.ms=43200000');
+  if (enabled.cluster) syn.push('DYNAMIC_DEFAULT_BROKER_CONFIG:log.retention.ms=259200000');
+  if (enabled.static) syn.push('STATIC_BROKER_CONFIG:log.retention.hours=720');
+  syn.push('DEFAULT_CONFIG:retention.ms=604800000');
+  if (enabled.topic) {
+    lines.push(`  retention.ms=43200000 sensitive=false synonyms={${syn.join(', ')}}`);
+  } else {
+    lines.push('  <span style="color:#5b6678">(no topic override set — values resolve through the broker layers below)</span>');
+  }
+  lines.push('');
+  lines.push(`<span class="prompt">$</span> <span class="cmd">kafka-configs.sh --bootstrap-server $BS --describe --entity-type brokers --entity-name 1</span>`);
+  lines.push('Dynamic configs for broker 1 are:');
+  const bs = [];
+  if (enabled.perbroker) bs.push('DYNAMIC_BROKER_CONFIG:log.retention.ms=86400000');
+  if (enabled.cluster) bs.push('DYNAMIC_DEFAULT_BROKER_CONFIG:log.retention.ms=259200000');
+  if (enabled.static) bs.push('STATIC_BROKER_CONFIG:log.retention.hours=720');
+  bs.push('DEFAULT_CONFIG:log.retention.ms=604800000');
+  if (enabled.perbroker || enabled.cluster || enabled.static) {
+    lines.push(`  log.retention.ms=${enabled.perbroker ? 86400000 : enabled.cluster ? 259200000 : 2592000000} sensitive=false synonyms={${bs.join(', ')}}`);
+  } else {
+    lines.push('  <span style="color:#5b6678">(no dynamic broker configs set)</span>');
+  }
+  termEl.innerHTML = lines.map(l => `<div class="term-line out">${l}</div>`).join('');
+}
+
+Object.keys(cb).forEach(k => cb[k].onchange = () => {
+  enabled[k] = cb[k].checked;
+  const msgs = {
+    topic: 'topic override ' + (enabled.topic ? 'applied — every partition of cdr.voice uses 12 hours' : 'removed — resolution falls through'),
+    perbroker: 'per-broker override ' + (enabled.perbroker ? 'set on broker 1 only — partitions it leads diverge from broker 2' : 'removed'),
+    cluster: 'cluster-wide dynamic default ' + (enabled.cluster ? 'set with --entity-default — applies to every broker' : 'removed'),
+    static: 'server.properties layer ' + (enabled.static ? 'assumed present (log.retention.hours=720)' : 'assumed absent — built-in default applies'),
+  };
+  render();
+  logLine(logEl, msgs[k], true);
+});
+document.getElementById('reset').onclick = () => {
+  Object.keys(cb).forEach(k => { cb[k].checked = true; enabled[k] = true; });
+  render();
+  logLine(logEl, 'all layers reset to set — effective value is the topic override (12 hours) on both brokers', true);
+};
+render();
+logLine(logEl, 'ready — toggle a layer to see which value wins per broker');
+
+renderQuiz('quiz', [
+  { q: 'A topic has <code>retention.ms=86400000</code> and the broker has <code>log.retention.ms=259200000</code> set dynamically. Which value applies to the topic?',
+    options: ['The broker value, because brokers outrank topics', 'The topic value: dynamic topic configs have the highest precedence', 'Kafka refuses the combination', 'Whichever value is larger'],
+    answer: 1, explain: 'Precedence runs topic → per-broker → cluster-wide → static → built-in. A topic override wins over every broker-level layer for that topic.' },
+  { q: 'Which of these properties requires a broker restart to change?',
+    options: ['<code>log.retention.ms</code>', '<code>min.insync.replicas</code>', '<code>log.dirs</code>', '<code>num.io.threads</code>'],
+    answer: 2, explain: '<code>log.dirs</code> is a topology/identity setting: it must live in <code>server.properties</code> and needs a restart. The others are dynamic and can be altered with <code>kafka-configs.sh</code> while running.' },
+  { q: 'You run <code>kafka-configs.sh --alter --entity-type brokers --entity-name 1 --add-config num.io.threads=16</code>. What is the scope?',
+    options: ['All brokers get 16 I/O threads', 'Only broker 1 gets 16 I/O threads', 'Only topic partition leads on broker 1', 'The producer client uses 16 threads'],
+    answer: 1, explain: '<code>--entity-name 1</code> targets one broker. That is appropriate for node-specific resources like thread pools, but risky for topic-default-like settings — use <code>--entity-default</code> for cluster-wide intentions.' },
+  { q: 'What does the <code>synonyms</code> list in <code>kafka-configs.sh --describe</code> tell you?',
+    options: ['Alternative names for the config key', 'Every configured source of the value, ordered by precedence, so you can see which layer won', 'The default value Kafka would use if the config were deleted', 'The brokers that hold a replica'],
+    answer: 1, explain: 'Synonyms are the paper trail: e.g. <code>DYNAMIC_TOPIC_CONFIG</code> first, then broker layers, then <code>DEFAULT_CONFIG</code>. The first entry is the effective source.' },
+  { q: 'A dynamic config shows the synonym <code>DYNAMIC_DEFAULT_BROKER_CONFIG:log.retention.ms=259200000</code>. Where was it set?',
+    options: ['On one specific broker with <code>--entity-name</code>', 'Cluster-wide with <code>--entity-type brokers --entity-default</code>', 'In <code>server.properties</code>', 'On the topic with <code>--entity-type topics</code>'],
+    answer: 1, explain: '<code>DYNAMIC_DEFAULT_BROKER_CONFIG</code> is the cluster-wide dynamic default. <code>DYNAMIC_BROKER_CONFIG</code> would be a single broker, and <code>STATIC_BROKER_CONFIG</code> comes from <code>server.properties</code>.' }
+]);
+</script>
+</body>
+</html>

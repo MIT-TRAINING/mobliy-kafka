@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>min.insync.replicas &amp; acks</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .broker-ctl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+  .broker-ctl button { width: 100%; }
+  td.st-ok { color: var(--ok); font-weight: 600; }
+  td.st-bad { color: var(--bad); font-weight: 600; }
+  td.st-warn { color: var(--warn); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 3 · Cluster Configuration, Storage &amp; Retention</a>
+    <div class="nav"><span>5 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 5</div>
+  <h1>min.insync.replicas &amp; acknowledgments (acks)</h1>
+  <p class="lede">Durability is a contract with two sides: the producer's <code>acks</code> decides when a write counts as
+    successful; the broker's <code>min.insync.replicas</code> decides whether an <code>acks=all</code> write is accepted at all.
+    Produce, kill brokers, and watch exactly which records can be lost.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span style="font-size:14px;color:var(--muted)">Producer <code>acks</code></span>
+      <div class="seg" role="group" aria-label="acks" id="acksSeg">
+        <button data-a="0" aria-pressed="false">0</button>
+        <button data-a="1" aria-pressed="false">1</button>
+        <button data-a="all" aria-pressed="true">all</button>
+      </div>
+      <span style="font-size:14px;color:var(--muted)">Topic <code>min.insync.replicas</code></span>
+      <div class="seg" role="group" aria-label="min.insync.replicas" id="misSeg">
+        <button data-m="1" aria-pressed="false">1</button>
+        <button data-m="2" aria-pressed="true">2</button>
+        <button data-m="3" aria-pressed="false">3</button>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="primary" id="produce">Produce record</button>
+      <button id="produce3">Produce 3</button>
+      <button id="reset">Reset cluster</button>
+      <span class="pill" id="verdict">RF=3 · acks=all · min.insync.replicas=2 → tolerates 1 failure</span>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 400" role="img" aria-label="Replica logs, high watermark and ISR across three brokers"></svg></div>
+    <div class="broker-ctl" id="bctl"></div>
+    <div class="stats" id="stats"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <div class="callout warn"><b>Three rules extracted from this simulation:</b> (1) <code>acks=all</code> is only as strong as
+    <code>min.insync.replicas</code> — with the default of 1 it can be acknowledged by a single replica ("last replica standing").
+    (2) <code>min.insync.replicas</code> does nothing for <code>acks=0</code> or <code>acks=1</code> writes — the broker only
+    consults it for <code>acks=all</code>. (3) <code>unclean.leader.election.enable=true</code> trades correctness for availability:
+    an out-of-sync replica can become leader and <b>silently lose acknowledged data</b>.</div>
+
+  <h2>Durability scenarios (RF=3, min.insync.replicas=2, healthy ISR [1,2,3])</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Scenario</th><th>ISR</th><th>acks=all write</th><th>acks=1 write</th><th>What can be lost</th></tr></thead>
+      <tbody>
+        <tr><td>All brokers up</td><td class="mono">3</td><td class="st-ok">Accepted</td><td class="st-ok">Accepted</td><td>Nothing</td></tr>
+        <tr><td>One broker down</td><td class="mono">2</td><td class="st-ok">Accepted (tolerates 1 failure)</td><td class="st-ok">Accepted</td><td>Nothing yet</td></tr>
+        <tr><td>Two brokers down</td><td class="mono">1</td><td class="st-bad">NOT_ENOUGH_REPLICAS — cluster refuses</td><td class="st-warn">Accepted locally, not visible until ISR recovers</td><td>Everything written at acks=1 if the last replica dies</td></tr>
+        <tr><td>Two down + unclean election enabled</td><td class="mono">1 → out-of-sync promoted</td><td colspan="2" class="st-bad">n/a — acknowledged data can silently disappear</td><td>Acknowledged records</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Kafka 4.x behaviour worth writing down:</b> under the strict min-ISR rule (KIP-966) the high watermark
+    <b>stops advancing</b> when the ISR drops below <code>min.insync.replicas</code>. Even <code>acks=0/1</code> records written
+    during that window are not visible to consumers until replication recovers — and would be lost if an out-of-sync replica
+    were promoted. Newer 4.x releases also track Eligible Leader Replicas (ELR) so elections avoid that corner case.</div>
+
+  <h2>Choosing settings per topic class</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Topic class</th><th><code>acks</code></th><th><code>min.insync.replicas</code></th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Metrics / debug telemetry</td><td class="mono">1</td><td class="mono">1</td><td>Losing a few points is acceptable; latency matters</td></tr>
+        <tr><td>Application logs</td><td class="mono">1</td><td class="mono">1</td><td>Keep <code>unclean.leader.election.enable=false</code></td></tr>
+        <tr><td>Standard business events</td><td class="mono">all</td><td class="mono">2</td><td>The default posture for this course</td></tr>
+        <tr><td>Billing / CDR / financial</td><td class="mono">all</td><td class="mono">2 (on the topic)</td><td>Plus idempotence, retries and alerting (Module 9)</td></tr>
+        <tr><td>State / changelog topics</td><td class="mono">all</td><td class="mono">2</td><td>Losing a state update corrupts derived state</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Production baseline:</b> RF=3, <code>min.insync.replicas=2</code> on the topic, <code>acks=all</code>,
+    idempotence on (<code>enable.idempotence=true</code>, the client default since Kafka 3.0 — as is <code>acks=all</code>).
+    Older console-producer examples still assume <code>acks=1</code>, so when testing durability set
+    <code>--producer-property acks=...</code> explicitly so you know which contract you are demonstrating.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="04-retention-cleanup-policies.html"><small>← Previous</small>Retention &amp; cleanup policies</a>
+    <a class="next" href="06-storage-optimization.html"><small>Next →</small>Storage optimization techniques</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), logEl = document.getElementById('log'), statsEl = document.getElementById('stats');
+const NB = 3;
+let B, P, acks = 'all', minISR = 2, stats;
+
+function reset() {
+  B = Array.from({ length: NB }, () => ({ up: true }));
+  P = { leader: 0, isr: [0, 1, 2], leo: [0, 0, 0], recs: [], hw: 0, frozen: false };
+  stats = { accepted: 0, rejected: 0, lostAcked: 0 };
+  logEl.innerHTML = '';
+  render();
+  logLine(logEl, 'cluster ready — payments.events-0, RF=3, leader broker-1, ISR [1,2,3]', true);
+}
+
+function render() {
+  svg.innerHTML = '';
+  el('text', { x: 16, y: 22, 'font-size': 12, class: 'muted',
+    text: `payments.events-0 · RF=3 · acks=${acks} · min.insync.replicas=${minISR}  (solid = committed below HW, faded = above HW / at risk)` }, svg);
+  const win = Math.max(24, P.recs.length + 6);
+  const cw = 20;
+  for (let b = 0; b < NB; b++) {
+    const x = 20 + b * 290, y = 44, w = 264, h = 210;
+    const isLeader = P.leader === b, down = !B[b].up, inIsr = P.isr.includes(b);
+    el('rect', { x, y, width: w, height: h, rx: 12, fill: down ? 'var(--bad-soft)' : 'var(--surface)',
+      stroke: down ? 'var(--bad)' : isLeader ? 'var(--accent)' : 'var(--border)', 'stroke-width': isLeader ? 2 : 1.3,
+      'stroke-dasharray': down ? '6 4' : '' }, svg);
+    el('text', { x: x + 14, y: y + 24, 'font-weight': 700, text: `broker-${b + 1}` }, svg);
+    el('text', { x: x + w - 14, y: y + 24, 'text-anchor': 'end', 'font-size': 12, 'font-weight': 600,
+      style: `fill:${down ? 'var(--bad)' : 'var(--ok)'}`, text: down ? '✕ down' : '● running' }, svg);
+    el('text', { x: x + 14, y: y + 44, 'font-size': 11, style: `fill:${isLeader ? 'var(--accent)' : 'var(--muted)'}`,
+      text: (isLeader ? 'LEADER' : 'follower') + (inIsr ? ' · in ISR' : ' · OUT of ISR') + (P.leader === null && inIsr ? ' · (offline)' : '') }, svg);
+    for (let k = 0; k < win; k++) {
+      const cx = x + 14 + (k % 12) * cw, cy = y + 58 + Math.floor(k / 12) * 24;
+      const written = k < P.leo[b];
+      if (!written) {
+        el('rect', { x: cx, y: cy, width: cw - 3, height: 18, rx: 3, fill: 'none', stroke: 'var(--border)', 'stroke-dasharray': '2 2', opacity: down ? .4 : .8 }, svg);
+      } else {
+        const committed = k < P.hw;
+        const r = P.recs[k];
+        const ackedOne = r && (r.ack === 'one' || r.ack === 'all');
+        el('rect', { x: cx, y: cy, width: cw - 3, height: 18, rx: 3,
+          fill: PCOLORS[k % 6], 'fill-opacity': committed ? 1 : .35, opacity: down ? .5 : 1 }, svg);
+        if (committed && r) el('text', { x: cx + (cw - 3) / 2, y: cy + 13, 'text-anchor': 'middle', 'font-size': 9, style: 'fill:#fff', text: k }, svg);
+        if (!committed && r && r.ack === 'one') el('text', { x: cx + (cw - 3) / 2, y: cy + 13, 'text-anchor': 'middle', 'font-size': 9, style: 'fill:var(--bad)', 'font-weight': 700, text: '!' }, svg);
+      }
+    }
+    const rows = Math.ceil(win / 12);
+    el('text', { x: x + 14, y: y + 68 + rows * 24, 'font-size': 11, class: 'muted',
+      text: `LEO ${P.leo[b]}${isLeader && P.leader !== null ? ' (leader log-end)' : ''}` }, svg);
+  }
+  el('text', { x: 20, y: 292, 'font-size': 13, 'font-weight': 600, style: 'fill:var(--ok)',
+    text: `high watermark = ${P.hw} — consumers can only read records below the HW` + (P.frozen ? '  (FROZEN: strict min ISR, KIP-966)' : '') }, svg);
+  el('text', { x: 20, y: 314, 'font-size': 12, class: 'muted',
+    text: P.leader === null ? 'partition OFFLINE — no in-sync replica to serve reads or writes'
+      : `ISR [${P.isr.map(b => b + 1).join(',')}]${P.isr.length < minISR ? ` — below min.insync.replicas=${minISR}: acks=all writes are rejected and the HW stops advancing` : ' — meets min.insync.replicas'}` }, svg);
+
+  statsEl.innerHTML = `
+    <div class="stat"><b>${P.isr.length}</b><span>ISR size</span></div>
+    <div class="stat"><b>${minISR}</b><span>min.insync.replicas</span></div>
+    <div class="stat"><b>${P.hw}</b><span>high watermark${P.frozen ? ' (frozen)' : ''}</span></div>
+    <div class="stat"><b>${stats.accepted}</b><span>accepted by leader</span></div>
+    <div class="stat"><b>${stats.rejected}</b><span>rejected (NOT_ENOUGH_REPLICAS)</span></div>
+    <div class="stat"><b style="color:${stats.lostAcked ? 'var(--bad)' : 'inherit'}">${stats.lostAcked}</b><span>acknowledged records lost</span></div>`;
+
+  const ctl = document.getElementById('bctl');
+  ctl.innerHTML = '';
+  B.forEach((b, i) => {
+    const btn = document.createElement('button');
+    btn.className = b.up ? 'danger' : 'primary';
+    btn.textContent = b.up ? `Kill broker-${i + 1}` : `Restart broker-${i + 1}`;
+    btn.onclick = () => b.up ? kill(i) : restart(i);
+    ctl.appendChild(btn);
+  });
+}
+
+function produce(n) {
+  for (let i = 0; i < n; i++) {
+    if (P.leader === null) { logLine(logEl, 'produce failed: partition has no leader — retrying until a replica returns', true); stats.rejected++; continue; }
+    if (acks === 'all' && P.isr.length < minISR) {
+      logLine(logEl, `produce <b>rejected</b>: NOT_ENOUGH_REPLICAS — ISR has ${P.isr.length} replica(s), min.insync.replicas=${minISR} (retriable)`, true);
+      stats.rejected++; continue;
+    }
+    const off = P.recs.length;
+    const rec = { off, ack: acks === 'all' ? 'pending' : acks === '1' ? 'one' : 'none' };
+    P.recs.push(rec);
+    P.leo[P.leader]++;
+    stats.accepted++;
+    if (acks === '0') logLine(logEl, `record ${off} appended on leader — <b>no acknowledgement requested</b> (acks=0): the producer cannot know if it survived`);
+    else if (acks === '1') logLine(logEl, `record ${off} <b>ACKed by leader</b> (acks=1) — still above the HW until followers fetch it`);
+    else logLine(logEl, `record ${off} appended — waiting for ISR replication before ACK (acks=all)`);
+  }
+  render();
+}
+
+function kill(b) {
+  B[b].up = false;
+  const bname = `broker-${b + 1}`;
+  if (P.leader === b) {
+    const others = P.isr.filter(x => x !== b && B[x].up);
+    if (others.length) {
+      const nl = others[0];
+      const safe = P.leo[nl];
+      const truncated = P.recs.filter(r => r.off >= safe);
+      const lostAck = truncated.filter(r => r.ack === 'one').length;
+      const inflight = truncated.filter(r => r.ack === 'pending').length;
+      stats.lostAcked += lostAck;
+      P.recs = P.recs.filter(r => r.off < safe);
+      P.leo = P.leo.map(v => Math.min(v, safe));
+      P.isr = P.isr.filter(x => x !== b);
+      P.leader = nl;
+      logLine(logEl, `<b>${bname} failed</b> — controller elects broker-${nl + 1} from the ISR`, true);
+      if (truncated.length) logLine(logEl, `records ${safe}–${safe + truncated.length - 1} were above the high watermark and are <b>truncated</b>${lostAck ? ` — ${lostAck} of them had already been ACKed (acks=1): <b>acknowledged data lost</b>` : ''}${inflight ? ` · ${inflight} in-flight acks=all write(s) never committed, producer will retry` : ''}`, true);
+      logLine(logEl, `ISR is now [${P.isr.map(x => x + 1).join(',')}] — HW ${P.hw}`);
+    } else {
+      P.isr = P.isr.filter(x => x !== b);
+      P.leader = null;
+      logLine(logEl, `<b>${bname} failed</b> — no other in-sync replica → partition <b>OFFLINE</b> (unclean.leader.election.enable=false: correctness over availability). Its records are still on its disk and return when it restarts.`, true);
+    }
+  } else {
+    P.isr = P.isr.filter(x => x !== b);
+    logLine(logEl, `<b>${bname} failed</b> — removed from ISR: [${P.isr.map(x => x + 1).join(',')}]`, true);
+  }
+  if (P.isr.length < minISR && P.leader !== null) {
+    P.frozen = true;
+    logLine(logEl, `ISR below min.insync.replicas=${minISR} — <b>high watermark frozen</b> (strict min ISR): new acks=all writes are rejected; acks=0/1 records stay invisible to consumers until replication recovers`, true);
+  }
+  render();
+}
+
+function restart(b) {
+  B[b].up = true;
+  if (P.leader === null) {
+    const maxLeo = Math.max(...P.leo);
+    if (P.leo[b] === maxLeo) {
+      P.leader = b; P.isr = [b];
+      logLine(logEl, `broker-${b + 1} restarted — it holds the longest log, becomes leader; partition back online with its data intact`, true);
+    } else {
+      logLine(logEl, `broker-${b + 1} restarted but is out of sync (LEO ${P.leo[b]} &lt; ${maxLeo}) — with unclean.leader.election.enable=false the partition waits for an in-sync replica`, true);
+    }
+  } else {
+    logLine(logEl, `broker-${b + 1} restarted — fetching from leader to catch up, then rejoins the ISR`, true);
+  }
+  render();
+}
+
+setInterval(() => {
+  let changed = false;
+  if (P.leader !== null && B[P.leader].up) {
+    const L = P.leader;
+    B.forEach((broker, i) => {
+      if (i === L || !broker.up) return;
+      if (P.leo[i] < P.leo[L]) { P.leo[i]++; changed = true; }
+      else if (P.leo[i] > P.leo[L]) {
+        const lost = P.recs.slice(P.leo[L]).filter(r => r.ack === 'one').length;
+        stats.lostAcked += lost;
+        P.leo[i] = P.leo[L];
+        changed = true;
+        logLine(logEl, `broker-${i + 1} truncated to the leader's log end${lost ? ` — ${lost} acknowledged record(s) discarded` : ''}`, true);
+      }
+    });
+    B.forEach((broker, i) => {
+      if (i === L || !broker.up || P.isr.includes(i)) return;
+      if (P.leo[i] >= P.leo[L]) { P.isr = P.isr.concat(i).sort(); logLine(logEl, `broker-${i + 1} caught up → <b>rejoins ISR</b> [${P.isr.map(x => x + 1).join(',')}]`, true); changed = true; }
+    });
+    const minLeo = Math.min(...P.isr.map(x => P.leo[x]));
+    if (P.isr.length >= minISR) {
+      if (P.frozen) { P.frozen = false; logLine(logEl, `ISR recovered to ${P.isr.length} — high watermark resumes advancing`, true); }
+      if (minLeo > P.hw) { P.hw = minLeo; changed = true; }
+    }
+    P.recs.forEach(r => {
+      if (r.ack === 'pending' && r.off < P.hw) { r.ack = 'all'; logLine(logEl, `record ${r.off} <b>ACKed (acks=all)</b> — replicated across the ISR, now committed below the HW`); changed = true; }
+    });
+  }
+  if (changed) render();
+}, 600);
+
+document.querySelectorAll('#acksSeg button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#acksSeg button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  acks = b.dataset.a;
+  document.getElementById('verdict').textContent = `RF=3 · acks=${acks} · min.insync.replicas=${minISR}`;
+  logLine(logEl, `producer acks set to <b>${acks}</b>` + (acks !== 'all' ? ` — min.insync.replicas=${minISR} is NOT consulted for acks=${acks}` : ''), true);
+});
+document.querySelectorAll('#misSeg button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#misSeg button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  minISR = +b.dataset.m;
+  P.frozen = P.isr.length < minISR;
+  document.getElementById('verdict').textContent = `RF=3 · acks=${acks} · min.insync.replicas=${minISR}`;
+  logLine(logEl, `min.insync.replicas set to <b>${minISR}</b>` + (minISR === 3 ? ' — now every single broker failure blocks acks=all writes' : ''), true);
+  render();
+});
+document.getElementById('produce').onclick = () => produce(1);
+document.getElementById('produce3').onclick = () => produce(3);
+document.getElementById('reset').onclick = reset;
+
+reset();
+
+renderQuiz('quiz', [
+  { q: 'Topic: RF=3, <code>min.insync.replicas=2</code>, producer: <code>acks=all</code>. Two brokers fail. What happens to new writes?',
+    options: ['They succeed with one replica', 'They are rejected with NOT_ENOUGH_REPLICAS — the ISR (1) is below min.insync.replicas (2)', 'They block until a broker returns but are never rejected', 'They are written with acks=1 automatically'],
+    answer: 1, explain: 'acks=all writes are only accepted while the ISR holds at least min.insync.replicas replicas. With two brokers down the cluster refuses the write by design — availability traded for durability.' },
+  { q: 'A producer uses <code>acks=1</code> on a topic with <code>min.insync.replicas=2</code>. One broker fails, and then the leader fails. What can happen?',
+    options: ['Nothing — min.insync.replicas protects every write', 'Records ACKed by the leader but not yet replicated are lost — min.insync.replicas only applies to acks=all', 'Kafka waits for the ISR to recover and replays them', 'The records are restored from __consumer_offsets'],
+    answer: 1, explain: 'The broker consults min.insync.replicas only for acks=all writes. With acks=1 a leader can ACK a record that exists nowhere else; if it dies before followers fetch, that acknowledged record is gone.' },
+  { q: 'What does <code>unclean.leader.election.enable=true</code> allow?',
+    options: ['A faster leader election', 'An out-of-sync replica to become leader, trading correctness for availability — acknowledged data can silently disappear', 'Cleaner shutdown of brokers', 'Producers to skip acks'],
+    answer: 1, explain: 'It lets a replica that is not in the ISR win an election when no in-sync replica is available. The partition comes back faster, but records that only the old leader had may be gone.' },
+  { q: 'In Kafka 4.x, the ISR drops below <code>min.insync.replicas</code>. What happens to the high watermark?',
+    options: ['It keeps advancing with the leader\'s LEO', 'It stops advancing until the ISR recovers — even acks=0/1 records written meanwhile stay invisible to consumers', 'It resets to zero', 'It advances to the minimum LEO of all replicas including out-of-sync ones'],
+    answer: 1, explain: 'The strict min-ISR rule (KIP-966) freezes the HW while the ISR is below min.insync.replicas. That is what keeps acks=1 records written during the window from being exposed, and why they would be lost if an out-of-sync replica were promoted.' },
+  { q: 'RF=3 and <code>min.insync.replicas=3</code>. How many broker failures can the topic tolerate for <code>acks=all</code> writes?',
+    options: ['Two', 'One', 'Zero — any failure drops the ISR below 3 and writes are rejected', 'As many as there are brokers'],
+    answer: 2, explain: 'min.insync.replicas=3 means all three replicas must be in the ISR for a write to be accepted. It maximises durability but leaves no failure headroom — the common production baseline is 2.' }
+]);
+</script>
+</body>
+</html>

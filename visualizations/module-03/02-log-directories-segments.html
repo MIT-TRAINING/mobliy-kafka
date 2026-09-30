@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log Directories &amp; Segment Management</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .disks { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .disk {
+    border: 1.5px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface);
+    transition: border-color .2s, background .2s;
+  }
+  .disk.failed { border-color: var(--bad); background: var(--bad-soft); }
+  .disk .path { font-family: var(--mono); font-weight: 700; font-size: 13px; }
+  .disk .plist { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .pchip { font-family: var(--mono); font-size: 12px; padding: 3px 8px; border-radius: 999px; background: var(--surface-2); }
+  .pchip.offline { background: var(--bad-soft); color: var(--bad); text-decoration: line-through; }
+  svg .seg-hit { cursor: pointer; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 3 · Cluster Configuration, Storage &amp; Retention</a>
+    <div class="nav"><span>2 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 2</div>
+  <h1>Log directories &amp; segment management</h1>
+  <p class="lede">Everything lives under <code>log.dirs</code>, one directory per partition, and each partition's log is split into
+    <b>segments</b>. Produce records below and watch segments roll — then click a segment to inspect its files. Only the
+    <em>active</em> segment accepts appends, and only <em>sealed</em> segments can ever be deleted or compacted.</p>
+
+  <div class="card">
+    <div class="controls">
+      <label class="range"><code>segment.bytes</code> <input type="range" id="seg" min="3" max="8" value="4"> <b id="segv">4 records</b></label>
+      <button class="primary" id="p1">Produce 1 record</button>
+      <button id="p5">Produce 5 records</button>
+      <button id="auto">▶ Auto-produce</button>
+      <button id="reset">Reset</button>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 260" role="img" aria-label="Partition segments and their files"></svg></div>
+    <div class="legend"><span><i style="border:1.5px dashed var(--accent);background:none"></i>active segment — appends land here</span>
+      <span><i style="background:var(--p0)"></i>record</span><span>click a segment for its file list</span></div>
+    <div class="stats">
+      <div class="stat"><b id="nsegs">1</b><span>segments</span></div>
+      <div class="stat"><b id="nsealed">0</b><span>sealed (deletable)</span></div>
+      <div class="stat"><b id="base">0</b><span>active base offset</span></div>
+      <div class="stat"><b id="leo">0</b><span>log-end offset</span></div>
+    </div>
+    <div class="log" id="log" aria-live="polite"></div>
+    <div class="term" id="term" style="margin-top:12px"><div class="term-empty">Click a segment (or focus it and press Enter) to list its files.</div></div>
+  </div>
+
+  <div class="callout warn"><b>Why the active segment matters:</b> retention and compaction <b>never</b> touch the active segment.
+    "retention.ms is 1 day but I still see month-old data" is almost always a low-traffic topic whose active segment has not
+    rolled. Lower <code>segment.ms</code> (time) or <code>segment.bytes</code> (size) on such topics if expiry precision matters —
+    at the cost of more, smaller files.</div>
+
+  <h2>JBOD: multiple log directories per broker</h2>
+  <div class="card">
+    <p style="margin:0;color:var(--muted);font-size:14px"><code>log.dirs=/data/d1,/data/d2</code> — Kafka distributes replicas
+      across the disks and uses their combined capacity. Fail a disk and see exactly what goes offline.</p>
+    <div class="controls">
+      <button class="danger" id="fail">✕ Fail /data/d2</button>
+      <button class="primary" id="newp">+ Create new partition</button>
+      <button id="recover">Recover disk</button>
+    </div>
+    <div class="disks" id="disks"></div>
+    <div class="stats">
+      <div class="stat"><b id="offdir">0</b><span>OfflineLogDirectoryCount</span></div>
+      <div class="stat"><b id="liveparts">6</b><span>partitions being served</span></div>
+    </div>
+    <div class="log" id="dlog" aria-live="polite"></div>
+  </div>
+  <div class="callout"><b>JBOD behaviour to remember:</b> new partitions go to the directory with the <b>fewest partitions</b>;
+    adding a disk does <b>not</b> move existing data (Kafka has no built-in partition-to-disk rebalancing); and Confluent's
+    Tiered Storage does <b>not support JBOD</b> — it requires a single log directory.</div>
+
+  <h2>What lives in a partition directory</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">00000000000000000000.log</td><td>Record batches. The file name is the segment's <b>base offset</b>.</td></tr>
+        <tr><td class="mono">00000000000000000000.index</td><td>Sparse offset → byte-position map for fast seeks. Pre-allocated (10 MiB default) while active, trimmed when the segment closes.</td></tr>
+        <tr><td class="mono">00000000000000000000.timeindex</td><td>Sparse timestamp → offset map, used by time-based lookups and retention.</td></tr>
+        <tr><td class="mono">leader-epoch-checkpoint</td><td>Leader history; lets a restarted broker truncate at the safe point after leader changes.</td></tr>
+        <tr><td class="mono">partition.metadata</td><td>The partition's topic ID.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Roll trigger</th><th>Broker property</th><th>Topic property</th><th>Default</th></tr></thead>
+      <tbody>
+        <tr><td>Segment size reached</td><td class="mono">log.segment.bytes</td><td class="mono">segment.bytes</td><td>1 GiB</td></tr>
+        <tr><td>Segment age reached</td><td class="mono">log.roll.hours</td><td class="mono">segment.ms</td><td>7 days</td></tr>
+        <tr><td>Index file full</td><td class="mono">log.index.size.max.bytes</td><td class="mono">segment.index.bytes</td><td>10 MiB</td></tr>
+        <tr><td>Randomised roll spread</td><td class="mono">log.roll.jitter.ms</td><td class="mono">segment.jitter.ms</td><td>0</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout">On an unclean shutdown the broker replays the tail of every log, rebuilding indexes and truncating
+    uncommitted data using <code>leader-epoch-checkpoint</code>. Raise <code>num.recovery.threads.per.data.dir</code> (default 1)
+    on brokers with many partitions to shorten restarts — one of the simplest availability wins in Kafka.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="01-broker-configuration.html"><small>← Previous</small>Broker configuration parameters</a>
+    <a class="next" href="03-topic-overrides.html"><small>Next →</small>Topic-level configuration overrides</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg');
+const logEl = document.getElementById('log');
+const dlogEl = document.getElementById('dlog');
+const termEl = document.getElementById('term');
+let recs = [], SEG = 4, autoT = null;
+
+const pad = n => String(n).padStart(20, '0');
+const nsegs = () => Math.max(1, Math.ceil(recs.length / SEG));
+
+function render() {
+  svg.innerHTML = '';
+  const total = nsegs(), cols = 4, rows = Math.ceil(total / cols);
+  const H = 46 + rows * 118;
+  svg.setAttribute('viewBox', `0 0 900 ${H}`);
+  el('text', { x: 16, y: 22, 'font-size': 12, class: 'muted', text: `cdr.voice-0 — segment.bytes rolled after ${SEG} records (demo-scale)` }, svg);
+
+  for (let s = 0; s < total; s++) {
+    const col = s % cols, row = Math.floor(s / cols);
+    const x = 16 + col * 220, y = 36 + row * 118, w = 204, h = 100;
+    const base = s * SEG;
+    const active = s === total - 1;
+    const g = el('g', {}, svg);
+    const r = el('rect', { x, y, width: w, height: h, rx: 10, fill: 'var(--surface)',
+      stroke: active ? 'var(--accent)' : 'var(--border)', 'stroke-width': active ? 1.8 : 1,
+      'stroke-dasharray': active ? '7 4' : '', class: 'seg-hit', role: 'button', tabindex: '0',
+      'aria-label': `segment at base offset ${base}, ${active ? 'active' : 'sealed'}` }, g);
+    r.addEventListener('click', () => showFiles(s));
+    r.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); showFiles(s); } });
+    el('text', { x: x + 12, y: y + 20, 'font-size': 11, class: 'mono', style: 'fill:var(--muted)', text: pad(base) + '.log' }, g);
+    for (let i = 0; i < SEG; i++) {
+      const off = base + i, cx = x + 12 + i * 24, cy = y + 30;
+      if (off < recs.length) {
+        el('rect', { x: cx, y: cy, width: 20, height: 20, rx: 4, fill: PCOLORS[off % 6] }, g);
+        el('text', { x: cx + 10, y: cy + 14, 'text-anchor': 'middle', 'font-size': 9, style: 'fill:#fff', text: off }, g);
+      } else {
+        el('rect', { x: cx, y: cy, width: 20, height: 20, rx: 4, fill: 'none', stroke: 'var(--border)', 'stroke-dasharray': '2 2' }, g);
+      }
+    }
+    el('text', { x: x + 12, y: y + 82, 'font-size': 10, style: `fill:${active ? 'var(--accent)' : 'var(--muted)'}`,
+      text: active ? 'ACTIVE — appends land here' : 'sealed — read-only' }, g);
+    el('text', { x: x + 12, y: y + 95, 'font-size': 10, class: 'muted', text: active ? `base offset ${base} · it can roll next record` : `base offset ${base}` }, g);
+  }
+
+  const sealed = total - 1;
+  document.getElementById('nsegs').textContent = total;
+  document.getElementById('nsealed').textContent = sealed;
+  document.getElementById('base').textContent = (total - 1) * SEG;
+  document.getElementById('leo').textContent = recs.length;
+}
+
+function showFiles(s) {
+  const active = s === nsegs() - 1;
+  const stored = Math.max(0, Math.min(SEG, recs.length - s * SEG));
+  const logKB = stored * 124;
+  const cmd = 'ls -lh /var/lib/kafka/data/cdr.voice-0/ | grep ' + pad(s * SEG);
+  const lines = [
+    `${pad(s * SEG)}.log        ${logKB}K`,
+    `${pad(s * SEG)}.index      ${active ? '10M     ← pre-allocated while active' : '8.0K'}`,
+    `${pad(s * SEG)}.timeindex  ${active ? '10M     ← pre-allocated while active' : '1.0K'}`,
+  ];
+  termRun(termEl, cmd, lines);
+  logLine(logEl, `inspected segment ${pad(s * SEG)}.log — ${active ? 'active: indexes pre-allocated, appends open' : 'sealed: indexes trimmed, eligible for retention/compaction'}`, true);
+}
+
+function produce(n) {
+  for (let i = 0; i < n; i++) {
+    const before = nsegs();
+    recs.push(recs.length);
+    const after = nsegs();
+    if (after > before) {
+      const sealedBase = (after - 2) * SEG;
+      logLine(logEl, `roll trigger fired — <b>${pad(sealedBase)}.log</b> sealed after ${SEG} records; new active segment <b>${pad((after - 1) * SEG)}.log</b>` +
+        (recs.length > 1 ? ` · sealed segments: ${after - 1}` : ''), true);
+    }
+  }
+  render();
+}
+
+document.getElementById('seg').oninput = e => { SEG = +e.target.value; document.getElementById('segv').textContent = SEG + ' records'; render(); };
+document.getElementById('p1').onclick = () => produce(1);
+document.getElementById('p5').onclick = () => produce(5);
+document.getElementById('reset').onclick = () => {
+  recs = []; if (autoT) { clearInterval(autoT); autoT = null; document.getElementById('auto').textContent = '▶ Auto-produce'; }
+  termEl.innerHTML = '<div class="term-empty">Click a segment (or focus it and press Enter) to list its files.</div>';
+  logEl.innerHTML = ''; render(); logLine(logEl, 'partition reset — one empty active segment', true);
+};
+document.getElementById('auto').onclick = e => {
+  if (autoT) { clearInterval(autoT); autoT = null; e.target.textContent = '▶ Auto-produce'; }
+  else { autoT = setInterval(() => produce(1), 700); e.target.textContent = '⏸ Pause'; }
+};
+render();
+
+/* ---------- JBOD ---------- */
+const DIRS = [
+  { path: '/data/d1', parts: ['cdr.voice-0', 'cdr.voice-2', 'orders-1'], failed: false },
+  { path: '/data/d2', parts: ['cdr.voice-1', 'orders-0', 'payments-0'], failed: false },
+];
+let newPart = 0;
+const disksEl = document.getElementById('disks');
+
+function renderDisks() {
+  disksEl.innerHTML = '';
+  DIRS.forEach(d => {
+    const box = document.createElement('div');
+    box.className = 'disk' + (d.failed ? ' failed' : '');
+    box.innerHTML = `<div class="path">${d.path} ${d.failed ? '<span class="pill bad">disk failed</span>' : '<span class="pill ok">healthy</span>'}</div>
+      <div class="plist">${d.parts.map(p => `<span class="pchip ${d.failed ? 'offline' : ''}">${p}</span>`).join('')}</div>
+      <div style="margin-top:10px;font-size:12px;color:var(--muted)">${d.failed ? 'partitions here are OFFLINE; the broker keeps serving the other directory' : d.parts.length + ' partitions placed here'}</div>`;
+    disksEl.appendChild(box);
+  });
+  const offline = DIRS.reduce((n, d) => n + (d.failed ? d.parts.length : 0), 0);
+  document.getElementById('offdir').textContent = DIRS.filter(d => d.failed).length;
+  document.getElementById('liveparts').textContent = 6 + newPart - offline;
+}
+
+document.getElementById('fail').onclick = () => {
+  if (DIRS[1].failed) return;
+  DIRS[1].failed = true;
+  renderDisks();
+  logLine(dlogEl, `<b>/data/d2 failed</b> — ${DIRS[1].parts.length} partitions on it go offline (KIP-112), but the broker keeps serving /data/d1`, true);
+  logLine(dlogEl, 'OfflineLogDirectoryCount → 1 — alert on this metric. Repair by reassigning the replicas to healthy brokers (Module 5).');
+};
+document.getElementById('recover').onclick = () => {
+  DIRS[1].failed = false;
+  renderDisks();
+  logLine(dlogEl, '/data/d2 recovered — offline partitions come back after log recovery replays their tails', true);
+};
+document.getElementById('newp').onclick = () => {
+  newPart++;
+  const healthy = DIRS.filter(d => !d.failed);
+  const target = healthy.reduce((a, b) => a.parts.length <= b.parts.length ? a : b);
+  const name = 'telemetry.raw-' + (newPart - 1);
+  target.parts.push(name);
+  renderDisks();
+  logLine(dlogEl, `new partition ${name} placed on <b>${target.path}</b> — new replicas go to the log dir with the fewest partitions`, true);
+};
+renderDisks();
+
+renderQuiz('quiz', [
+  { q: 'A low-traffic topic has <code>retention.ms=86400000</code> (1 day), yet a consumer still finds data written 3 weeks ago. What is the most likely cause?',
+    options: ['Retention only applies to topics with cleanup.policy=compact', 'The active segment has not rolled, and retention never touches the active segment', 'The broker clock is wrong', 'Retention.ms is capped at 30 days'],
+    answer: 1, explain: 'Deletion works on sealed segments only. A topic with little traffic can keep one segment open for weeks — lower <code>segment.ms</code> or <code>segment.bytes</code> so it rolls.' },
+  { q: 'Which file makes time-based lookups and segment expiry decisions possible?',
+    options: ['<code>.log</code>', '<code>.index</code>', '<code>.timeindex</code>', '<code>leader-epoch-checkpoint</code>'],
+    answer: 2, explain: 'The <code>.timeindex</code> maps timestamps to offsets. The <code>.index</code> maps offsets to byte positions, and the <code>.log</code> holds the records themselves.' },
+  { q: 'You look at a small active segment and its <code>.index</code> file is 10 MiB. Is disk space being leaked?',
+    options: ['Yes — the broker forgot to truncate it', 'No — index files for the active segment are pre-allocated and trimmed when the segment closes', 'Yes — lower log.index.size.max.bytes to fix it', 'No — 10 MiB is the maximum the log file can grow to'],
+    answer: 1, explain: 'Active-segment indexes are pre-allocated to 10 MiB (log.index.size.max.bytes) so they never need on-the-fly expansion; sealing trims them to their actual content.' },
+  { q: 'In a JBOD broker (<code>log.dirs=/data/d1,/data/d2</code>), disk <code>d2</code> fails. What happens?',
+    options: ['The whole broker goes offline', 'Only the partitions hosted on /data/d2 go offline; the broker keeps serving /data/d1', 'Kafka automatically moves the partitions to /data/d1', 'All partitions continue serving from memory'],
+    answer: 1, explain: 'Since KIP-112, a log directory failure takes down only the partitions stored there. There is no automatic rebalancing between disks — replicas must be reassigned (Module 5).' },
+  { q: 'You add a third disk to a running JBOD broker. What happens to the existing partitions?',
+    options: ['They are evenly rebalanced across all three disks automatically', 'Nothing moves — new partitions land on the disk with fewest partitions, but old data stays put', 'The broker must be reformatted', 'All partitions are copied to the new disk'],
+    answer: 1, explain: 'Kafka never rebalances existing partitions between log directories. Plan <code>log.dirs</code> for growth at install time; only replica reassignment between brokers can move data (Module 5).' }
+]);
+</script>
+</body>
+</html>

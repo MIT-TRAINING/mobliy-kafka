@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic-Level Configuration Overrides</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .row-actions { display: flex; gap: 6px; margin-top: 8px; }
+  .row-actions button { padding: 4px 10px; font-size: 12px; }
+  .cfglist { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 3 · Cluster Configuration, Storage &amp; Retention</a>
+    <div class="nav"><span>3 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 3</div>
+  <h1>Topic-level configuration overrides with kafka-configs.sh</h1>
+  <p class="lede">One cluster, many kinds of data: <code>cdr.voice</code> needs days, <code>subscriber.plan</code> needs the latest
+    value per key forever, <code>audit.events</code> needs 30 days. Build a real <code>kafka-configs.sh</code> command below —
+    including the broker-name trap — and read the synonyms that prove which layer won.</p>
+
+  <div class="card">
+    <div class="cli-form">
+      <label>Action
+        <select id="action">
+          <option value="add">--alter --add-config</option>
+          <option value="delete">--alter --delete-config</option>
+          <option value="describe">--describe</option>
+        </select>
+      </label>
+      <label>Topic
+        <select id="topic"></select>
+      </label>
+      <label id="f-key">Config key
+        <select id="key"></select>
+      </label>
+      <label id="f-val">Value
+        <select id="val"></select>
+      </label>
+      <button class="primary" id="run">▶ Run</button>
+    </div>
+    <div class="cli-preview" id="preview"></div>
+    <div class="controls" style="margin-top:10px">
+      <span style="font-size:13px;color:var(--muted)">Presets:</span>
+      <button id="preset1">cdr.voice — high-volume CDRs</button>
+      <button id="preset2">subscriber.plan — state topic</button>
+      <button id="preset3">audit.events — compliance</button>
+    </div>
+    <div class="term" id="term"><div class="term-empty">Run a command to see CLI output here.</div></div>
+  </div>
+
+  <h2>Effective configuration per topic</h2>
+  <div class="card">
+    <p style="margin:0;color:var(--muted);font-size:14px">Overrides shown as pills; unset keys fall through to the broker default.</p>
+    <div class="topics-state" id="state"></div>
+  </div>
+
+  <div class="callout warn"><b>Exact-name trap:</b> topic-level properties never carry the <code>log.</code> prefix.
+    <code>log.retention.ms</code> exists only at broker level; passing it with <code>--entity-type topics</code> fails with an
+    <code>InvalidConfigurationException</code>. Worse: a typo can look accepted, so <b>always confirm with <code>--describe</code></b>
+    that the value actually landed.</div>
+
+  <h2>Names change with scope — learn the pairs</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Concept</th><th>Broker level</th><th>Topic level</th></tr></thead>
+      <tbody>
+        <tr><td>Time retention</td><td class="mono">log.retention.ms</td><td class="mono">retention.ms</td></tr>
+        <tr><td>Size retention (per partition)</td><td class="mono">log.retention.bytes</td><td class="mono">retention.bytes</td></tr>
+        <tr><td>Segment size</td><td class="mono">log.segment.bytes</td><td class="mono">segment.bytes</td></tr>
+        <tr><td>Cleanup policy</td><td class="mono">log.cleanup.policy</td><td class="mono">cleanup.policy</td></tr>
+        <tr><td>Minimum ISR for acks=all</td><td class="mono">min.insync.replicas</td><td class="mono">min.insync.replicas <em>(same name)</em></td></tr>
+        <tr><td>Compression</td><td class="mono">compression.type</td><td class="mono">compression.type <em>(same name)</em></td></tr>
+        <tr><td>Max record batch</td><td class="mono">message.max.bytes</td><td class="mono">max.message.bytes <em>(reordered!)</em></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>KRaft propagation:</b> a topic override is appended to the <code>__cluster_metadata</code> log by the
+    active controller and fetched by every broker — the same value everywhere, with no broker restart and no rolling restart
+    (compare Module 1, Topic 6).</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="02-log-directories-segments.html"><small>← Previous</small>Log directories &amp; segment management</a>
+    <a class="next" href="04-retention-cleanup-policies.html"><small>Next →</small>Retention &amp; cleanup policies</a>
+  </div>
+</div>
+
+<script>
+const CATALOG = [
+  { key: 'retention.ms',            def: 604800000, vals: [['86400000', '1 day'], ['259200000', '3 days'], ['2592000000', '30 days'], ['-1', 'never delete by age']] },
+  { key: 'retention.bytes',         def: -1,        vals: [['10737418240', '10 GiB per partition'], ['-1', 'unlimited']] },
+  { key: 'segment.bytes',           def: 1073741824, vals: [['268435456', '256 MiB'], ['134217728', '128 MiB'], ['1073741824', '1 GiB (default)']] },
+  { key: 'segment.ms',              def: 604800000, vals: [['86400000', '1 day'], ['3600000', '1 hour']] },
+  { key: 'cleanup.policy',          def: 'delete',  vals: [['delete', 'delete'], ['compact', 'compact'], ['compact,delete', 'compact,delete']] },
+  { key: 'min.insync.replicas',     def: 1,         vals: [['2', '2'], ['1', '1']] },
+  { key: 'compression.type',        def: 'producer', vals: [['producer', 'producer (client compresses)'], ['zstd', 'zstd'], ['lz4', 'lz4']] },
+  { key: 'max.message.bytes',       def: 1048588,   vals: [['5242880', '5 MiB'], ['1048588', '~1 MiB (default)']] },
+  { key: 'delete.retention.ms',     def: 86400000,  vals: [['3600000', '1 hour'], ['86400000', '24 h (default)']] },
+  { key: 'min.cleanable.dirty.ratio', def: 0.5,     vals: [['0.2', '0.2'], ['0.5', '0.5 (default)']] },
+];
+const WRONG_SCOPE = ['log.retention.ms', 'log.segment.bytes', 'log.dirs'];
+
+let topics = {
+  'cdr.voice':       { 'retention.ms': 604800000, 'segment.bytes': 268435456, 'min.insync.replicas': 2 },
+  'subscriber.plan': { 'cleanup.policy': 'compact' },
+  'audit.events':    { 'retention.ms': 2592000000, 'min.insync.replicas': 2 },
+};
+
+const actionEl = document.getElementById('action'), topicEl = document.getElementById('topic'),
+  keyEl = document.getElementById('key'), valEl = document.getElementById('val'),
+  previewEl = document.getElementById('preview'), termEl = document.getElementById('term'),
+  stateEl = document.getElementById('state');
+
+Object.keys(topics).forEach(t => {
+  const o = document.createElement('option'); o.value = t; o.textContent = t; topicEl.appendChild(o);
+});
+const wrongGroup = document.createElement('optgroup');
+wrongGroup.label = 'wrong scope — broker names (try me)';
+WRONG_SCOPE.forEach(k => { const o = document.createElement('option'); o.value = k; o.textContent = k; wrongGroup.appendChild(o); });
+CATALOG.forEach(c => { const o = document.createElement('option'); o.value = c.key; o.textContent = c.key; keyEl.appendChild(o); });
+keyEl.appendChild(wrongGroup);
+
+function fillValues() {
+  const c = CATALOG.find(x => x.key === keyEl.value);
+  valEl.innerHTML = '';
+  if (!c) {
+    const o = document.createElement('option'); o.value = ''; o.textContent = '(broker property — no topic value)'; valEl.appendChild(o);
+    valEl.disabled = true;
+    return;
+  }
+  valEl.disabled = false;
+  c.vals.forEach(([v, label]) => { const o = document.createElement('option'); o.value = v; o.textContent = `${v} — ${label}`; valEl.appendChild(o); });
+}
+
+function buildCmd() {
+  const a = actionEl.value, t = topicEl.value, k = keyEl.value;
+  let cmd = 'kafka-configs.sh --bootstrap-server localhost:9092';
+  if (a === 'describe') return `${cmd} --describe --entity-type topics --entity-name ${t}`;
+  cmd += ` --alter --entity-type topics --entity-name ${t}`;
+  cmd += a === 'add' ? ` --add-config ${k}=${valEl.value}` : ` --delete-config ${k}`;
+  return cmd;
+}
+function visibility() {
+  const d = actionEl.value === 'describe';
+  document.getElementById('f-key').style.display = d ? 'none' : '';
+  document.getElementById('f-val').style.display = (d || actionEl.value === 'delete') ? 'none' : '';
+  document.getElementById('f-val').style.opacity = d ? 0 : 1;
+}
+function update() { visibility(); fillValues(); previewEl.textContent = buildCmd(); }
+
+function out(cmd, lines, err) { termRun(termEl, cmd, lines, err); }
+
+function describeLines(t) {
+  const cfg = topics[t];
+  const keys = Object.keys(cfg);
+  if (!keys.length) return ['Dynamic configs for topic ' + t + ' are:', '  (no overrides set — all values fall through to broker defaults)'];
+  return ['Dynamic configs for topic ' + t + ' are:'].concat(keys.map(k => {
+    const c = CATALOG.find(x => x.key === k);
+    const def = c ? c.def : '?';
+    return `  ${k}=${cfg[k]} sensitive=false synonyms={DYNAMIC_TOPIC_CONFIG:${k}=${cfg[k]}, DEFAULT_CONFIG:${k}=${def}}`;
+  }));
+}
+
+function run() {
+  const a = actionEl.value, t = topicEl.value, k = keyEl.value, cmd = buildCmd();
+  if (a === 'describe') { out(cmd, describeLines(t)); return; }
+  if (WRONG_SCOPE.includes(k)) {
+    out(cmd, [
+      `Error while executing config command with args '--alter --entity-type topics --entity-name ${t} --add-config ${k}=${valEl.value} --bootstrap-server localhost:9092'`,
+      `\torg.apache.kafka.common.errors.InvalidConfigurationException: Unknown topic config name: ${k}`,
+    ], true);
+    return;
+  }
+  if (a === 'add') {
+    if (!valEl.value) { out(cmd, ['Error: --add-config requires key=value'], true); return; }
+    const raw = valEl.value;
+    topics[t][k] = /^-?\d+(\.\d+)?$/.test(raw) ? +raw : raw;
+    out(cmd, [`Completed updating config for topic ${t}.`]);
+  } else {
+    if (Object.prototype.hasOwnProperty.call(topics[t], k)) {
+      delete topics[t][k];
+      out(cmd, [`Completed updating config for topic ${t}.`, `→ ${k} now resolves down the precedence chain to the broker default (${(CATALOG.find(x => x.key === k) || {}).def})`]);
+    } else {
+      out(cmd, [`Completed updating config for topic ${t}.`, `→ ${k} was not overridden — alter is idempotent, nothing changed.`]);
+    }
+  }
+  renderState();
+}
+
+function preset(t, cfgs) {
+  Object.assign(topics[t], cfgs);
+  const cmds = Object.entries(cfgs).map(([k, v]) => `kafka-configs.sh --bootstrap-server localhost:9092 --alter --entity-type topics --entity-name ${t} --add-config ${k}=${v}`);
+  cmds.forEach(c => termRun(termEl, c, ['Completed updating config for topic ' + t + '.']));
+  renderState();
+}
+
+function renderState() {
+  stateEl.innerHTML = '';
+  Object.entries(topics).forEach(([t, cfg]) => {
+    const row = document.createElement('div');
+    row.className = 'topic-row';
+    const pills = Object.entries(cfg).map(([k, v]) => `<span class="pill warn">${k}=${v}</span>`).join(' ');
+    row.innerHTML = `<div class="head"><span class="name">${t}</span>
+      <span><span class="pill">${Object.keys(cfg).length} override${Object.keys(cfg).length === 1 ? '' : 's'}</span></span></div>
+      <div class="cfglist">${pills || '<span style="color:var(--muted);font-size:13px">no overrides — broker defaults apply</span>'}</div>
+      <div class="row-actions">
+        <button data-a="describe">Describe</button>
+        <button data-a="add">Alter</button>
+      </div>`;
+    row.querySelectorAll('[data-a]').forEach(b => b.onclick = e => {
+      e.stopPropagation();
+      actionEl.value = b.dataset.a === 'add' ? 'add' : 'describe';
+      topicEl.value = t; update();
+    });
+    row.onclick = () => { actionEl.value = 'describe'; topicEl.value = t; update(); };
+    stateEl.appendChild(row);
+  });
+}
+
+[actionEl, topicEl, keyEl].forEach(e => e.addEventListener('change', update));
+valEl.addEventListener('change', () => previewEl.textContent = buildCmd());
+document.getElementById('run').onclick = run;
+document.getElementById('preset1').onclick = () => preset('cdr.voice', { 'retention.ms': 604800000, 'segment.bytes': 268435456, 'min.insync.replicas': 2 });
+document.getElementById('preset2').onclick = () => preset('subscriber.plan', { 'cleanup.policy': 'compact', 'min.cleanable.dirty.ratio': 0.2 });
+document.getElementById('preset3').onclick = () => preset('audit.events', { 'retention.ms': 2592000000, 'min.insync.replicas': 2 });
+
+update(); renderState();
+
+renderQuiz('quiz', [
+  { q: 'Why do topic-level overrides exist at all?',
+    options: ['To make commands longer', 'Broker defaults are a cluster-wide baseline; overrides express the per-topic contract for retention, durability and cleanup', 'To bypass security settings', 'Because broker configs are read-only'],
+    answer: 1, explain: 'One cluster serves event streams, state topics and audit data. Broker settings are the baseline; each topic class gets its own retention, cleanup policy and durability floor.' },
+  { q: 'You run <code>kafka-configs.sh --alter --entity-type topics --entity-name cdr.voice --add-config log.retention.ms=86400000</code>. What happens?',
+    options: ['It works and sets 1 day of retention', 'It fails with an InvalidConfigurationException: <code>log.retention.ms</code> is not a topic config name', 'It sets the broker-wide retention instead', 'Kafka silently strips the <code>log.</code> prefix'],
+    answer: 1, explain: 'Topic-level names never carry the <code>log.</code> prefix. The tool rejects the unknown name — a typo that were accepted is exactly why you confirm with <code>--describe</code> afterwards.' },
+  { q: 'After <code>--add-config retention.ms=86400000</code> on a topic, what has to restart for it to take effect?',
+    options: ['The broker', 'The controller quorum', 'Nothing — dynamic configs propagate through the metadata log in KRaft', 'All consumers of the topic'],
+    answer: 2, explain: 'The change is a CONFIG_RECORD in <code>__cluster_metadata</code>; brokers fetch it and update their caches. No restart, no topic downtime.' },
+  { q: 'What does <code>--delete-config retention.ms</code> do?',
+    options: ['Sets the value to 0', 'Removes the override so the value resolves down the precedence chain again — typically to the broker default', 'Deletes the topic', 'Blocks the key from being set again'],
+    answer: 1, explain: 'Deleting the override restores inheritance: the effective value becomes the next layer in the chain (dynamic broker config, static config, or built-in default).' },
+  { q: 'You raise a topic\'s <code>max.message.bytes</code> to 5 MiB but leave broker <code>replica.fetch.max.bytes</code> at its 1 MiB default. What is the risk?',
+    options: ['None — the topic setting is enough', 'Followers cannot fetch the larger batches, so replicas fall out of ISR under load', 'Producers will split records automatically', 'Retention stops working for the topic'],
+    answer: 1, explain: 'Broker and topic names differ here (<code>message.max.bytes</code> vs <code>max.message.bytes</code>). Raise the broker fetch sizes together with the topic limit, or keep records comfortably below 1 MiB.' }
+]);
+</script>
+</body>
+</html>

@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Storage Optimization Techniques</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .calc-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px 18px; margin: 12px 0; }
+  .calc-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+  .calc-grid .range { flex-direction: row; align-items: center; gap: 10px; }
+  .sym-btn { text-align: left; width: 100%; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 3 · Cluster Configuration, Storage &amp; Retention</a>
+    <div class="nav"><span>6 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 6</div>
+  <h1>Storage optimization techniques</h1>
+  <p class="lede">Optimization without measurement is guessing. Start with the calculator: pick a codec, retention window and
+    tiered-storage setting for a telecom CDR workload and see the broker disk requirement change live. Then use the symptom
+    explorer to practise the diagnostic sequence admins actually run.</p>
+
+  <h2>1 · Size the cluster before it fills</h2>
+  <div class="card">
+    <div class="calc-grid">
+      <label>Compression codec
+        <select id="codec">
+          <option value="none">none (1×)</option>
+          <option value="lz4">lz4 (~2×)</option>
+          <option value="snappy">snappy (~2×)</option>
+          <option value="zstd" selected>zstd (~3×)</option>
+          <option value="gzip">gzip (~3×, CPU-heavy)</option>
+        </select></label>
+      <label class="range">Events / day <input type="range" id="events" min="1" max="40" value="12"> <b id="eventsv">12 M</b></label>
+      <label class="range">Avg record size <input type="range" id="kbrec" min="5" max="80" value="15"> <b id="kbrecv">1.5 KB</b></label>
+      <label>Replication factor
+        <div class="seg" id="rfs" style="margin-top:2px">
+          <button data-rf="1" aria-pressed="false">1</button><button data-rf="3" aria-pressed="true">3</button>
+        </div></label>
+      <label class="range">retention.ms <input type="range" id="days" min="1" max="90" value="7"> <b id="daysv">7 days</b></label>
+      <label class="range"><input type="checkbox" id="tiered" style="width:auto"> Tiered storage
+        <input type="range" id="local" min="1" max="7" value="2" disabled style="margin-left:6px"> <b id="localv">local 2 d</b></label>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 250" role="img" aria-label="Broker disk requirement by compression and tiering"></svg></div>
+    <div class="stats" id="stats"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+  <div class="callout warn"><b>Recompression trap:</b> never set a topic's <code>compression.type</code> to a codec unless you
+    mean it. <code>compression.type=gzip</code> at topic level tells brokers to <b>decompress and recompress</b> every batch that
+    arrives with a different codec — a large CPU tax on the data path. Compress in the producer (or match a cluster-wide dynamic
+    default to the producer codec); leave the topic at <code>producer</code>.</div>
+
+  <h2>2 · Diagnose the symptom</h2>
+  <div class="card">
+    <div class="tool-grid" id="syms"></div>
+    <div class="callout" id="cause" style="margin:14px 0 0">Pick a symptom to see the likely cause and the exact commands you would run.</div>
+    <div class="term" id="term"><div class="term-empty">Diagnostic output appears here.</div></div>
+  </div>
+
+  <h2>Codecs and segment sizing</h2>
+  <div class="grid grid-2">
+    <div class="card table-wrap">
+      <table>
+        <thead><tr><th>Codec</th><th>Ratio</th><th>CPU cost</th><th>Typical use</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">none</td><td>1×</td><td>None</td><td>Almost never in production</td></tr>
+          <tr><td class="mono">lz4</td><td>Moderate</td><td>Very low</td><td>Latency-sensitive topics</td></tr>
+          <tr><td class="mono">snappy</td><td>Moderate</td><td>Low</td><td>Legacy default in many shops</td></tr>
+          <tr><td class="mono">gzip</td><td>High</td><td>High</td><td>Archival; rarely worth the CPU today</td></tr>
+          <tr><td class="mono">zstd</td><td>High</td><td>Moderate</td><td>The modern default recommendation for most topics</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card table-wrap">
+      <table>
+        <thead><tr><th>Situation</th><th>Segment recommendation</th></tr></thead>
+        <tbody>
+          <tr><td>High-volume topics (CDRs, telemetry)</td><td>Keep the 1 GiB default — fewer files, efficient I/O</td></tr>
+          <tr><td>Low-volume topics with tight retention</td><td>Lower <code>segment.ms</code> and/or <code>segment.bytes</code> (128–256 MiB) so rolls happen</td></tr>
+          <tr><td>Compacted topics</td><td>Moderate <code>segment.ms</code> (hours) — the cleaner only touches sealed segments</td></tr>
+          <tr><td>Very short-lived dev/test topics</td><td>Small is fine in dev — never in production (file-handle explosion)</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="callout"><b>Tiered storage</b> separates <em>how long data must exist</em> from <em>how much sits on broker disks</em>:
+    sealed segments are uploaded to object storage, and only a small local window survives (<code>local.retention.ms</code> /
+    <code>local.retention.bytes</code>), while <code>retention.ms</code> governs the remote copy. Apache's KIP-405 implementation
+    has been production-ready since 3.9; Confluent ships its own (<code>confluent.tier.*</code>) which is <b>not</b> the same
+    feature and does <b>not</b> support JBOD.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="05-min-insync-replicas-acks.html"><small>← Previous</small>min.insync.replicas &amp; acknowledgments (acks)</a>
+    <a class="next" href="index.html"><small>Done →</small>Back to Module 3 overview</a>
+  </div>
+</div>
+
+<script>
+const CODECS = { none: { r: 1, label: 'no compression' }, lz4: { r: .5, label: 'lz4' }, snappy: { r: .5, label: 'snappy' }, gzip: { r: .33, label: 'gzip' }, zstd: { r: .33, label: 'zstd' } };
+let S = { codec: 'zstd', events: 12, kbrec: 1.5, rf: 3, days: 7, tiered: false, local: 2 };
+const svg = document.getElementById('svg'), logEl = document.getElementById('log'), statsEl = document.getElementById('stats');
+const gb = v => (v >= 100 ? v.toFixed(0) : v.toFixed(1)) + ' GB';
+
+function calc() {
+  const rawDay = S.events * 1e6 * S.kbrec * 1024 / 1e9;
+  const storedDay = rawDay * CODECS[S.codec].r;
+  const brokerNo = rawDay * S.days;
+  const broker = storedDay * S.days;
+  const cluster = broker * S.rf;
+  const localBroker = S.tiered ? storedDay * S.local : broker;
+  const localCluster = localBroker * S.rf;
+  const remote = storedDay * S.days;
+  return { rawDay, storedDay, brokerNo, broker, cluster, localBroker, localCluster, remote };
+}
+
+function render() {
+  const c = calc();
+  svg.innerHTML = '';
+  const maxV = Math.max(c.brokerNo, 1);
+  const x = 200, w = 620;
+  el('text', { x: 16, y: 22, 'font-size': 12, class: 'muted', text: `thermal CDR workload — per-broker disk over the retention window (ratios illustrative)` }, svg);
+  const rows = [
+    { label: 'no compression', v: c.brokerNo, color: 'var(--muted)' },
+    { label: CODECS[S.codec].label + ' (producer)', v: c.broker, color: 'var(--accent)' },
+    { label: S.tiered ? CODECS[S.codec].label + ' + tiered (local only)' : CODECS[S.codec].label + ' + tiered (enable it)', v: c.localBroker, color: 'var(--ok)' },
+  ];
+  rows.forEach((r, i) => {
+    const y = 52 + i * 58;
+    el('text', { x: 16, y: y + 20, 'font-size': 13, text: r.label }, svg);
+    el('rect', { x, y, width: w, height: 28, rx: 6, fill: 'var(--surface-2)' }, svg);
+    const pct = Math.max(0.01, r.v / maxV);
+    el('rect', { x, y, width: w * pct, height: 28, rx: 6, fill: r.color, 'fill-opacity': i === 2 && !S.tiered ? .3 : 1 }, svg);
+    el('text', { x: x + w * pct + 10, y: y + 20, 'font-size': 13, 'font-weight': 700, style: `fill:${r.color}`, text: gb(r.v) }, svg);
+  });
+  el('text', { x: 16, y: 236, 'font-size': 12, class: 'muted',
+    text: S.tiered
+      ? `remote object storage holds ${gb(c.remote)} (one copy, governed by retention.ms); brokers keep ${gb(c.localBroker)} each`
+      : `cluster-wide broker total = ${gb(c.cluster)} (RF ${S.rf}) — the object-storage tier would hold ${gb(c.remote)}` }, svg);
+
+  statsEl.innerHTML = `
+    <div class="stat"><b>${gb(c.rawDay)}</b><span>uncompressed / day</span></div>
+    <div class="stat"><b>${gb(c.storedDay)}</b><span>on disk / day (${CODECS[S.codec].label})</span></div>
+    <div class="stat"><b>${Math.round((1 - c.broker / c.brokerNo) * 100)}%</b><span>saved vs. no compression</span></div>
+    <div class="stat"><b>${gb(S.tiered ? c.localBroker : c.broker)}</b><span>per broker ${S.tiered ? '(local tier)' : ''}</span></div>
+    <div class="stat"><b>${gb(S.tiered ? c.remote : c.cluster)}</b><span>${S.tiered ? 'remote (one copy)' : `cluster total (RF ${S.rf})`}</span></div>`;
+}
+
+function ui() {
+  document.getElementById('eventsv').textContent = S.events + ' M';
+  document.getElementById('kbrecv').textContent = S.kbrec + ' KB';
+  document.getElementById('daysv').textContent = S.days + ' day' + (S.days > 1 ? 's' : '');
+  document.getElementById('localv').textContent = 'local ' + S.local + ' d';
+  document.getElementById('local').disabled = !S.tiered;
+}
+
+document.getElementById('codec').onchange = e => {
+  S.codec = e.target.value;
+  render();
+  logLine(logEl, `compression set to <b>${CODECS[S.codec].label}</b> — compress in the producer; topic stays compression.type=producer so brokers never recompress`, true);
+};
+document.getElementById('events').oninput = e => { S.events = +e.target.value; ui(); render(); };
+document.getElementById('kbrec').oninput = e => { S.kbrec = +e.target.value / 10; ui(); render(); };
+document.getElementById('days').oninput = e => { S.days = +e.target.value; ui(); render(); };
+document.querySelectorAll('#rfs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#rfs button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  S.rf = +b.dataset.rf; render();
+  logLine(logEl, `replication factor ${S.rf} — every record is stored ${S.rf}× on broker disks`, true);
+});
+document.getElementById('tiered').onchange = e => {
+  S.tiered = e.target.checked; ui(); render();
+  logLine(logEl, S.tiered
+    ? 'tiered storage on (remote.storage.enable=true) — sealed segments upload to object storage; local.retention.ms keeps a small local window'
+    : 'tiered storage off — full retention sits on broker disks', true);
+};
+document.getElementById('local').oninput = e => { S.local = +e.target.value; ui(); render(); };
+ui(); render();
+logLine(logEl, 'defaults: 12 M CDRs/day at 1.5 KB, zstd, RF 3, 7 day retention');
+
+/* ---------- symptom explorer ---------- */
+const SYMPTOMS = [
+  { label: 'Thousands of tiny .log files',
+    cause: 'Segment roll trigger is far too small for the write rate — each file carries fixed overhead (index, opening handles) and startup recovery slows down. Raise segment.bytes (or segment.ms) so segments accumulate meaningful batches.',
+    cmds: [
+      ['kafka-configs.sh --bootstrap-server $BS --alter --entity-type topics --entity-name cdr.voice --add-config segment.bytes=268435456',
+        ['Completed updating config for topic cdr.voice.', '→ rolls every 256 MiB from the next segment on; existing files are untouched']],
+      ['kafka-log-dirs.sh --bootstrap-server $BS --describe --topic-list cdr.voice | jq \'.brokers[0].logDirs[0].partitions[0].size\'',
+        ['536870912', '→ confirm the per-partition size you are actually dealing with before tuning further']],
+    ] },
+  { label: 'Month-old data despite retention.ms = 1 day',
+    cause: 'Retention never touches the active segment. On a low-traffic topic that segment can stay open for weeks. Lower segment.ms so the segment rolls on time and becomes eligible for deletion.',
+    cmds: [
+      ['kafka-configs.sh --bootstrap-server $BS --alter --entity-type topics --entity-name cdr.voice --add-config segment.ms=86400000',
+        ['Completed updating config for topic cdr.voice.', '→ sealed segments now cut off daily, so retention.ms=1 day can act']],
+      ['kafka-configs.sh --bootstrap-server $BS --describe --entity-type topics --entity-name cdr.voice',
+        ['  segment.ms=86400000 sensitive=false synonyms={DYNAMIC_TOPIC_CONFIG:segment.ms=86400000, DEFAULT_CONFIG:segment.ms=604800000}']],
+    ] },
+  { label: 'Disk full on one broker only',
+    cause: 'Partition/leadership imbalance: one broker took more replicas or leads more high-traffic partitions. This is a capacity and reassignment problem, not a retention one (Module 5). First measure, then rebalance.',
+    cmds: [
+      ['kafka-log-dirs.sh --bootstrap-server $BS --describe --topic-list cdr.voice',
+        ['{ "brokers": [ { "broker": 3, "logDirs": [ { "size": 412316860416 } ] },', '  { "broker": 1, "logDirs": [ { "size": 128849018880 } ] } ] }', '→ broker 3 holds ~3× the data of broker 1: rebalance, do not shrink retention']],
+      ['kafka-reassign-partitions.sh --bootstrap-server $BS --reassignment-json-file plan.json --execute',
+        ['Successfully started partition reassignments.']],
+    ] },
+  { label: 'Compacted topic keeps growing',
+    cause: 'Two classics: records produced without keys (they can never be deduplicated), or the dirty ratio is rarely reached so the cleaner almost never runs. Verify keys, then consider a lower min.cleanable.dirty.ratio or a bounded max.compaction.lag.ms.',
+    cmds: [
+      ['kafka-configs.sh --bootstrap-server $BS --describe --entity-type topics --entity-name subscriber.plan',
+        ['  cleanup.policy=compact', '  min.cleanable.dirty.ratio=0.5', '→ 0.5 means half the log must be superseded before cleaning starts']],
+      ['kafka-configs.sh --bootstrap-server $BS --alter --entity-type topics --entity-name subscriber.plan --add-config min.cleanable.dirty.ratio=0.2',
+        ['Completed updating config for topic subscriber.plan.', '→ cleaner starts sooner and reclaims space faster, at the cost of more cleaner I/O']],
+    ] },
+  { label: 'Retention was lowered but disk is not freeing',
+    cause: 'Deletion is a pipeline: evaluation every log.retention.check.interval.ms (5 min), rename to *.deleted, then removal after file.delete.delay.ms (60 s). Check whether files are sitting in the deleted state, and whether the oldest data is simply still inside an unrolled active segment.',
+    cmds: [
+      ['ls -lh /var/lib/kafka/data/cdr.voice-0/',
+        ['00000000000000000000.log.deleted   90M', 'activelog 00000000000000012600.log   12M', '→ .deleted files are in the delay window; active segment holds the rest']],
+      ['kafka-log-dirs.sh --bootstrap-server $BS --describe --topic-list cdr.voice',
+        ['{ "partitions": [ { "partition": 0, "size": 94371840, "offsetLag": 0 } ] }', '→ per-partition truth; compare with what monitoring claims']],
+    ] },
+];
+
+const symsEl = document.getElementById('syms'), causeEl = document.getElementById('cause'), termEl = document.getElementById('term');
+SYMPTOMS.forEach((s, i) => {
+  const b = document.createElement('button');
+  b.className = 'tool-card sym-btn';
+  b.textContent = s.label;
+  b.setAttribute('aria-pressed', i === 0);
+  b.onclick = () => selectSym(i);
+  symsEl.appendChild(b);
+});
+function selectSym(i) {
+  [...symsEl.children].forEach((b, k) => b.setAttribute('aria-pressed', k === i));
+  const s = SYMPTOMS[i];
+  causeEl.innerHTML = `<b>Likely cause:</b> ${s.cause}`;
+  termEl.innerHTML = '';
+  s.cmds.forEach(([cmd, out]) => termRun(termEl, cmd.replace(/</g, '&lt;'), out));
+}
+selectSym(0);
+
+renderQuiz('quiz', [
+  { q: 'Which single knob gives the highest storage leverage, shrinking both broker disk and replication traffic?',
+    options: ['Increasing the replication factor', 'Producer-side compression (e.g. zstd)', 'More partitions', 'Lowering min.insync.replicas'],
+    answer: 1, explain: 'Compression shrinks the data before it is written and replicated, so every byte saved is saved on every replica — the biggest win available. zstd gives high ratios at moderate CPU cost.' },
+  { q: 'What does a topic-level <code>compression.type=gzip</code> do to arriving batches compressed with another codec?',
+    options: ['Stores them untouched', 'Decompresses and recompresses them on the broker — a large CPU tax on the data path', 'Rejects them', 'Forwards them to an archive tier'],
+    answer: 1, explain: 'A codec at topic level forces broker-side recompression for mismatched batches. Compress in the producer and leave the topic at <code>producer</code>, or match the cluster default to the producer codec.' },
+  { q: 'With tiered storage enabled, which setting determines how long the <b>local</b> copy of a segment survives on brokers?',
+    options: ['<code>retention.ms</code>', '<code>local.retention.ms</code> / <code>local.retention.bytes</code>', '<code>segment.ms</code>', '<code>delete.retention.ms</code>'],
+    answer: 1, explain: 'Once a segment is uploaded, the local copy is deleted after the local retention limits, while the remote copy is kept according to <code>retention.ms</code> / <code>retention.bytes</code>. That is the separation that keeps broker disks small.' },
+  { q: 'A low-volume topic needs strict 1-day retention precision. What do you do?',
+    options: ['Lower <code>retention.bytes</code>', 'Lower <code>segment.ms</code> and/or <code>segment.bytes</code> so segments roll and become deletable', 'Raise <code>min.cleanable.dirty.ratio</code>', 'Switch to cleanup.policy=compact'],
+    answer: 1, explain: 'Retention deletes whole sealed segments. If the active segment never rolls, old data survives regardless of retention.ms — make it roll often enough for your precision requirement.' },
+  { q: 'What is <code>kafka-log-dirs.sh --describe</code> used for?',
+    options: ['Formatting new log directories', 'Reporting per-partition sizes and offset lag per log directory — the measurement step before any storage change', 'Deleting old segments manually', 'Compacting a topic'],
+    answer: 1, explain: 'It answers "which partition is eating the disk?" with JSON output per broker and log directory. Measure first; every optimization decision on this page follows from that data.' }
+]);
+</script>
+</body>
+</html>

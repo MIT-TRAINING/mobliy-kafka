@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Retention &amp; Cleanup Policies: delete vs. compact</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 3 · Cluster Configuration, Storage &amp; Retention</a>
+    <div class="nav"><span>4 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 4</div>
+  <h1>Retention &amp; cleanup policies: delete vs. compact</h1>
+  <p class="lede">Retention is judged on the <b>newest record</b> of each segment and deletes <b>whole segments</b>. Advance the
+    clock in part 1 to watch time- and size-based deletion race each other, then in part 2 run all three cleanup policies on
+    the same record set and compare.</p>
+
+  <h2>1 · Time-based vs. size-based deletion</h2>
+  <div class="card">
+    <div class="controls">
+      <label class="range">retention.ms
+        <select id="ret" style="font:inherit;font-size:14px;padding:4px 8px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text)">
+          <option value="6">6 h</option><option value="24" selected>24 h</option><option value="48">48 h</option>
+          <option value="72">72 h</option><option value="168">7 days</option>
+        </select></label>
+      <label class="range">retention.bytes <input type="range" id="rbytes" min="1" max="4" value="4"> <b id="rbytesv">unlimited</b></label>
+      <label class="range">Records / hour <input type="range" id="rate" min="1" max="4" value="2"> <b id="ratev">2</b></label>
+    </div>
+    <div class="controls">
+      <button class="primary" id="tick">Advance 1 hour</button>
+      <button id="play">▶ Play</button>
+      <button id="rreset">Reset</button>
+      <span class="pill">demo segment = 4 records</span>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="clock">0 h</b><span>broker clock</span></div>
+      <div class="stat"><b id="lso">0</b><span>log start offset</span></div>
+      <div class="stat"><b id="leo">0</b><span>log end offset</span></div>
+      <div class="stat"><b id="size">0</b><span>records on disk</span></div>
+      <div class="stat"><b id="oldest">—</b><span>oldest record age</span></div>
+    </div>
+    <div class="stage" style="margin-top:12px"><svg id="svg" viewBox="0 0 900 200" role="img" aria-label="Segments expiring by time and size"></svg></div>
+    <div class="legend"><span><i style="border:1.5px dashed var(--accent);background:none"></i>active segment — never evaluated</span>
+      <span><i style="background:var(--p0);opacity:.9"></i>new record</span><span><i style="background:var(--p0);opacity:.35"></i>old record</span></div>
+    <div class="log" id="rlog" aria-live="polite"></div>
+  </div>
+  <div class="callout warn"><b>The cardinal rule:</b> retention is <b>independent of consumption</b>. Kafka deletes old data
+    whether or not any consumer has read it — a group that is down longer than <code>retention.ms</code> misses data
+    <b>permanently</b> (one of the message-loss scenarios in Module 9). Set retention to exceed your worst-case consumer outage
+    plus margin.</div>
+
+  <h2>2 · delete vs. compact vs. compact,delete on the same records</h2>
+  <div class="card">
+    <p style="margin-top:0;color:var(--muted);font-size:14px">Topic <code>tariff.changes</code>, keyed by MSISDN, 11 records in
+      3 segments of 4. Choose a policy and run cleanup — the outcomes are deliberately different.</p>
+    <div class="controls">
+      <div class="seg" role="group" aria-label="Cleanup policy" id="policy">
+        <button data-p="delete" aria-pressed="true">delete (24 h)</button>
+        <button data-p="compact" aria-pressed="false">compact</button>
+        <button data-p="compactdelete" aria-pressed="false">compact,delete (32 h)</button>
+      </div>
+      <button class="primary" id="clean">🧹 Run cleanup</button>
+      <button id="preset">↺ Reset records</button>
+    </div>
+    <div class="stage"><div class="clog" id="clog"></div></div>
+    <div class="legend"><span><i style="border:1.5px dashed var(--accent);background:none"></i>active segment (offsets 8–10)</span>
+      <span><i style="background:none;border:1.5px dashed var(--bad)"></i>tombstone (key deleted)</span></div>
+    <p id="pdesc" style="font-size:14px;color:var(--muted);margin:12px 0 0">Pick a policy, then <b>Run cleanup</b>. Record ages are
+      fixed for this scenario (oldest 50 h) so you can compare the three outcomes directly.</p>
+    <div class="log" id="plog" aria-live="polite"></div>
+  </div>
+
+  <h2>Choosing a policy</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th></th><th><code>delete</code></th><th><code>compact</code></th><th><code>compact,delete</code></th></tr></thead>
+      <tbody>
+        <tr><td>Keeps</td><td>Everything inside the time/size window</td><td>Latest record per key, indefinitely</td><td>Latest per key, expiring past <code>retention.ms</code></td></tr>
+        <tr><td>Keys required</td><td>No</td><td>Effectively yes</td><td>Effectively yes</td></tr>
+        <tr><td>Disk behaviour</td><td>Predictable, whole-segment steps</td><td>Driven by key count and dirty ratio</td><td>Bounded state with a time horizon</td></tr>
+        <tr><td>Consumers see</td><td>An event history</td><td>A replayable "table" of current state</td><td>A windowed table</td></tr>
+        <tr><td>Telecom example</td><td><code>cdr.voice</code>, <code>sms.events</code></td><td><code>subscriber.plan</code>, <code>device.config</code></td><td><code>tariff.changes</code> (latest per MSISDN, 30 days)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout">Deletion is not one step: the broker evaluates every <code>log.retention.check.interval.ms</code> (5 min),
+    renames segment files <code>*.deleted</code>, then unlinks them after <code>log.segment.delete.delay.ms</code> (<code>file.delete.delay.ms</code>
+    at topic level, default 60 s). During that gap an extended retention can still rescue the files — which is why a disk often
+    frees up in steps, not smoothly.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="03-topic-overrides.html"><small>← Previous</small>Topic-level configuration overrides</a>
+    <a class="next" href="05-min-insync-replicas-acks.html"><small>Next →</small>min.insync.replicas &amp; acknowledgments (acks)</a>
+  </div>
+</div>
+
+<script>
+/* ---------- Part 1: delete policy ---------- */
+const SEG = 4, svg = document.getElementById('svg'), rlogEl = document.getElementById('rlog');
+const $ = id => document.getElementById(id);
+let R, playT = null;
+const retH = () => +$('ret').value;
+const retRecs = () => [8, 16, 32, Infinity][+$('rbytes').value - 1];
+
+function rReset() {
+  R = { t: 0, recs: [], next: 0 };
+  $('rlog').innerHTML = ''; render(); rlogEl.innerHTML = '';
+  logLine(rlogEl, 'partition empty — advance the clock to produce records');
+}
+function segments() {
+  const map = new Map();
+  R.recs.forEach(r => { const k = Math.floor(r.off / SEG); if (!map.has(k)) map.set(k, []); map.get(k).push(r); });
+  return [...map.entries()].sort((a, b) => a[0] - b[0]).map(([k, recs]) => ({ k, recs }));
+}
+
+function render(dying) {
+  svg.innerHTML = '';
+  const segs = segments();
+  const total = Math.max(1, Math.ceil(R.next / SEG));
+  const activeK = Math.floor((R.next - 1) / SEG);
+  el('text', { x: 16, y: 20, 'font-size': 12, class: 'muted',
+    text: 'cdr.voice-0 — cells fade with age; a sealed segment dies when its NEWEST record passes retention.ms' }, svg);
+  const w = 150, gap = 12;
+  segs.forEach((s, i) => {
+    const x = 16 + i * (w + gap), y = 40, h = 110;
+    const dyingHere = dying && dying.includes(s.k);
+    const g = el('g', { opacity: dyingHere ? 0 : 1 }, svg);
+    el('rect', { x, y, width: w, height: h, rx: 10, fill: 'var(--surface)',
+      stroke: s.k === activeK ? 'var(--accent)' : 'var(--border)', 'stroke-width': s.k === activeK ? 1.8 : 1,
+      'stroke-dasharray': s.k === activeK ? '7 4' : '' }, g);
+    el('text', { x: x + 10, y: y + 18, 'font-size': 10, class: 'mono', style: 'fill:var(--muted)', text: String(s.k * SEG).padStart(20, '0') + '.log' }, g);
+    s.recs.forEach((r, ri) => {
+      const age = R.t - r.ts;
+      const op = Math.max(.25, 1 - age / Math.max(retH(), 1) * 0.75);
+      const cx = x + 10 + ri * 32;
+      el('rect', { x: cx, y: y + 30, width: 28, height: 26, rx: 5, fill: PCOLORS[s.k % 6], 'fill-opacity': op }, g);
+      el('text', { x: cx + 14, y: y + 47, 'text-anchor': 'middle', 'font-size': 10, style: 'fill:#fff', text: r.off }, g);
+    });
+    const newest = Math.max(...s.recs.map(x => x.ts));
+    el('text', { x: x + 10, y: y + 82, 'font-size': 10, style: `fill:${s.k === activeK ? 'var(--accent)' : 'var(--muted)'}`,
+      text: s.k === activeK ? 'ACTIVE' : `newest record ${R.t - newest} h old` }, g);
+    el('text', { x: x + 10, y: y + 98, 'font-size': 10, class: 'muted', text: s.k === activeK ? 'never deleted' : (R.t - newest > retH() ? 'past retention → delete' : 'within retention') }, g);
+  });
+  el('text', { x: 16, y: 184, 'font-size': 12, class: 'muted',
+    text: `rules in force — time: newest record in a sealed segment > ${retH()} h → delete · size: total records on disk ≤ ${retRecs() === Infinity ? 'unlimited' : retRecs()}` }, svg);
+  $('clock').textContent = R.t + ' h';
+  $('lso').textContent = R.recs.length ? R.recs[0].off : R.next;
+  $('leo').textContent = R.next;
+  $('size').textContent = R.recs.length;
+  $('oldest').textContent = R.recs.length ? (R.t - R.recs[0].ts) + ' h' : '—';
+}
+
+async function rTick() {
+  R.t++;
+  for (let i = 0; i < +$('rate').value; i++) R.recs.push({ off: R.next++, ts: R.t });
+  const segs = segments();
+  const activeK = Math.floor((R.next - 1) / SEG);
+  const del = [];
+  segs.forEach(s => {
+    if (s.k === activeK) return;
+    const newest = Math.max(...s.recs.map(x => x.ts));
+    if (R.t - newest > retH()) { del.push(s.k); logLine(rlogEl, `segment ${String(s.k * SEG).padStart(20, '0')}.log deleted: newest record is ${R.t - newest} h old &gt; retention.ms (${retH()} h)`, true); }
+  });
+  if (retRecs() !== Infinity) {
+    let size = R.recs.filter(r => !del.includes(Math.floor(r.off / SEG))).length;
+    for (const s of segs) {
+      if (size <= retRecs() || s.k === activeK) break;
+      if (del.includes(s.k)) continue;
+      del.push(s.k); size -= s.recs.length;
+      logLine(rlogEl, `segment ${String(s.k * SEG).padStart(20, '0')}.log deleted: partition holds ${size + s.recs.length} records &gt; retention.bytes (${retRecs()})`, true);
+    }
+  }
+  if (del.length) {
+    render(null); await sleep(20); render(del); await sleep(reducedMotion ? 0 : 500);
+    R.recs = R.recs.filter(r => !del.includes(Math.floor(r.off / SEG)));
+    logLine(rlogEl, `${del.length} segment(s) marked .deleted → file.delete.delay.ms (60 s) → removed. Whole segments only; offsets are never reused.`, true);
+  }
+  render();
+}
+
+$('ret').onchange = () => { render(); logLine(rlogEl, `retention.ms set to ${retH()} h`, true); };
+$('rbytes').oninput = () => { $('rbytesv').textContent = retRecs() === Infinity ? 'unlimited' : retRecs() + ' records'; render(); };
+$('rate').oninput = () => { $('ratev').textContent = $('rate').value; };
+$('tick').onclick = rTick;
+$('rreset').onclick = () => { if (playT) { clearInterval(playT); playT = null; $('play').textContent = '▶ Play'; } rReset(); };
+$('play').onclick = e => {
+  if (playT) { clearInterval(playT); playT = null; e.target.textContent = '▶ Play'; }
+  else { playT = setInterval(rTick, 800); e.target.textContent = '⏸ Pause'; }
+};
+rReset();
+
+/* ---------- Part 2: policy comparison ---------- */
+const RECS = [
+  { off: 0, key: 'MSISDN-41', val: 'plan-basic', age: 50 },
+  { off: 1, key: 'MSISDN-55', val: 'plan-pro', age: 50 },
+  { off: 2, key: 'MSISDN-41', val: 'plan-pro', age: 49 },
+  { off: 3, key: 'MSISDN-62', val: 'plan-basic', age: 48 },
+  { off: 4, key: 'MSISDN-55', val: 'plan-basic', age: 30 },
+  { off: 5, key: 'MSISDN-77', val: 'plan-pro', age: 30 },
+  { off: 6, key: 'MSISDN-77', val: null, tomb: true, age: 29 },
+  { off: 7, key: 'MSISDN-62', val: 'plan-pro', age: 28 },
+  { off: 8, key: 'MSISDN-88', val: 'plan-basic', age: 2 },
+  { off: 9, key: 'MSISDN-55', val: 'plan-pro', age: 1 },
+  { off: 10, key: 'MSISDN-88', val: 'plan-pro', age: 1 },
+];
+const PSEG = 4, ACTIVE_K = 2;
+const KEYS = ['MSISDN-41', 'MSISDN-55', 'MSISDN-62', 'MSISDN-77', 'MSISDN-88'];
+const clogEl = document.getElementById('clog'), plogEl = document.getElementById('plog'), pdescEl = document.getElementById('pdesc');
+let P = [], policy = 'delete', cleaned = false;
+
+const kcolor = k => PCOLORS[KEYS.indexOf(k) % 6];
+function pReset() {
+  P = RECS.map(r => ({ ...r }));
+  cleaned = false;
+  plogEl.innerHTML = '';
+  document.querySelectorAll('#policy button').forEach(b => b.setAttribute('aria-pressed', b.dataset.p === policy));
+  pdescEl.innerHTML = 'Pick a policy, then <b>Run cleanup</b>. Record ages are fixed for this scenario (oldest 50 h) so you can compare the three outcomes directly.';
+  pRender();
+}
+function pRender(gone, target) {
+  clogEl.innerHTML = '';
+  P.forEach(r => {
+    const d = document.createElement('div');
+    const isActive = Math.floor(r.off / PSEG) === ACTIVE_K;
+    d.className = 'rec' + (r.tomb ? ' tomb' : '') + (isActive ? ' active-seg' : '') +
+      (gone && gone.includes(r.off) ? ' gone' : '') + (target && target.includes(r.off) ? ' target' : '');
+    d.style.background = kcolor(r.key);
+    d.innerHTML = `<div class="o">offset ${r.off} · ${r.age} h old</div><b>${r.key}</b><div>${r.tomb ? '∅ tombstone' : r.val}</div>`;
+    clogEl.appendChild(d);
+  });
+}
+
+function computeDelete(list, retentionH) {
+  const newest = {};
+  list.forEach(r => { const seg = Math.floor(r.off / PSEG); newest[seg] = Math.max(newest[seg] ?? 0, r.age); });
+  return list.filter(r => { const seg = Math.floor(r.off / PSEG); return seg === ACTIVE_K || newest[seg] <= retentionH; });
+}
+function computeCompact(list) {
+  const sealed = list.filter(r => Math.floor(r.off / PSEG) !== ACTIVE_K);
+  const active = list.filter(r => Math.floor(r.off / PSEG) === ACTIVE_K);
+  const latest = new Map();
+  sealed.forEach(r => latest.set(r.key, r));
+  const keep = new Set(active.map(r => r.off));
+  latest.forEach(r => { if (!(r.tomb && r.age > 24)) keep.add(r.off); });
+  return list.filter(r => keep.has(r.off));
+}
+
+async function pClean() {
+  if (cleaned) { logLine(plogEl, 'already cleaned — press Reset records to run the comparison again'); return; }
+  const before = P.map(r => r.off);
+  let after, why;
+  if (policy === 'delete') {
+    after = computeDelete(P, 24);
+    why = 'cleanup.policy=delete: sealed segments whose newest record is older than retention.ms=24 h are removed whole (segment A newest 48 h, segment B newest 28 h). Only the active segment survives.';
+  } else if (policy === 'compact') {
+    after = computeCompact(P);
+    why = 'cleanup.policy=compact: the cleaner keeps only the latest record per key in sealed segments — MSISDN-41 → offset 2, MSISDN-55 → offset 4, MSISDN-62 → offset 7. The MSISDN-77 tombstone (29 h old) passed delete.retention.ms=24 h, so all its records are gone. The active segment is never compacted.';
+  } else {
+    const kept = computeDelete(P, 32);
+    after = computeCompact(kept);
+    why = 'cleanup.policy=compact,delete: retention.ms=32 h deletes segment A (newest 48 h) first — taking MSISDN-41\'s last value with it — then compaction reduces segment B to the latest per key. Untouched keys eventually disappear entirely; that is the point of compact,delete.';
+  }
+  const keepOffs = after.map(r => r.off);
+  const removed = before.filter(o => !keepOffs.includes(o));
+  pRender(null, keepOffs);
+  await sleep(30); pRender(removed, keepOffs);
+  await sleep(reducedMotion ? 0 : 650);
+  P = P.filter(r => keepOffs.includes(r.off));
+  cleaned = true;
+  pRender(null, keepOffs);
+  pdescEl.innerHTML = why;
+  logLine(plogEl, `<b>${policy}</b> cleanup: ${removed.length} record(s) removed, ${P.length} remain — offsets of survivors unchanged`, true);
+}
+
+document.querySelectorAll('#policy button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('#policy button').forEach(x => x.setAttribute('aria-pressed', x === b));
+  policy = b.dataset.p;
+  logLine(plogEl, `cleanup policy switched to ${policy === 'compactdelete' ? 'compact,delete' : policy}`, true);
+});
+document.getElementById('clean').onclick = pClean;
+document.getElementById('preset').onclick = pReset;
+pReset();
+
+renderQuiz('quiz', [
+  { q: 'A consumer group has been stopped for 10 days. The topic keeps 7 days of retention. What happens when the group restarts?',
+    options: ['Kafka extends deletion until the group catches up', 'The group resumes at an offset before the log start and falls back to auto.offset.reset — 3 days of data are gone permanently', 'The group replays everything from offset 0', 'Retention pauses while a group is offline'],
+    answer: 1, explain: 'Retention is independent of consumption. The deleted records move the log start offset forward; a committed offset that is now out of range triggers auto.offset.reset (earliest or latest, depending on config).' },
+  { q: '<code>retention.bytes=10 GiB</code> is set on a 12-partition topic. How much can the topic hold?',
+    options: ['10 GiB in total', 'About 120 GiB — the limit is per partition', '10 GiB per broker', '10 GiB per consumer group'],
+    answer: 1, explain: '<code>retention.bytes</code> caps each partition at 10 GiB, so worst-case footprint ≈ 12 × 10 GiB (times the replication factor on disk). Always multiply by partition count when sizing disks.' },
+  { q: 'The clock advances past <code>retention.ms</code> but the oldest data is still on disk. What is the most likely reason?',
+    options: ['Retention only runs at broker restart', 'The records are in the active segment, which is never evaluated for deletion', 'cleanup.policy=compact disables time retention', 'retention.bytes is overriding it'],
+    answer: 1, explain: 'Retention acts on sealed segments only. If the active segment has not rolled (its roll trigger has not fired), old records inside it stay until it does — lower segment.ms or segment.bytes to bound this.' },
+  { q: 'Which cleanup policy fits a topic that must hold the <b>current plan of every MSISDN</b>?',
+    options: ['delete with a short retention', 'compact — one latest value per key, replayable as a table', 'No cleanup policy at all', 'compact with no keys'],
+    answer: 1, explain: 'State topics are "latest per key" data. Compaction keeps the newest value per key indefinitely and lets a fresh consumer rebuild the current state from offset 0. Retention-based delete would drop keys that have not changed recently.' },
+  { q: 'A compacted topic has a record with <code>MSISDN-77</code> and a <code>null</code> value. When may the cleaner remove that record itself?',
+    options: ['Immediately on the next compaction', 'Never — tombstones are permanent', 'After <code>delete.retention.ms</code> (24 h default) has passed, so every consumer can observe the deletion', 'Only when the topic is deleted'],
+    answer: 2, explain: 'A tombstone marks the key as deleted. It survives compaction for one tombstone lifetime so all consumers (including lagging ones) learn about the deletion; after that the cleaner removes the tombstone too.' }
+]);
+</script>
+</body>
+</html>

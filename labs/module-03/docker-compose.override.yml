@@ -1,0 +1,33 @@
+# Module 3 override for the Module 2 3-node cluster.
+# Uses labs/module-02/docker-compose.yml as its base; this file only changes
+# one broker setting so the storage labs can watch retention act without
+# 5-minute waits:
+#
+#   log.retention.check.interval.ms  300000 (5 min)  ->  15000 (15 s)
+#
+# Everything else (listeners, ports, heap, cluster defaults) stays exactly as
+# Module 2 defines it. Never use a check interval this short in production.
+#
+#   Start:   docker compose -p kafka-m2 \
+#              -f ../module-02/docker-compose.yml \
+#              -f docker-compose.override.yml up -d
+#   Status:  docker compose -p kafka-m2 \
+#              -f ../module-02/docker-compose.yml \
+#              -f docker-compose.override.yml ps
+#   Stop:    docker compose -p kafka-m2 \
+#              -f ../module-02/docker-compose.yml \
+#              -f docker-compose.override.yml down        (keeps data)
+#   Reset:   docker compose -p kafka-m2 \
+#              -f ../module-02/docker-compose.yml \
+#              -f docker-compose.override.yml down -v     (deletes all data)
+
+services:
+  kafka-1:
+    environment:
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: "15000"
+  kafka-2:
+    environment:
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: "15000"
+  kafka-3:
+    environment:
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: "15000"

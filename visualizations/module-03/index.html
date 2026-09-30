@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka Module 3 Visualizations</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .topics { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: 24px; }
+  .topic { display: block; text-decoration: none; color: var(--text); transition: border-color .15s, transform .15s; }
+  .topic:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .topic .num { font-family: var(--mono); color: var(--accent); font-size: 13px; font-weight: 600; }
+  .topic h3 { margin: 6px 0; }
+  .topic p { margin: 0 0 10px; color: var(--muted); font-size: 15px; }
+  .topic .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  ol.hands { margin: 0; padding-left: 20px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <span>Apache Kafka &amp; Confluent Kafka Administration</span>
+    <div class="nav"><a href="../module-02/index.html">← Module 2</a><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Module 3</div>
+  <h1>Cluster Configuration, Storage &amp; Retention</h1>
+  <p class="lede">Interactive visualizations for each Module 3 topic. Each page has a hands-on simulation you can
+    play with, followed by a 5-question self-quiz with explanations.</p>
+  <p style="color:var(--muted);font-size:14px;margin:4px 0 0"><b style="color:var(--text)">Objective:</b> Administer storage, retention, and
+    configuration on Apache Kafka clusters.</p>
+
+  <div class="topics">
+    <a class="card topic" href="01-broker-configuration.html">
+      <div class="num">01</div><h3>Broker configuration parameters</h3>
+      <p>Toggle the config layers — defaults, server.properties, cluster-wide and per-broker dynamic configs, topic overrides — and watch which value wins on each broker.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="02-log-directories-segments.html">
+      <div class="num">02</div><h3>Log directories &amp; segment management</h3>
+      <p>Produce records to roll segments, inspect the <code>.log</code>/<code>.index</code>/<code>.timeindex</code> files, then fail a JBOD disk and see which partitions survive.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="03-topic-overrides.html">
+      <div class="num">03</div><h3>Topic-level configuration overrides</h3>
+      <p>Build real <code>kafka-configs.sh --alter</code> commands, hit the <code>log.</code>-prefix trap, and read the synonyms that show where each effective value comes from.</p>
+      <div class="tags"><span class="pill">builder</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="04-retention-cleanup-policies.html">
+      <div class="num">04</div><h3>Retention &amp; cleanup policies: delete vs. compact</h3>
+      <p>Advance the clock to expire whole segments by time and size, then run <code>delete</code>, <code>compact</code> and <code>compact,delete</code> on the same record set and compare.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="05-min-insync-replicas-acks.html">
+      <div class="num">05</div><h3>min.insync.replicas &amp; acknowledgments (acks)</h3>
+      <p>Kill brokers under <code>acks=0</code>, <code>1</code> and <code>all</code>, watch the high watermark freeze, and see exactly which acknowledged records can be lost.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="06-storage-optimization.html">
+      <div class="num">06</div><h3>Storage optimization techniques</h3>
+      <p>Calculate disk needs by codec, retention and tiered storage, then diagnose symptoms like tiny segments and a compacted topic that keeps growing.</p>
+      <div class="tags"><span class="pill">explorer</span><span class="pill">5-question quiz</span></div>
+    </a>
+  </div>
+
+  <h2>Hands-on for this module</h2>
+  <div class="card">
+    <ol class="hands">
+      <li>Configure retention and replication on the shared Apache Kafka cluster (AWS)</li>
+      <li>Test message durability under different acks settings</li>
+    </ol>
+  </div>
+</div>
+</body>
+</html>
