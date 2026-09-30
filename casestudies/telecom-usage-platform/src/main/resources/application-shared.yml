@@ -1,0 +1,29 @@
+# Profile "shared": run the same application against the course's shared
+# Apache Kafka cluster on AWS (SASL/SCRAM + prefix ACLs) instead of the local
+# 3-node cluster.
+#
+# Every value below comes from ~/kafka/apache.properties on your VM
+# (see infra/LAB-SETUP.md): open that file and copy bootstrap.servers,
+# security.protocol, sasl.mechanism and the username/password from it.
+#
+#   TELCO_KAFKA_BOOTSTRAP=apache-kafka.lab.internal:9092 \
+#   TELCO_KAFKA_USER=l07 TELCO_KAFKA_PASSWORD='...' TELCO_PREFIX=l07. \
+#   java -jar target/telecom-usage-platform-1.0.0.jar --spring.profiles.active=shared
+#
+# Your ACLs only allow topics and consumer groups that start with your prefix,
+# which is why every name in this application is prefixed.
+#
+# Do NOT run the broker-failure drill (DEMO-SCRIPT part 7) on the shared
+# cluster: you cannot stop brokers there. Run it on the local cluster.
+spring:
+  kafka:
+    bootstrap-servers: ${TELCO_KAFKA_BOOTSTRAP:apache-kafka.lab.internal:9092}
+    properties:
+      security.protocol: ${TELCO_KAFKA_SECURITY_PROTOCOL:SASL_PLAINTEXT}
+      sasl.mechanism: ${TELCO_KAFKA_SASL_MECHANISM:SCRAM-SHA-512}
+      sasl.jaas.config: >-
+        org.apache.kafka.common.security.scram.ScramLoginModule required
+        username="${TELCO_KAFKA_USER}" password="${TELCO_KAFKA_PASSWORD}";
+
+telco:
+  prefix: ${TELCO_PREFIX}

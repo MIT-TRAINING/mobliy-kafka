@@ -1,0 +1,65 @@
+server:
+  port: 8090
+
+spring:
+  application:
+    name: telecom-usage-platform
+  kafka:
+    # The three EXTERNAL listeners published by labs/module-02/docker-compose.yml.
+    # One reachable broker is enough to bootstrap; listing all three survives
+    # a broker being down when the app starts.
+    bootstrap-servers: localhost:9092,localhost:9094,localhost:9096
+
+    admin:
+      # Module 2: topics as code. Stop at startup if the cluster is unreachable
+      # or a declared topic cannot be created (e.g. RF 3 on a 1-broker cluster).
+      fail-fast: true
+      # Module 3: the catalog in TopicCatalog is the source of truth. Any topic
+      # config that was changed by hand is put back at the next startup.
+      modify-topic-configs: true
+
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # Module 3 §6: the durable contract for business data.
+      # (Telemetry and the durability drill override this per KafkaTemplate.)
+      acks: all
+      # Module 3 §7.2: compress in the producer, never on the broker.
+      compression-type: zstd
+      batch-size: 32768
+      properties:
+        enable.idempotence: true
+        # Module 3 §7.3: wait a little so batches are real batches.
+        linger.ms: 20
+
+    consumer:
+      group-id: telco-default   # every @KafkaListener sets its own group
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+telco:
+  # Prepended to every topic and consumer-group name. Empty on your own laptop
+  # cluster; on the shared cluster use your learner prefix, e.g. "l07." (profile "shared").
+  prefix: ""
+
+  # true  = compaction and retention values are shortened to seconds/minutes so
+  #         you can watch them act during a class (Module 3 lab values).
+  # false = production-like values (hours/days). Never ship lab-mode values.
+  lab-mode: true
+
+  simulator:
+    subscribers: 20          # MSISDNs 966500000001 .. 966500000020
+    international-share: 0.12
+
+  fraud:
+    threshold: 5             # international calls ...
+    window-seconds: 60       # ... inside this event-time window raise an alert
+
+logging:
+  level:
+    org.apache.kafka: WARN
+    org.springframework.kafka: WARN
+    # Shows "partitions assigned: [...]" for every consumer thread: how a group shares partitions
+    org.springframework.kafka.listener.KafkaMessageListenerContainer: INFO
+    com.training.kafka: INFO

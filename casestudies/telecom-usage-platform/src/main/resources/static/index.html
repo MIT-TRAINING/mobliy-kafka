@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TelcoPulse | Kafka case study</title>
+<style>
+  /* EY brand palette: EY Yellow #FFE600, Grey 800 #2E2E38, Grey 500 #747480, Grey 100 #F6F6FA.
+     Typography: EYInterstate where installed, Arial otherwise. */
+  :root {
+    --yellow:#FFE600; --ink:#2E2E38; --mid:#747480; --line:#D0D0D8; --paper:#F6F6FA; --white:#fff;
+    --ok:#168736; --ok-bg:#E3F4E8; --bad:#B9251C; --bad-bg:#FBE5E3; --warn:#8A5A00; --warn-bg:#FFF4CC;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink); font:14px/1.45 "EYInterstate",Arial,Helvetica,sans-serif; }
+  header { background:var(--ink); color:var(--white); border-bottom:4px solid var(--yellow); padding:14px 24px; display:flex; gap:24px; align-items:center; flex-wrap:wrap; }
+  header h1 { margin:0; font-size:20px; letter-spacing:.2px; }
+  header h1 span { color:var(--yellow); }
+  header p { margin:2px 0 0; color:#C4C4CD; font-size:12px; }
+  #cluster { margin-left:auto; text-align:right; font-size:12px; color:#C4C4CD; }
+  #cluster b { color:var(--yellow); }
+  main { max-width:1500px; margin:0 auto; padding:16px 24px 48px; display:grid; gap:16px; grid-template-columns:repeat(12,1fr); }
+  section { background:var(--white); border:1px solid var(--line); border-top:3px solid var(--yellow); padding:12px 14px; min-width:0; }
+  section h2 { margin:0 0 2px; font-size:14px; text-transform:uppercase; letter-spacing:.6px; }
+  section .mod { color:var(--mid); font-size:11px; margin-bottom:8px; }
+  .c3{grid-column:span 3} .c4{grid-column:span 4} .c5{grid-column:span 5} .c6{grid-column:span 6} .c7{grid-column:span 7} .c8{grid-column:span 8} .c12{grid-column:span 12}
+  @media (max-width:1100px){ .c3,.c4,.c5,.c6,.c7,.c8{grid-column:span 12} }
+  button { font:inherit; background:var(--ink); color:var(--white); border:0; padding:6px 10px; cursor:pointer; margin:2px 4px 2px 0; }
+  button:hover { background:#000; }
+  button.y { background:var(--yellow); color:var(--ink); font-weight:700; }
+  button.y:hover { background:#f0d800; }
+  button.ghost { background:var(--white); color:var(--ink); border:1px solid var(--ink); }
+  select,input { font:inherit; padding:5px 6px; border:1px solid var(--mid); background:var(--white); max-width:100%; }
+  table { border-collapse:collapse; width:100%; }
+  th,td { text-align:left; padding:4px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-size:11px; text-transform:uppercase; color:var(--mid); letter-spacing:.4px; }
+  tr.sel td { background:var(--warn-bg); }
+  tr.click { cursor:pointer; } tr.click:hover td { background:var(--paper); }
+  code,.mono { font-family:var(--mono); font-size:12px; }
+  .pill { display:inline-block; padding:0 7px; border-radius:9px; font-size:11px; font-weight:700; }
+  .ok { background:var(--ok-bg); color:var(--ok); } .bad { background:var(--bad-bg); color:var(--bad); } .warn { background:var(--warn-bg); color:var(--warn); } .grey { background:#E6E6EA; color:var(--ink); }
+  .kv { display:flex; gap:16px; flex-wrap:wrap; margin:4px 0 8px; }
+  .kv div { min-width:90px; } .kv b { display:block; font-size:20px; } .kv span { color:var(--mid); font-size:11px; text-transform:uppercase; }
+  .bar { height:10px; background:var(--yellow); display:inline-block; vertical-align:middle; }
+  .note { color:var(--mid); font-size:12px; margin:6px 0; }
+  pre { margin:0; background:var(--ink); color:#E9E9EE; padding:10px; max-height:230px; overflow:auto; font:12px/1.4 var(--mono); white-space:pre-wrap; word-break:break-word; }
+  .row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:4px 0; }
+  .lag0 { color:var(--ok); font-weight:700; } .lagN { color:var(--bad); font-weight:700; }
+  .why { background:var(--paper); border-left:3px solid var(--yellow); padding:6px 10px; margin:8px 0; font-size:12px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Telco<span>Pulse</span> &middot; real-time usage, billing &amp; fraud</h1>
+    <p>Kafka case study &middot; Modules 1&ndash;3 &middot; Spring Boot &middot; every panel below reads live from the cluster</p>
+  </div>
+  <div id="cluster">connecting&hellip;</div>
+</header>
+
+<main>
+  <!-- ============================== CONTROLS ============================== -->
+  <section class="c4">
+    <h2>1 &middot; The network</h2>
+    <div class="mod">Module 1: producers, keys, partitions</div>
+    <div class="row">
+      <button class="y" onclick="post('/api/plans/seed')">Seed subscriber plans</button>
+      <button onclick="post('/api/simulate/cdr?count=100')">Send 100 CDRs</button>
+    </div>
+    <div class="row">
+      <button onclick="post('/api/simulate/start?rate=50')">Start 50 CDR/s</button>
+      <button onclick="post('/api/simulate/start?rate=500')">Start 500 CDR/s</button>
+      <button class="ghost" onclick="post('/api/simulate/stop')">Stop</button>
+    </div>
+    <div class="row">
+      <button onclick="post('/api/simulate/fraud-burst?msisdn=966500000007&calls=8')">Fraud burst (966500000007)</button>
+      <button onclick="post('/api/simulate/telemetry?count=2000')">Send 2,000 telemetry points</button>
+    </div>
+    <div class="note">Every CDR uses the MSISDN as key: the same subscriber always lands in the same partition. Compare the per-partition counts in the log below.</div>
+  </section>
+
+  <section class="c4">
+    <h2>2 &middot; Consumers</h2>
+    <div class="mod">Module 1: consumer groups, offsets, lag</div>
+    <table id="listeners"></table>
+    <div class="row">
+      <span>Billing speed:</span>
+      <button onclick="post('/api/billing/delay?ms=200')">Slow (200 ms/record)</button>
+      <button class="ghost" onclick="post('/api/billing/delay?ms=0')">Full speed</button>
+    </div>
+    <div class="note">Stop or slow billing while traffic runs: only the billing group's lag grows. Fraud and analytics keep up.</div>
+  </section>
+
+  <section class="c4">
+    <h2>3 &middot; Change a setting, live</h2>
+    <div class="mod">Module 3: topic overrides, dynamic config</div>
+    <div class="row"><select id="cfgTopic"></select></div>
+    <div class="row">
+      <select id="cfgKey">
+        <option>retention.ms</option><option>retention.bytes</option><option>segment.bytes</option><option>segment.ms</option>
+        <option>min.insync.replicas</option><option>cleanup.policy</option><option>compression.type</option>
+        <option>min.cleanable.dirty.ratio</option><option>max.compaction.lag.ms</option><option>delete.retention.ms</option><option>max.message.bytes</option>
+      </select>
+      <input id="cfgValue" size="12" placeholder="value">
+    </div>
+    <div class="row">
+      <button class="y" onclick="applyConfig()">Apply (no restart)</button>
+      <button class="ghost" onclick="resetConfig()">Remove override</button>
+    </div>
+    <div class="note">Same as <code>kafka-configs.sh --alter --add-config</code>. Every change is also written to <code>audit.events</code>. On the next start the app restores the catalog values.</div>
+  </section>
+
+  <!-- ============================== TOPICS ============================== -->
+  <section class="c8">
+    <h2>Topic designs</h2>
+    <div class="mod">Module 3 &sect;4.1: one contract per workload class &middot; click a row for the reasoning and the config sources</div>
+    <table id="topics"></table>
+  </section>
+
+  <section class="c4">
+    <h2>Why these settings?</h2>
+    <div class="mod">Module 3 &sect;2.2: every value has a source</div>
+    <div id="topicDetail" class="note">Select a topic.</div>
+  </section>
+
+  <!-- ============================== GROUPS ============================== -->
+  <section class="c8">
+    <h2>Consumer groups</h2>
+    <div class="mod">Module 1 &sect;6: three groups read the same CDR topics independently; members inside a group split the partitions</div>
+    <div id="groups"></div>
+  </section>
+
+  <section class="c4">
+    <h2>Downstream results</h2>
+    <div class="mod">What the consumers computed</div>
+    <div id="results"></div>
+  </section>
+
+  <!-- ============================== STATE / STORAGE ============================== -->
+  <section class="c4">
+    <h2>4 &middot; State on a compacted topic</h2>
+    <div class="mod">Module 3 &sect;5.5: <code>subscriber.plan</code></div>
+    <div class="row">
+      <button onclick="post('/api/plans/churn?rounds=5')">Rewrite every plan 5&times;</button>
+      <button onclick="post('/api/plans/churn?rounds=1')">Rewrite every plan once</button>
+      <button onclick="post('/api/plans/966500000019?plan=POSTPAID_PREMIUM','PUT')">Upgrade 966500000019</button>
+      <button onclick="post('/api/plans/966500000020','DELETE')">Terminate 966500000020</button>
+    </div>
+    <div class="row">
+      <button class="y" onclick="post('/api/ops/topics/subscriber.plan/replay','GET')">Count what is really in the topic</button>
+    </div>
+    <div id="plans" class="note"></div>
+    <div class="note">Write many updates, wait about a minute, count again: same keys, far fewer records. The lab settings shorten <code>segment.ms</code> to 30 s.</div>
+  </section>
+
+  <section class="c4">
+    <h2>5 &middot; Retention on telemetry</h2>
+    <div class="mod">Module 3 &sect;3&ndash;5: segments and deletion</div>
+    <div class="row">
+      <button onclick="shrinkTelemetry()">Shorten retention (60 s) + small segments</button>
+      <button onclick="post('/api/simulate/telemetry?count=20000')">Send 20,000 points</button>
+      <button class="ghost" onclick="restoreTelemetry()">Restore</button>
+    </div>
+    <div id="offsets"></div>
+    <div class="note">Watch <b>log start offset</b> move forward as old segments are deleted. Only closed segments are ever deleted.</div>
+  </section>
+
+  <section class="c4">
+    <h2>6 &middot; Durability drill</h2>
+    <div class="mod">Module 3 &sect;6: <code>acks</code> and <code>min.insync.replicas</code></div>
+    <div class="row">
+      <button class="y" onclick="post('/api/drill/write?acks=all&payload=acks-all','POST',true)">Write acks=all</button>
+      <button onclick="post('/api/drill/write?acks=1&payload=acks-1','POST',true)">Write acks=1</button>
+      <button class="ghost" onclick="post('/api/drill/write?acks=0&payload=acks-0','POST',true)">Write acks=0</button>
+    </div>
+    <div id="drill" class="note"></div>
+    <div class="note">With <code>docker stop kafka-2</code> and <code>min.insync.replicas=3</code> on <code>drill.durability</code>: <code>acks=all</code> is rejected, <code>acks=1</code> is accepted but not readable.</div>
+  </section>
+
+  <section class="c12">
+    <h2>Storage on the brokers</h2>
+    <div class="mod">Module 3 &sect;7.1: <code>kafka-log-dirs.sh</code> &middot; bytes on disk per topic, all replicas, and per broker</div>
+    <div id="storage"></div>
+  </section>
+
+  <section class="c12">
+    <h2>Activity log</h2>
+    <div class="mod">The response of every button you press</div>
+    <pre id="log">Ready.</pre>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let selectedTopic = null, topicsCache = [];
+
+const dur = ms => {
+  ms = Number(ms); if (ms < 0 || ms > 9e15) return 'unlimited';
+  const u = [[864e5,'d'],[36e5,'h'],[6e4,'min'],[1e3,'s']];
+  for (const [n,l] of u) if (ms >= n && ms % n === 0) return (ms/n)+' '+l;
+  return ms+' ms';
+};
+const bytes = b => { b = Number(b); if (b < 0) return 'unlimited'; const u=['B','KB','MB','GB','TB']; let i=0; while (b>=1024 && i<4){b/=1024;i++;} return (i?b.toFixed(1):b)+' '+u[i]; };
+const human = (k,v) => k.endsWith('.ms') ? dur(v) : (k.endsWith('.bytes') ? bytes(v) : v);
+
+function log(title, body) {
+  const t = new Date().toLocaleTimeString();
+  $('log').textContent = `[${t}] ${title}\n${typeof body === 'string' ? body : JSON.stringify(body, null, 2)}\n\n` + $('log').textContent;
+}
+async function call(path, method='GET') {
+  const r = await fetch(path, {method});
+  const text = await r.text();
+  let body; try { body = JSON.parse(text); } catch { body = text; }
+  if (!r.ok) throw Object.assign(new Error(body.detail || text), {body, status: r.status, title: body.title});
+  return body;
+}
+async function post(path, method='POST', refreshDrill=false) {
+  try { const body = await call(path, method); log(`${method} ${path}`, body); }
+  catch (e) { log(`${method} ${path} FAILED`, `${e.title || ''} ${e.message}`); }
+  refresh(refreshDrill || path.startsWith('/api/drill'));
+}
+
+async function applyConfig() {
+  const topic = $('cfgTopic').value, key = $('cfgKey').value, value = $('cfgValue').value;
+  if (!value) return log('config', 'Enter a value first.');
+  try { const t = await call(`/api/ops/topics/${encodeURIComponent(topic)}/configs/${key}?value=${encodeURIComponent(value)}`, 'PUT');
+        log(`SET ${topic} ${key}=${value}`, `effective: ${(t.configs.find(c=>c.name===key)||{}).value}  source: ${(t.configs.find(c=>c.name===key)||{}).source}`); }
+  catch (e) { log(`SET ${key} FAILED`, `${e.title||''} ${e.message}`); }
+  refresh(true);
+}
+async function resetConfig() {
+  const topic = $('cfgTopic').value, key = $('cfgKey').value;
+  try { const t = await call(`/api/ops/topics/${encodeURIComponent(topic)}/configs/${key}`, 'DELETE');
+        const c = t.configs.find(c=>c.name===key)||{}; log(`RESET ${topic} ${key}`, `effective: ${c.value}  source: ${c.source}`); }
+  catch (e) { log(`RESET ${key} FAILED`, `${e.title||''} ${e.message}`); }
+  refresh(true);
+}
+async function shrinkTelemetry() {
+  for (const [k,v] of [['retention.ms','60000'],['segment.bytes','65536'],['segment.ms','20000']])
+    await call(`/api/ops/topics/network.telemetry/configs/${k}?value=${v}`, 'PUT').catch(e => log('FAILED', e.message));
+  log('network.telemetry shortened', 'retention.ms=60 s, segment.bytes=64 KB, segment.ms=20 s. Now send 20,000 points and watch the log start offset.');
+  refresh();
+}
+async function restoreTelemetry() {
+  // Put back what the catalog declares; remove overrides the catalog does not declare
+  const t = topicsCache.find(x => x.name === 'network.telemetry');
+  for (const k of ['retention.ms','segment.bytes','segment.ms']) {
+    const declared = t && (t.configs.find(c => c.name === k) || {}).declared;
+    const url = `/api/ops/topics/network.telemetry/configs/${k}`;
+    await (declared != null ? call(`${url}?value=${declared}`, 'PUT') : call(url, 'DELETE')).catch(e => log('FAILED', e.message));
+  }
+  log('network.telemetry restored', 'Declared values put back, the undeclared segment.ms override removed.');
+  refresh();
+}
+
+// ---------------------------------------------------------------- panels
+function renderTopics(list) {
+  topicsCache = list;
+  if (!selectedTopic && list.length) selectedTopic = list[0].name;
+  const sel = $('cfgTopic');
+  if (sel.options.length !== list.length) sel.innerHTML = list.map(t => `<option>${esc(t.name)}</option>`).join('');
+  const cfg = (t, n) => (t.configs.find(c => c.name === n) || {});
+  $('topics').innerHTML = '<tr><th>Topic</th><th>Class</th><th>P / RF</th><th>min ISR</th><th>Retention</th><th>Cleanup</th><th>Segment</th><th>Health</th></tr>' +
+    list.map(t => {
+      const health = t.underMinIsr ? '<span class="pill bad">below min ISR: acks=all rejected</span>'
+                   : t.underReplicated ? '<span class="pill warn">under-replicated</span>' : '<span class="pill ok">in sync</span>';
+      const ret = cfg(t,'retention.ms'), rb = cfg(t,'retention.bytes');
+      return `<tr class="click ${t.name===selectedTopic?'sel':''}" onclick="pick('${esc(t.name)}')">
+        <td class="mono">${esc(t.name)}</td><td>${esc(t.workloadClass)}</td><td>${t.partitionCount} / ${t.replicationFactor}</td>
+        <td>${t.minInsyncReplicas}</td>
+        <td>${t.configs.some(c=>c.name==='cleanup.policy'&&c.value==='compact') ? 'kept (compacted)' : dur(ret.value)}${rb.value>0?' / '+bytes(rb.value)+' per partition':''}</td>
+        <td>${esc(cfg(t,'cleanup.policy').value)}</td><td>${bytes(cfg(t,'segment.bytes').value)} / ${dur(cfg(t,'segment.ms').value)}</td><td>${health}</td></tr>`;
+    }).join('');
+  renderDetail();
+}
+function pick(name) { selectedTopic = name; $('cfgTopic').value = name; renderTopics(topicsCache); }
+function renderDetail() {
+  const t = topicsCache.find(x => x.name === selectedTopic); if (!t) return;
+  $('topicDetail').innerHTML = `<b class="mono">${esc(t.name)}</b><div class="note">${esc(t.purpose)}</div>
+    <div class="why"><b>Why:</b> ${esc(t.whyConfigured)}</div>
+    <table><tr><th>Setting</th><th>Effective</th><th>Source</th></tr>` +
+    t.configs.map(c => {
+      const drift = c.declared != null && c.declared !== c.value;
+      const extra = c.declared == null && c.source === 'DYNAMIC_TOPIC_CONFIG';
+      const src = c.source === 'DYNAMIC_TOPIC_CONFIG' ? 'warn' : 'grey';
+      return `<tr><td class="mono">${esc(c.name)}</td><td>${esc(human(c.name,c.value))}${drift?` <span class="pill bad">drift: catalog says ${esc(human(c.name,c.declared))}</span>`:''}${extra?' <span class="pill bad" title="KafkaAdmin sets what the catalog declares but never removes other overrides">override not in catalog</span>':''}</td>
+        <td><span class="pill ${src}" title="${esc(c.synonyms.join('\n'))}">${esc(c.source.replace('_CONFIG',''))}</span></td></tr>`;
+    }).join('') + '</table><div class="note">Hover a source label for the whole precedence chain (synonyms).</div>' +
+    '<div class="note">Partitions: ' + t.partitions.map(p => `<span class="mono">${p.partition}: L${p.leader ?? '-'} isr[${p.isr}]</span>`).join(' &middot; ') + '</div>';
+}
+
+function renderGroups(groups) {
+  $('groups').innerHTML = groups.map(g => {
+    const state = g.state === 'Stable' ? 'ok' : (g.state === 'Empty' ? 'bad' : 'warn');
+    return `<div style="margin-bottom:10px"><b class="mono">${esc(g.groupId)}</b> <span class="pill ${state}">${esc(g.state)}</span>
+      &nbsp; total lag: <span class="${g.totalLag ? 'lagN' : 'lag0'}">${g.totalLag}</span>
+      <span class="note"> &mdash; ${esc(g.purpose)}</span>
+      <table><tr><th style="width:200px">Member</th><th>Partitions it owns</th></tr>` +
+      (g.members.length ? g.members.map(m => `<tr><td class="mono">${esc(m.clientId)}</td><td class="mono">${m.partitions.map(esc).join(', ')}</td></tr>`).join('')
+        : '<tr><td colspan="2" class="note">No members: nobody is consuming. Records pile up as lag.</td></tr>') + '</table></div>';
+  }).join('');
+}
+
+function renderListeners(l) {
+  $('listeners').innerHTML = Object.entries(l).map(([id,run]) =>
+    `<tr><td class="mono">${esc(id)}</td><td><span class="pill ${run?'ok':'bad'}">${run?'running':'stopped'}</span></td>
+     <td><button class="${run?'ghost':'y'}" onclick="post('/api/listeners/${id}/${run?'stop':'start'}')">${run?'Stop':'Start'}</button></td></tr>`).join('');
+}
+
+function renderResults(b, f, a, s) {
+  const max = Math.max(1, ...Object.values(a.recordsByPartition));
+  $('results').innerHTML =
+    `<div class="kv"><div><b>${b.cdrsRated}</b><span>CDRs rated</span></div><div><b>${b.totalSar}</b><span>SAR billed</span></div>
+      <div><b>${f.alertCount}</b><span>fraud alerts</span></div><div><b>${s.running ? s.ratePerSecond+'/s' : 'off'}</b><span>simulator</span></div></div>
+     <div class="note">charges published: ${b.chargesPublished}, failed: ${b.chargesFailed}, rated without a plan: ${b.ratedWithoutPlan}${b.processingDelayMs?`, <b>slow mode ${b.processingDelayMs} ms</b>`:''}</div>
+     ${f.recentAlerts.slice(0,2).map(x => `<div class="why" style="border-color:#B9251C"><b>FRAUD</b> ${esc(x.msisdn)}: ${x.internationalCalls} international calls in ${x.windowSeconds}s</div>`).join('')}
+     <div class="note"><b>Records per partition</b> (key = MSISDN)</div>` +
+    Object.entries(a.recordsByPartition).map(([p,n]) => `<div class="mono" style="white-space:nowrap">${esc(p.padEnd(14,' ')).replace(/ /g,'&nbsp;')} <span class="bar" style="width:${Math.round(n/max*140)}px"></span> ${n}</div>`).join('');
+}
+
+function renderStorage(list) {
+  const brokers = [...new Set(list.flatMap(s => Object.keys(s.bytesByBroker)))].sort();
+  $('storage').innerHTML = '<table><tr><th>Topic</th><th>All replicas</th>' + brokers.map(b => `<th>Broker ${b}</th>`).join('') + '<th>Largest partition replica</th></tr>' +
+    list.map(s => `<tr><td class="mono">${esc(s.topic)}</td><td><b>${bytes(s.totalBytesAllReplicas)}</b></td>` +
+      brokers.map(b => `<td>${bytes(s.bytesByBroker[b] || 0)}</td>`).join('') +
+      `<td>${bytes(Math.max(0, ...Object.values(s.bytesByPartition)))}</td></tr>`).join('') + '</table>';
+}
+
+function renderOffsets(o) {
+  $('offsets').innerHTML = `<div class="kv"><div><b>${o.readableRecords}</b><span>records still readable</span></div></div><table><tr><th>Partition</th><th>Log start</th><th>Log end</th><th>Readable</th></tr>` +
+    o.partitions.map(p => `<tr><td>${p.partition}</td><td><b>${p.logStartOffset}</b></td><td>${p.logEndOffset}</td><td>${p.readableRecords}</td></tr>`).join('') + '</table>';
+}
+
+function renderDrill(d) {
+  $('drill').innerHTML = `<table><tr><td>min.insync.replicas</td><td><b>${d.minInsyncReplicas}</b></td><td>ISR</td><td><b>[${d.isr}]</b> of replicas [${d.replicas}]</td></tr>
+    <tr><td>High watermark</td><td><b>${d.highWatermark}</b></td><td>Readable records</td><td><b>${d.visibleRecords}</b></td></tr></table>
+    ${d.belowMinInsync ? '<span class="pill bad">ISR below minimum: acks=all is rejected</span>' : '<span class="pill ok">ISR meets the minimum</span>'}
+    <div class="mono note">${d.lastVisible.map(esc).join('<br>')}</div>`;
+}
+
+let busy = false, tick = 0, lastDrill = null;
+async function refresh(forceDrill) {
+  if (busy) return; busy = true;
+  try {
+    // The drill state opens a throw-away consumer, so ask for it every third refresh only
+    const drillCall = (forceDrill || tick++ % 3 === 0) ? call('/api/drill/state') : Promise.resolve(lastDrill);
+    const [cluster, topics, groups, listeners, billing, fraud, analytics, sim, storage, plans, offsets, drill] = await Promise.allSettled([
+      call('/api/ops/cluster'), call('/api/ops/topics'), call('/api/ops/groups'), call('/api/listeners'),
+      call('/api/insights/billing'), call('/api/insights/fraud'), call('/api/insights/analytics'), call('/api/simulate'),
+      call('/api/ops/storage'), call('/api/plans'), call('/api/ops/topics/network.telemetry/offsets'), drillCall]);
+    const ok = r => r.status === 'fulfilled';
+    if (ok(cluster)) {
+      const c = cluster.value;
+      $('cluster').innerHTML = `cluster <b>${esc(c.clusterId)}</b> &middot; controller <b>${c.activeControllerId}</b><br>` +
+        c.brokers.map(b => `broker ${b.id} ${b.fenced ? '<b style="color:#ff8a80">DOWN</b>' : '<b>up</b>'}`).join(' &middot; ');
+    } else { $('cluster').textContent = 'cluster unreachable'; }
+    if (ok(topics)) renderTopics(topics.value);
+    if (ok(groups)) renderGroups(groups.value);
+    if (ok(listeners)) renderListeners(listeners.value);
+    if (ok(billing) && ok(fraud) && ok(analytics) && ok(sim)) renderResults(billing.value, fraud.value, analytics.value, sim.value);
+    if (ok(storage)) renderStorage(storage.value);
+    if (ok(plans)) $('plans').innerHTML = `In memory: <b>${plans.value.subscribers}</b> subscribers. Records read from the topic since this app started: <b>${plans.value.recordsReadSinceStart}</b>.`;
+    if (ok(offsets)) renderOffsets(offsets.value);
+    if (ok(drill) && drill.value) { lastDrill = drill.value; renderDrill(drill.value); }
+  } finally { busy = false; }
+}
+refresh(); setInterval(refresh, 3000);
+</script>
+</body>
+</html>
