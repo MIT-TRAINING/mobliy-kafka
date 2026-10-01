@@ -1,0 +1,52 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: cdr-billing-spring
+  config:
+    # bootstrap.servers and the SASL/SCRAM settings come from the same file the
+    # CLI uses with --command-config. Credentials never go into this file.
+    # Another file (for example a local cluster): --kafka.config=/path/file.properties
+    import: file:${kafka.config:${user.home}/kafka/apache.properties}
+  kafka:
+    bootstrap-servers: ${bootstrap.servers}
+    properties:
+      "[security.protocol]": ${security.protocol:PLAINTEXT}
+      "[sasl.mechanism]": ${sasl.mechanism:GSSAPI}
+      "[sasl.jaas.config]": ${sasl.jaas.config:}
+
+    producer:
+      # The production baseline (guide §3.4)
+      acks: all
+      compression-type: zstd
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        "[enable.idempotence]": true
+        "[linger.ms]": 10
+        "[delivery.timeout.ms]": 120000
+
+    consumer:
+      # A new group on a topic that already has history from Labs 01-02:
+      # start with records produced from now on
+      auto-offset-reset: latest
+      max-poll-records: 100
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+
+# Everything is named from your learner prefix: --lab.prefix=$ME
+lab:
+  topics:
+    cdr: ${lab.prefix}.cdr.voice
+    dlt: ${lab.prefix}.cdr.voice.dlt
+  groups:
+    billing: ${lab.prefix}.billing-spring
+  # Number of listener threads = consumers in the group
+  concurrency: 3
+
+logging:
+  level:
+    # Kafka clients are chatty at INFO; keep the lab output readable
+    org.apache.kafka: WARN
+    com.examples.kafka: INFO

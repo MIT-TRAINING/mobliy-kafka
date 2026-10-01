@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka Module 4 Visualizations</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .topics { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: 24px; }
+  .topic { display: block; text-decoration: none; color: var(--text); transition: border-color .15s, transform .15s; }
+  .topic:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .topic .num { font-family: var(--mono); color: var(--accent); font-size: 13px; font-weight: 600; }
+  .topic h3 { margin: 6px 0; }
+  .topic p { margin: 0 0 10px; color: var(--muted); font-size: 15px; }
+  .topic .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  ol.hands { margin: 0; padding-left: 20px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <span>Apache Kafka &amp; Confluent Kafka Administration</span>
+    <div class="nav"><a href="../module-03/index.html">← Module 3</a><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Module 4</div>
+  <h1>Producing &amp; Consuming Messages</h1>
+  <p class="lede">Interactive visualizations for each Module 4 topic. Each page has a hands-on simulation you can
+    play with, followed by a 5-question self-quiz with explanations.</p>
+  <p style="color:var(--muted);font-size:14px;margin:4px 0 0"><b style="color:var(--text)">Objective:</b> Administer and validate
+    message flow by producing and consuming via CLI and Java applications on Apache Kafka.</p>
+
+  <div class="topics">
+    <a class="card topic" href="01-producer-tuning.html">
+      <div class="num">01</div><h3>Producer configuration tuning</h3>
+      <p>Change <code>batch.size</code>, <code>linger.ms</code>, compression and load, watch batches fill and ship, then drop an ACK to see what idempotence protects you from.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="02-consumer-groups-offsets.html">
+      <div class="num">02</div><h3>Consumer groups, offsets &amp; rebalancing</h3>
+      <p>Add, remove and crash consumers in <code>billing-svc</code>, compare eager and cooperative rebalancing, and count how many records get reprocessed under each commit strategy.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="03-delivery-semantics.html">
+      <div class="num">03</div><h3>Delivery semantics</h3>
+      <p>Run the same CDR-to-billing pipeline as at-most-once, at-least-once and exactly-once, crash it mid-flight, and see which charges go missing or get billed twice.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="04-java-producer-consumer.html">
+      <div class="num">04</div><h3>Java producer &amp; consumer applications</h3>
+      <p>Build a real <code>KafkaProducer</code> / <code>KafkaConsumer</code> from options, read the generated Java, and run it to hit the exceptions admins get paged for.</p>
+      <div class="tags"><span class="pill">builder</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="05-error-handling-retries.html">
+      <div class="num">05</div><h3>Error handling &amp; retry patterns</h3>
+      <p>Feed transient failures and poison pills to a consumer and compare stop, skip, blocking retry and retry-topic + DLT strategies on lag, loss and ordering.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+  </div>
+
+  <h2>Hands-on for this module</h2>
+  <div class="card">
+    <ol class="hands">
+      <li>Build Java producer and consumer applications in VS Code (with GitHub Copilot)</li>
+      <li>Run applications against the shared Apache Kafka cluster on AWS</li>
+    </ol>
+  </div>
+</div>
+</body>
+</html>

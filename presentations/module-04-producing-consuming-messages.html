@@ -1,0 +1,1239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka Producers &amp; Consumers Deck</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* ---------- Tokens (same palette as the Module 1 deck) ---------- */
+:root {
+  --bg: #e9ecf1; --slide: #fbfbfd; --surface: #ffffff; --surface-2: #eef1f5; --border: #d8dde5;
+  --text: #1b2330; --muted: #5b6678; --accent: #2f6fdb; --accent-soft: #dce8fb;
+  --ok: #1f8a4c; --ok-soft: #dcf2e4; --bad: #c43b3b; --bad-soft: #f9e0e0; --warn: #b7791f; --warn-soft: #fbefd8;
+  --p0: #2f6fdb; --p1: #d0682a; --p2: #2a9d6f; --p3: #8a4fd1; --p4: #c2417b; --p5: #3a8fa8;
+  --grid: rgba(27, 35, 48, .045);
+  --shadow: 0 1px 2px rgba(20,30,50,.06), 0 6px 20px rgba(20,30,50,.06);
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0a0d12; --slide: #11151c; --surface: #1a1f28; --surface-2: #232a35; --border: #333c4a;
+    --text: #e6eaf0; --muted: #9aa5b5; --accent: #6b9cf0; --accent-soft: #22324f;
+    --ok: #4cc27e; --ok-soft: #1d3527; --bad: #ef7070; --bad-soft: #3d2222; --warn: #e0a84a; --warn-soft: #3a2f1c;
+    --p0: #6b9cf0; --p1: #ec8d52; --p2: #4cc29a; --p3: #ad84ec; --p4: #e8729f; --p5: #5dbbd4;
+    --grid: rgba(230, 234, 240, .035); --shadow: none; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0a0d12; --slide: #11151c; --surface: #1a1f28; --surface-2: #232a35; --border: #333c4a;
+  --text: #e6eaf0; --muted: #9aa5b5; --accent: #6b9cf0; --accent-soft: #22324f;
+  --ok: #4cc27e; --ok-soft: #1d3527; --bad: #ef7070; --bad-soft: #3d2222; --warn: #e0a84a; --warn-soft: #3a2f1c;
+  --p0: #6b9cf0; --p1: #ec8d52; --p2: #4cc29a; --p3: #ad84ec; --p4: #e8729f; --p5: #5dbbd4;
+  --grid: rgba(230, 234, 240, .035); --shadow: none; color-scheme: dark;
+}
+
+/* ---------- Stage & slides ---------- */
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--text); font-family: var(--sans); overflow: hidden; }
+code, .mono { font-family: var(--mono); }
+.viewport { position: fixed; inset: 0; display: grid; place-items: center; }
+.deck { position: relative; width: 1280px; height: 720px; transform-origin: center center; flex: none; }
+.slide {
+  position: absolute; inset: 0; padding: 44px 64px 60px; display: flex; flex-direction: column;
+  background: var(--slide); border-radius: 18px; box-shadow: var(--shadow); overflow: hidden;
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 32px 32px;
+  opacity: 0; visibility: hidden; transform: translateX(24px); transition: opacity .35s ease, transform .35s ease, visibility 0s .35s;
+}
+.slide.active { opacity: 1; visibility: visible; transform: none; transition: opacity .35s ease, transform .35s ease; }
+.slide.before { transform: translateX(-24px); }
+.slide::before { /* accent rail */
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px;
+  background: linear-gradient(var(--p0), var(--p3), var(--p1));
+}
+.foot {
+  position: absolute; left: 64px; right: 64px; bottom: 20px; display: flex; justify-content: space-between;
+  font-size: 13px; color: var(--muted); letter-spacing: .02em;
+}
+.foot b { color: var(--text); font-weight: 600; }
+
+.kicker { text-transform: uppercase; letter-spacing: .12em; font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px; }
+h1, h2 { margin: 0; letter-spacing: -.02em; }
+h2 { font-size: 38px; line-height: 1.12; font-weight: 800; }
+h2 .hl { color: var(--accent); }
+.sub { color: var(--muted); font-size: 18px; margin: 8px 0 0; max-width: 980px; line-height: 1.45; }
+.body { flex: 1; min-height: 0; margin-top: 22px; }
+.row { display: flex; gap: 20px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow);
+}
+.card h3 { margin: 0 0 6px; font-size: 17px; font-weight: 700; }
+.card p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.45; }
+.pill { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; background: var(--accent-soft); color: var(--accent); }
+.tag { display: inline-block; font-family: var(--mono); font-size: 12.5px; padding: 1px 7px; border-radius: 6px; background: var(--surface-2); color: var(--text); }
+.callout {
+  display: flex; gap: 14px; align-items: center; border-radius: 14px; padding: 14px 18px; font-size: 16px; line-height: 1.4;
+  background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.callout.warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.callout .big { font-size: 26px; font-weight: 800; color: var(--accent); flex: none; }
+.callout.warn .big { color: var(--warn); }
+
+/* ---------- SVG vocabulary ---------- */
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+svg text { font-family: var(--sans); fill: var(--text); font-size: 14px; }
+svg .t { font-weight: 600; font-size: 15px; }
+svg .m { fill: var(--muted); font-size: 12.5px; }
+svg .mono { font-family: var(--mono); }
+svg .acc { fill: var(--accent); }
+svg .box { fill: var(--surface); stroke: var(--border); stroke-width: 1.5; }
+svg .box2 { fill: var(--surface-2); stroke: var(--border); stroke-width: 1.2; }
+svg .frame { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 6 5; }
+svg .frame-m { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 5; }
+svg .ln { stroke: var(--muted); stroke-width: 1.6; fill: none; }
+svg .ln-soft { stroke: var(--border); stroke-width: 1.4; fill: none; }
+svg .ln-acc { stroke: var(--accent); stroke-width: 2; fill: none; }
+svg .arrow { marker-end: url(#arr); }
+svg .arrow-acc { marker-end: url(#arr-acc); }
+svg .hub { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 2; }
+svg .k0, svg .k1, svg .k2, svg .k3, svg .k4, svg .k5 { stroke-width: 1.8; }
+svg .k0 { fill: color-mix(in srgb, var(--p0) 22%, var(--surface)); stroke: var(--p0); }
+svg .k1 { fill: color-mix(in srgb, var(--p1) 22%, var(--surface)); stroke: var(--p1); }
+svg .k2 { fill: color-mix(in srgb, var(--p2) 22%, var(--surface)); stroke: var(--p2); }
+svg .k3 { fill: color-mix(in srgb, var(--p3) 22%, var(--surface)); stroke: var(--p3); }
+svg .k4 { fill: color-mix(in srgb, var(--p4) 22%, var(--surface)); stroke: var(--p4); }
+svg .k5 { fill: color-mix(in srgb, var(--p5) 22%, var(--surface)); stroke: var(--p5); }
+svg .kx { fill: var(--surface-2); stroke: var(--border); stroke-width: 1.4; }
+svg .ghost { fill: none; stroke: var(--border); stroke-width: 1.4; stroke-dasharray: 4 4; }
+svg .tomb { fill: var(--surface); stroke: var(--p1); stroke-width: 1.8; stroke-dasharray: 5 4; }
+svg .cons { fill: var(--ok-soft); stroke: var(--ok); stroke-width: 1.6; }
+svg .lag { fill: var(--warn-soft); stroke: var(--warn); stroke-width: 1.6; }
+svg .unrep { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.6; stroke-dasharray: 5 4; }
+svg .gone { fill: var(--bad-soft); stroke: var(--bad); stroke-width: 1.2; stroke-dasharray: 3 4; opacity: .7; }
+svg .d0 { fill: var(--p0); } svg .d1 { fill: var(--p1); } svg .d2 { fill: var(--p2); }
+svg .d3 { fill: var(--p3); } svg .d4 { fill: var(--p4); } svg .d5 { fill: var(--p5); }
+svg .cell-t { font-size: 12px; font-weight: 600; text-anchor: middle; }
+svg .off-t { font-size: 11px; fill: var(--muted); text-anchor: middle; font-family: var(--mono); }
+svg .mid { text-anchor: middle; }
+svg .end { text-anchor: end; }
+svg .bad-t { fill: var(--bad); } svg .ok-t { fill: var(--ok); } svg .warn-t { fill: var(--warn); }
+
+/* ---------- Slide specifics ---------- */
+.title-grid { display: grid; grid-template-columns: 1fr 580px; gap: 36px; align-items: center; height: 100%; }
+.title-grid h1 { font-size: 64px; line-height: 1.02; font-weight: 800; letter-spacing: -.03em; }
+.title-grid h1 span {
+  background: linear-gradient(90deg, var(--p0), var(--p3) 55%, var(--p1)); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.title-grid .lede { font-size: 20px; color: var(--muted); line-height: 1.45; margin: 20px 0 26px; max-width: 520px; }
+.chips { display: flex; gap: 10px; flex-wrap: wrap; }
+@keyframes drop { 0% { opacity: 0; transform: translateY(-40px); } 25%, 85% { opacity: 1; transform: none; } 100% { opacity: 0; transform: none; } }
+.new-cell { animation: drop 3s ease-out infinite; transform-box: fill-box; }
+
+.modmap { display: grid; grid-template-columns: repeat(10, 1fr); gap: 8px; }
+.mod { border-radius: 10px; padding: 10px 10px 12px; font-size: 13px; line-height: 1.3; background: var(--surface); border: 1px solid var(--border); min-height: 78px; }
+.mod b { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; letter-spacing: .06em; }
+.mod.now { background: var(--accent); color: #fff; border-color: var(--accent); box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 35%, transparent); }
+.mod.now b { color: rgba(255,255,255,.85); }
+.bands { display: grid; grid-template-columns: 1fr 4fr 4fr 1fr; gap: 8px; margin-top: 8px; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.bands div { border-top: 3px solid; padding-top: 6px; text-align: center; }
+
+.decouple { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 16px; }
+.decouple .card h3 { display: flex; align-items: center; gap: 8px; }
+.decouple .num { width: 26px; height: 26px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 13px; color: #fff; }
+
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 16px 18px; box-shadow: var(--shadow); display: flex; flex-direction: column; }
+.panel h3 { margin: 0; font-size: 20px; display: flex; align-items: center; gap: 10px; }
+.panel .cap { color: var(--muted); font-size: 15px; line-height: 1.45; margin: 4px 0 8px; }
+.panel .foot-note { margin-top: auto; font-size: 14px; color: var(--muted); border-top: 1px dashed var(--border); padding-top: 8px; }
+
+table.cmp { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14.5px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+table.cmp th, table.cmp td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+table.cmp tr:last-child td { border-bottom: 0; }
+table.cmp th { background: var(--surface-2); font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+table.cmp td:first-child { font-weight: 600; white-space: nowrap; }
+table.cmp td.k { color: var(--accent); font-weight: 600; }
+
+.quote { font-size: 28px; line-height: 1.3; font-weight: 700; letter-spacing: -.01em; margin: 0 0 18px; }
+.quote em { font-style: normal; color: var(--accent); }
+.event { font-family: var(--mono); font-size: 14px; line-height: 1.75; }
+.event .f { color: var(--muted); display: inline-block; width: 92px; }
+.event .v { color: var(--text); }
+.usecases { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.usecases span { font-size: 13px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); }
+
+.legend5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-top: 12px; }
+.legend5 .card { padding: 12px 14px; border-top: 4px solid var(--accent); }
+.legend5 .card h3 { font-size: 15px; }
+.legend5 .card p { font-size: 13.5px; }
+.cards4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 14px; }
+.cards4 .card { padding: 12px 14px; }
+.cards4 .card p { font-size: 14px; color: var(--text); }
+.cards4 .card p b { color: var(--accent); }
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.rule { display: flex; gap: 12px; align-items: flex-start; }
+.rule .ico { flex: none; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font-weight: 800; color: #fff; font-size: 15px; }
+.rule h3 { margin: 0 0 2px; font-size: 16px; }
+.rule p { margin: 0; font-size: 14px; color: var(--muted); line-height: 1.4; }
+
+.term {
+  background: #0d1117; color: #d6deeb; border-radius: 12px; font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
+  padding: 12px 14px; border: 1px solid #2a3240; white-space: pre; overflow: hidden;
+}
+.term .bar { display: flex; gap: 6px; margin: -2px 0 8px; }
+.term .bar i { width: 10px; height: 10px; border-radius: 50%; background: #ff5f57; }
+.term .bar i:nth-child(2) { background: #febc2e; } .term .bar i:nth-child(3) { background: #28c840; }
+.term .c { color: #7d8799; } .term .p { color: #7fd1a7; } .term .h { color: #82aaff; } .term .y { color: #ffcb6b; }
+.baseline { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+.baseline div { text-align: center; background: var(--surface-2); border-radius: 10px; padding: 8px 4px; }
+.baseline b { display: block; font-size: 24px; color: var(--accent); }
+.baseline span { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+
+.timeline { display: grid; grid-template-columns: repeat(6, 1fr); position: relative; margin-top: 14px; }
+.timeline::before { content: ""; position: absolute; left: 8%; right: 8%; top: 13px; height: 3px; background: linear-gradient(90deg, var(--muted), var(--accent)); border-radius: 2px; }
+.timeline .ev { text-align: center; position: relative; font-size: 13.5px; line-height: 1.35; padding: 0 6px; }
+.timeline .ev::before { content: ""; display: block; width: 16px; height: 16px; border-radius: 50%; background: var(--slide); border: 3px solid var(--accent); margin: 5px auto 8px; }
+.timeline .ev.key::before { background: var(--accent); }
+.timeline .ev b { display: block; font-size: 16px; }
+.timeline .ev span { color: var(--muted); }
+
+.labs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 14px; }
+.labs .card { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; }
+.labs .n { flex: none; font-weight: 800; font-size: 22px; color: var(--accent); line-height: 1; }
+
+.recap { display: grid; grid-template-columns: 1.25fr 1fr; gap: 24px; }
+.take { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-content: start; }
+.take .card { padding: 12px 14px; }
+.take .card h3 { font-size: 15px; display: flex; gap: 8px; align-items: baseline; }
+.take .card h3 i { font-style: normal; color: var(--accent); font-weight: 800; }
+.take .card p { font-size: 13.5px; }
+.quiz { display: flex; flex-direction: column; gap: 10px; }
+.q { position: relative; padding-right: 110px !important; cursor: pointer; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 11px 14px; font-size: 15px; transition: border-color .2s; }
+.q:hover { border-color: var(--accent); }
+.q .a { display: none; margin-top: 6px; color: var(--ok); font-size: 14px; font-weight: 500; }
+.q.open .a { display: block; }
+.q .hint { color: var(--muted); font-size: 12px; position: absolute; right: 14px; top: 13px; }
+.q.open .hint { display: none; }
+.next { margin-top: 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-radius: 14px; background: var(--accent); color: #fff; }
+.next b { font-size: 18px; }
+
+/* ---------- Chrome: controls, progress, notes ---------- */
+.progress { position: fixed; left: 0; top: 0; height: 4px; background: linear-gradient(90deg, var(--p0), var(--p3)); transition: width .3s; z-index: 5; }
+.controls { position: fixed; right: 16px; top: 12px; display: flex; gap: 6px; z-index: 5; }
+.controls button {
+  font: 600 13px var(--sans); color: var(--text); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 10px; cursor: pointer; opacity: .75;
+}
+.controls button:hover { opacity: 1; border-color: var(--accent); }
+.notes-panel {
+  position: fixed; left: 16px; right: 16px; bottom: 16px; max-height: 32vh; overflow: auto; z-index: 6; display: none;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; font-size: 15px; line-height: 1.5;
+  box-shadow: 0 10px 40px rgba(0,0,0,.25);
+}
+.notes-panel.show { display: block; }
+.notes-panel h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--accent); }
+aside.notes { display: none; }
+
+/* ---------- Print: one slide per page ---------- */
+@page { size: 1280px 720px; margin: 0; }
+@media print {
+  body { overflow: visible; background: none; }
+  .viewport { position: static; display: block; }
+  .deck { transform: none !important; width: 1280px; height: auto; }
+  .slide { position: relative; opacity: 1; visibility: visible; transform: none; height: 720px; border-radius: 0; box-shadow: none; break-after: page; transition: none; }
+  .controls, .progress, .notes-panel { display: none !important; }
+  .q .a { display: block; } .q .hint { display: none; }
+}
+
+/* ---------- Module 4 additions ---------- */
+svg .termbg { fill: #0d1117; stroke: #2a3240; stroke-width: 1; }
+svg .tt { font-family: var(--mono); font-size: 13px; fill: #d6deeb; }
+svg .tt-c { fill: #7d8799; } svg .tt-p { fill: #7fd1a7; } svg .tt-y { fill: #ffcb6b; } svg .tt-h { fill: #82aaff; } svg .tt-b { fill: #ef7070; }
+svg .halo { paint-order: stroke; stroke: var(--slide); stroke-width: 5px; stroke-linejoin: round; }
+svg .halo-s { paint-order: stroke; stroke: var(--surface); stroke-width: 5px; stroke-linejoin: round; }
+svg .badbox { fill: var(--bad-soft); stroke: var(--bad); stroke-width: 1.6; }
+.term.sm { font-size: 12px; line-height: 1.55; }
+.term .b { color: #ef7070; } .term .a { color: #c3a6ff; }
+.term { font-variant-ligatures: none; }
+table.cmp.tight { font-size: 13.5px; }
+table.cmp.tight th, table.cmp.tight td { padding: 7px 11px; }
+table.cmp.tight td:first-child { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+.rules2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-content: start; }
+.rules2 .card { padding: 12px 14px; border-left: 4px solid var(--accent); }
+.rules2 .card h3 { font-size: 15px; }
+.rules2 .card p { font-size: 13.5px; }
+/* Off-screen slides are not painted. Animations on them are paused in the script. */
+@media screen {
+  html.deck-ready .slide:not(.active) { content-visibility: hidden; contain-intrinsic-size: 1280px 720px; }
+}
+.slide { transition-duration: .16s, .16s, 0s; transition-delay: 0s, 0s, .16s; }
+</style>
+</head>
+<body>
+
+<!-- Shared SVG defs (markers) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" style="fill: var(--muted)"/>
+    </marker>
+    <marker id="arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" style="fill: var(--accent)"/>
+    </marker>
+    <linearGradient id="resp" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0" style="stop-color: var(--p1)"/>
+      <stop offset=".5" style="stop-color: var(--p0)"/>
+      <stop offset="1" style="stop-color: var(--p2)"/>
+    </linearGradient>
+  </defs>
+</svg>
+
+<div class="progress" id="progress"></div>
+<div class="viewport"><div class="deck" id="deck">
+
+<!-- ===================== 1. TITLE ===================== -->
+<section class="slide" data-title="Title">
+  <div class="title-grid">
+    <div>
+      <div class="kicker">Apache Kafka &amp; Confluent Kafka Administration · Module 4</div>
+      <h1>Producing &amp;<br><span>Consuming Messages</span></h1>
+      <p class="lede">Follow one record on its round trip, from send() to a committed offset, and learn which setting decides whether it is lost, duplicated or delivered once.</p>
+      <div class="chips">
+        <span class="pill">Beginner → Intermediate</span>
+        <span class="pill">5 topics · 2 hands-on labs</span>
+        <span class="pill">Apache Kafka 4.x · Java 21 · AWS</span>
+      </div>
+    </div>
+    <svg viewBox="0 0 580 380" role="img" aria-label="A producer fills a batch and sends it to the partition leader, which acknowledges it. A consumer polls the new records and moves its committed offset forward in __consumer_offsets.">
+      <g id="title-anim"></g>
+    </svg>
+  </div>
+  <aside class="notes">Module 3 set the broker's side of the contract: retention, replication factor and min.insync.replicas. Today you move to the clients that write and read the data. Point at the loop: send, batch, ack on top, then poll, process, commit on the bottom. Ask the room: in MQ, what removes a message after it is read, and what does that in Kafka?</aside>
+</section>
+
+<!-- ===================== 2. AGENDA ===================== -->
+<section class="slide" data-title="Agenda">
+  <div class="kicker">Today's route</div>
+  <h2>One record's <span class="hl">round trip</span>, from send() to commit</h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 250" role="img" aria-label="Agenda as a metro line with eight stops from the producer path to the hands-on">
+      <path id="metro" d="M60,125 L1098,125" style="stroke: var(--accent); stroke-width: 8; stroke-linecap: round; fill: none; opacity: .25"/>
+      <path d="M60,125 L1098,125" style="stroke: var(--accent); stroke-width: 8; stroke-linecap: round; fill: none; stroke-dasharray: 1 22"/>
+      <circle r="9" class="d2"><animateMotion dur="8s" repeatCount="indefinite"><mpath href="#metro"/></animateMotion></circle>
+      <g id="stops"></g>
+    </svg>
+    <div style="margin-top:6px">
+      <div class="kicker" style="color:var(--muted)">Where Module 4 sits in the 40-hour course</div>
+      <div class="modmap">
+        <div class="mod"><b>M1</b>Messaging &amp; Kafka fundamentals</div>
+        <div class="mod"><b>M2</b>Install, setup &amp; CLI</div>
+        <div class="mod"><b>M3</b>Config, storage &amp; retention</div>
+        <div class="mod now"><b>M4</b>Producing &amp; consuming</div>
+        <div class="mod"><b>M5</b>Cluster ops &amp; HA</div>
+        <div class="mod"><b>M6</b>Confluent platform</div>
+        <div class="mod"><b>M7</b>Security &amp; RBAC</div>
+        <div class="mod"><b>M8</b>Monitoring &amp; tuning</div>
+        <div class="mod"><b>M9</b>Troubleshooting &amp; message loss</div>
+        <div class="mod"><b>M10</b>Ecosystem, DR &amp; capstone</div>
+      </div>
+      <div class="bands">
+        <div style="border-color:var(--p0);color:var(--p0)">Model</div>
+        <div style="border-color:var(--p1);color:var(--p1)">Apache Kafka administration</div>
+        <div style="border-color:var(--p4);color:var(--p4)">Confluent Kafka</div>
+        <div style="border-color:var(--p2);color:var(--p2)">Capstone</div>
+      </div>
+    </div>
+  </div>
+  <aside class="notes">The first three stops are the producer half of the trip, stops four and five the consumer half, and semantics joins the two. Consumer lag comes back as a monitoring signal in Module 8, and lost or duplicated messages are the core of Module 9. Ask: who here has had to explain a duplicate payment or a missing record to the business?</aside>
+</section>
+
+<!-- ===================== 3. PRODUCER PIPELINE ===================== -->
+<section class="slide" data-title="Producer pipeline">
+  <div class="kicker">Topic 1 · Producer configuration tuning</div>
+  <h2>send() is <span class="hl">not a network call</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 250" role="img" aria-label="Your thread calls send. The record is serialized, a partition is chosen, and the record waits in a per-partition batch. A separate sender thread ships batches to the partition leaders and the callback reports the result.">
+      <g id="pipe"></g>
+    </svg>
+    <div class="cards4">
+      <div class="card"><p><b>Serialize.</b> Key and value become bytes. The broker never sees your Java object.</p></div>
+      <div class="card"><p><b>Partition.</b> Same key, same partition, so each MSISDN stays in order. No key: the sticky partitioner fills one batch at a time.</p></div>
+      <div class="card"><p><b>Accumulate.</b> Records wait in per-partition batches inside <code>buffer.memory</code>, 32 MB by default.</p></div>
+      <div class="card"><p><b>Send.</b> A background thread ships batches to the leaders. The callback gets the offset or the exception.</p></div>
+    </div>
+  </div>
+  <aside class="notes">Point at the two threads: your code on the left, the sender on the right. send() only serializes, picks a partition and drops the record into a batch; the network call happens later. That is why an app that exits without close() or flush() loses whatever is still in the accumulator. Ask: if the broker rejects the batch, where does your code find out?</aside>
+</section>
+
+<!-- ===================== 4. BATCHING ===================== -->
+<section class="slide" data-title="Batching">
+  <div class="kicker">Topic 1 · Producer configuration tuning · batch.size, linger.ms</div>
+  <h2>A batch leaves when it is <span class="hl">full or out of time</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 236" role="img" aria-label="With linger.ms 0 many tiny requests travel to the broker. With linger.ms 20 and a 64 KB batch, records fill one batch that travels as a single compressed request.">
+      <g id="batching"></g>
+    </svg>
+    <table class="cmp tight" style="margin-top:12px">
+      <thead><tr><th>Producer property</th><th>Default in 4.x</th><th>High-volume starting point</th><th>What it controls</th></tr></thead>
+      <tbody>
+        <tr><td>batch.size</td><td>16384 (16 KB)</td><td class="k">64–256 KB</td><td>Maximum bytes in one partition's batch</td></tr>
+        <tr><td>linger.ms</td><td>5 ms (0 before Kafka 4.0)</td><td class="k">10–50 ms</td><td>How long a batch waits for more records</td></tr>
+        <tr><td>compression.type</td><td>none</td><td class="k">lz4 or zstd</td><td>Compresses the whole batch (Module 3)</td></tr>
+        <tr><td>buffer.memory</td><td>32 MB</td><td class="k">raise with many partitions</td><td>Memory for all unsent batches</td></tr>
+        <tr><td>max.block.ms</td><td>60 s</td><td>keep</td><td>How long send() blocks when that memory is full</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <aside class="notes">A batch is per partition, so batch.size multiplied by the number of busy partitions is what fills buffer.memory. Raising linger.ms from 5 to 20 ms usually costs a few milliseconds and buys fuller batches, better compression, and fewer requests on every broker, so change one knob at a time and measure. Ask: a CDR loader sends 50,000 records a second, but each request carries one record. Which setting do you check first?</aside>
+</section>
+
+<!-- ===================== 5. ACKS AND RETRIES ===================== -->
+<section class="slide" data-title="Acks and retries">
+  <div class="kicker">Topic 1 · Producer configuration tuning · acks, retries</div>
+  <h2>Retries are bounded by <span class="hl">time, not count</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 190" role="img" aria-label="One send has a 120 second delivery timeout. It covers the linger, each attempt of up to 30 seconds, and the backoffs. Retriable errors are retried until an ack arrives or the timeout expires.">
+      <g id="budget"></g>
+    </svg>
+    <table class="cmp tight" style="margin-top:12px">
+      <thead><tr><th>acks</th><th>The leader answers after</th><th>A write can be lost when</th><th>Fits</th></tr></thead>
+      <tbody>
+        <tr><td>0</td><td>Nothing, the producer does not wait</td><td>Anything goes wrong, and you never know</td><td>Metrics you can afford to drop</td></tr>
+        <tr><td>1</td><td>Its own local write</td><td>The leader dies before a follower copies it</td><td>Rarely worth it</td></tr>
+        <tr><td>all (default)</td><td>Every in-sync replica has it, at least <code>min.insync.replicas</code></td><td>Never, with RF 3 and min ISR 2 (Module 3)</td><td class="k">CDRs, billing, anything that costs money</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <aside class="notes">retries defaults to 2147483647, so the real limit is delivery.timeout.ms, two minutes by default. It covers the linger, every attempt, and the backoffs in between. Retriable errors such as NOT_LEADER_OR_FOLLOWER during a leader election are handled inside the client; your callback only sees the final outcome. Ask: when a leader moves during a rolling restart in Module 5, will your application notice?</aside>
+</section>
+
+<!-- ===================== 6. IDEMPOTENCE ===================== -->
+<section class="slide" data-title="Idempotence">
+  <div class="kicker">Topic 1 · Producer configuration tuning · idempotence</div>
+  <h2>Idempotence turns a retry into a <span class="hl">harmless repeat</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 250" role="img" aria-label="Without idempotence, a retry after a lost ack writes the record twice. With idempotence, the broker recognises the producer ID and sequence number and acknowledges without writing again.">
+      <g id="idem"></g>
+    </svg>
+    <div class="rules2" style="margin-top:12px">
+      <div class="card" style="border-left-color:var(--ok)"><h3>On by default since Kafka 3.0</h3><p><code>enable.idempotence=true</code> together with <code>acks=all</code>. You get it for free as long as you don't turn it off.</p></div>
+      <div class="card" style="border-left-color:var(--bad)"><h3>An explicit acks=1 turns it off</h3><p>Idempotence needs <code>acks=all</code>, retries, and at most 5 in-flight requests. If your settings conflict, the default quietly switches off.</p></div>
+      <div class="card"><h3>Order is kept</h3><p>Up to 5 in-flight batches per connection still land in order, because the broker rejects any gap in the sequence.</p></div>
+      <div class="card" style="border-left-color:var(--warn)"><h3>One producer session only</h3><p>A restarted producer gets a new ID. Deduplicating across restarts, or over a read-process-write step, needs transactions.</p></div>
+    </div>
+  </div>
+  <aside class="notes">The ack was lost, not the write, so a plain retry duplicates the CDR. With idempotence, the broker tracks a producer ID and a sequence number for the last five batches on each partition, and it answers a repeat with an ack instead of a second write. Look for acks=1 in old config files: it silently switches the default off. Ask: does idempotence protect you if your own code catches the exception and calls send() again?</aside>
+</section>
+
+<!-- ===================== 7. CONSUMER GROUPS ===================== -->
+<section class="slide" data-title="Consumer groups">
+  <div class="kicker">Topic 2 · Consumer groups</div>
+  <h2>Inside a group, each partition has <span class="hl">one owner</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 280" role="img" aria-label="Six partitions of cdr.voice. Group billing has three consumers that each own two partitions. Group fraud has one consumer that reads all six partitions independently.">
+      <g id="groups"></g>
+    </svg>
+    <div class="callout warn" style="margin-top:14px">
+      <div class="big">!</div>
+      <div><b>MQ admins:</b> there are no competing consumers on one partition. A group can use at most as many consumers as the topic has partitions, and any extra consumer sits idle. Each group keeps its own offsets, so adding a group never takes records away from billing.</div>
+    </div>
+  </div>
+  <aside class="notes">group.id is the whole identity: same group means the partitions are shared out, a different group means another full copy of the stream. The group coordinator is one broker, and it stores each group's committed offsets in the internal __consumer_offsets topic; as you saw in Module 2, adding partitions later remaps keys, so size for the parallelism you will need. Ask: billing runs 8 instances on a 6-partition topic. What do the extra two do?</aside>
+</section>
+
+<!-- ===================== 8. POLL LOOP AND COMMITS ===================== -->
+<section class="slide" data-title="Commit strategies">
+  <div class="kicker">Topic 2 · Offset management and commit strategies</div>
+  <h2>The committed offset is a <span class="hl">bookmark</span>, not a delete</h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 250" role="img" aria-label="A consumer loops through poll, process and commit. On the partition, offsets up to 43 are committed, 44 to 46 have been polled but not committed, and the log ends at 50. A crash restarts the group at offset 44.">
+      <g id="loop"></g>
+    </svg>
+    <table class="cmp tight" style="margin-top:12px">
+      <thead><tr><th>Strategy</th><th>How it works</th><th>The catch</th></tr></thead>
+      <tbody>
+        <tr><td>auto commit (default)</td><td><code>enable.auto.commit=true</code>. poll() commits every <code>auto.commit.interval.ms</code>, 5 s by default</td><td>Duplicates after a crash. Records are lost if you hand them to another thread.</td></tr>
+        <tr><td>commitSync()</td><td>Auto commit off. Commit after the whole batch is processed</td><td>At-least-once. Blocks until the coordinator answers.</td></tr>
+        <tr><td>commitAsync()</td><td>Fast commit in the loop, then commitSync() on close or revoke</td><td>A failed async commit is not retried.</td></tr>
+        <tr><td>auto.offset.reset</td><td><code>latest</code> (default), <code>earliest</code>, or <code>none</code></td><td>Only applies when the group has no committed offset yet.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <aside class="notes">Consuming a record does not remove it; retention does, on the Module 3 schedule. The committed offset is the next offset the group will read, stored in __consumer_offsets, and lag is the log end minus that number. Whatever you polled but did not commit is read again after a crash, so design the processing to tolerate a repeat. Ask: with auto commit on, which records are at risk if the process is killed?</aside>
+</section>
+
+<!-- ===================== 9. LAG AND RESET ===================== -->
+<section class="slide" data-title="Lag and reset">
+  <div class="kicker">Topic 2 · Offset management</div>
+  <h2>Read the lag, then <span class="hl">move the bookmark</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 170" role="img" aria-label="On partition 1 the group has committed 1795 of 2410 offsets. Reset options move the bookmark to the earliest offset, to a point in time, back by 500, or to the latest offset.">
+      <g id="reset"></g>
+    </svg>
+    <div class="term sm" style="margin-top:12px"><div class="bar"><i></i><i></i><i></i></div><span class="p">$</span> kafka-consumer-groups.sh --bootstrap-server <span class="y">$APACHE</span> --command-config <span class="y">$CFG</span> --describe --group <span class="h">$ME.billing</span>
+GROUP        TOPIC           PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG    CONSUMER-ID
+l07.billing  l07.cdr.voice   0          1840            1840            <span class="p">0</span>      consumer-l07.billing-1-…
+l07.billing  l07.cdr.voice   1          1795            2410            <span class="b">615</span>    consumer-l07.billing-2-…
+<span class="c"># stop every consumer in the group first, or: "Assignments can only be reset if the group … is inactive"</span>
+<span class="p">$</span> kafka-consumer-groups.sh --bootstrap-server <span class="y">$APACHE</span> --command-config <span class="y">$CFG</span> --reset-offsets \
+    --group <span class="h">$ME.billing</span> --topic <span class="h">$ME.cdr.voice</span> --to-datetime <span class="y">2026-09-30T08:00:00.000</span> --dry-run
+<span class="p">$</span> <span class="c">…</span> the same command with <span class="a">--execute</span></div>
+  </div>
+  <aside class="notes">Lag is the gap between LOG-END-OFFSET and CURRENT-OFFSET, per partition. One partition lagging while the rest sit at zero usually means one slow consumer or one hot key. A reset rewrites the committed offset, so it only works while the group has no active members, and you always run --dry-run before --execute. Ask: billing shipped a bug at 08:00 and has now fixed it, so which reset option replays exactly the affected CDRs?</aside>
+</section>
+
+<!-- ===================== 10. REBALANCING ===================== -->
+<section class="slide" data-title="Rebalancing">
+  <div class="kicker">Topic 2 · Rebalancing</div>
+  <h2>Every rebalance is a <span class="hl">pause</span>. Keep it small.</h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 264" role="img" aria-label="A fourth consumer joins. Eager rebalancing revokes every partition from every consumer before reassigning. Cooperative rebalancing pauses only partition 5, which moves to the new consumer.">
+      <g id="rebal"></g>
+    </svg>
+    <div class="rules2" style="margin-top:12px">
+      <div class="card"><h3>Heartbeats stop</h3><p>No heartbeat for <code>session.timeout.ms</code>, 45 s by default, and the member is removed. That is usually a crash or a network break.</p></div>
+      <div class="card" style="border-left-color:var(--warn)"><h3>poll() comes too late</h3><p>More than <code>max.poll.interval.ms</code>, 5 min, between polls and the member is removed. The late commit then fails. Lower <code>max.poll.records</code> (500).</p></div>
+      <div class="card" style="border-left-color:var(--ok)"><h3>Static membership</h3><p>Set <code>group.instance.id</code> per instance. A restart that comes back within the session timeout triggers no rebalance.</p></div>
+      <div class="card" style="border-left-color:var(--p3)"><h3>New protocol in Kafka 4.0</h3><p><code>group.protocol=consumer</code> (KIP-848) lets the broker assign partitions incrementally. The client default is still <code>classic</code>.</p></div>
+    </div>
+  </div>
+  <aside class="notes">A rebalance happens whenever group membership or the topic's partitions change: a deploy, a crash, a scale-out; with eager assignment everybody drops everything first, while the cooperative-sticky assignor moves only what must move. The most common production cause is slow processing: the loop misses max.poll.interval.ms, the member is removed, and its commit fails. Ask: a rolling deploy of 6 billing pods triggers 12 rebalances. What would you set?</aside>
+</section>
+
+<!-- ===================== 11. DELIVERY SEMANTICS ===================== -->
+<section class="slide" data-title="Delivery semantics">
+  <div class="kicker">Topic 3 · Delivery semantics</div>
+  <h2>Where you commit decides <span class="hl">lost, twice, or once</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 256" role="img" aria-label="At-most-once commits before processing, so a crash loses the record. At-least-once processes before committing, so a crash processes it twice. Exactly-once writes results and offsets in one transaction.">
+      <g id="sem"></g>
+    </svg>
+    <table class="cmp tight" style="margin-top:12px">
+      <thead><tr><th>Semantics</th><th>Producer side</th><th>Consumer side</th><th>Telecom fit</th></tr></thead>
+      <tbody>
+        <tr><td>at-most-once</td><td><code>acks=0</code> or <code>1</code>, no retries</td><td>Commit, then process</td><td>Live dashboards, sampled network metrics</td></tr>
+        <tr><td>at-least-once</td><td><code>acks=all</code> + idempotence (the defaults)</td><td>Process, then commit. Deduplicate in the sink by key.</td><td class="k">CDR billing, the everyday choice</td></tr>
+        <tr><td>exactly-once</td><td><code>transactional.id</code>, commitTransaction()</td><td><code>isolation.level=read_committed</code></td><td>Kafka-to-Kafka steps: rating → billing topic</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <aside class="notes">Exactly-once in Kafka covers read-process-write inside Kafka: the output records and the input offsets commit atomically, and read_committed consumers never see an aborted transaction. Once you write to a database or call an API, you are back to at-least-once plus an idempotent write, for example an upsert keyed by the CDR ID. The shared cluster's ACLs cover your topic and group prefixes; if a transactional.id is refused there, run the transaction demo on your Module 2 cluster. Ask: which of your telecom flows can tolerate a duplicate, and which can tolerate a gap?</aside>
+</section>
+
+<!-- ===================== 12. JAVA APPLICATIONS ===================== -->
+<section class="slide" data-title="Java applications">
+  <div class="kicker">Topic 4 · Writing Kafka producer and consumer applications in Java</div>
+  <h2>One producer per app, <span class="hl">one consumer per thread</span></h2>
+  <div class="body" style="display:grid;grid-template-columns:450px 1fr;gap:24px">
+    <svg viewBox="0 0 470 440" role="img" aria-label="Three application threads share one thread-safe KafkaProducer. Each consumer thread owns its own KafkaConsumer and its own two partitions.">
+      <g id="threads"></g>
+    </svg>
+    <div class="term sm"><span class="c">// both apps: SASL settings from the lab VM, then the endpoint</span>
+<span class="h">Properties</span> p = new <span class="h">Properties</span>();
+p.load(<span class="h">Files</span>.newInputStream(<span class="h">Path</span>.of(HOME, <span class="y">"kafka/apache.properties"</span>)));
+p.put(<span class="y">"bootstrap.servers"</span>, <span class="y">"apache-kafka.lab.internal:9092"</span>);
+
+<span class="c">// ---- CdrProducer ----</span>
+p.put(<span class="y">"key.serializer"</span>,   <span class="h">StringSerializer</span>.class.getName());
+p.put(<span class="y">"value.serializer"</span>, <span class="h">StringSerializer</span>.class.getName());
+p.put(<span class="y">"linger.ms"</span>, <span class="y">"20"</span>);  p.put(<span class="y">"compression.type"</span>, <span class="y">"lz4"</span>);
+try (var producer = new <span class="h">KafkaProducer</span>&lt;String, String&gt;(p)) {
+  producer.send(new <span class="h">ProducerRecord</span>&lt;&gt;(ME + <span class="y">".cdr.voice"</span>, msisdn, json),
+      (meta, ex) -&gt; { if (ex != null) log.error(<span class="y">"not sent"</span>, ex); });
+}                                    <span class="c">// close() flushes open batches</span>
+
+<span class="c">// ---- BillingConsumer ---- (deserializers instead)</span>
+p.put(<span class="y">"group.id"</span>, ME + <span class="y">".billing"</span>);
+p.put(<span class="y">"enable.auto.commit"</span>, <span class="y">"false"</span>);
+p.put(<span class="y">"auto.offset.reset"</span>, <span class="y">"earliest"</span>);
+try (var consumer = new <span class="h">KafkaConsumer</span>&lt;String, String&gt;(p)) {
+  consumer.subscribe(<span class="h">List</span>.of(ME + <span class="y">".cdr.voice"</span>));
+  while (running) {
+    for (var r : consumer.poll(<span class="h">Duration</span>.ofMillis(500))) bill(r);
+    consumer.commitSync();           <span class="c">// after the batch: at-least-once</span>
+  }
+}</div>
+  </div>
+  <aside class="notes">The producer is thread-safe and expensive to create, so build one per application and share it. The consumer is not thread-safe, so run one per thread and scale by adding instances up to the partition count. Loading apache.properties keeps credentials out of the code, and for a clean shutdown, call consumer.wakeup() from a shutdown hook so the loop exits and close() leaves the group straight away. Ask: what happens to lag if bill() takes 2 seconds and max.poll.records is 500?</aside>
+</section>
+
+<!-- ===================== 13. ERROR HANDLING ===================== -->
+<section class="slide" data-title="Error handling">
+  <div class="kicker">Topic 5 · Error handling and retry patterns</div>
+  <h2>Let the client retry transient errors. <span class="hl">Park the poison.</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 252" role="img" aria-label="Producer: retriable errors are retried by the client; non-retriable errors reach the callback, where you log and park the record. Consumer: a failing record is retried in place a few times, then published to a dead-letter topic so the partition keeps moving.">
+      <g id="errors"></g>
+    </svg>
+    <div class="rules2" style="margin-top:12px">
+      <div class="card" style="border-left-color:var(--bad)"><h3>No resend loop around send()</h3><p>The client already retries. Your resend is a new record with a new sequence number, so idempotence cannot catch the duplicate.</p></div>
+      <div class="card" style="border-left-color:var(--warn)"><h3>Never retry a record forever</h3><p>An endless retry blocks the partition. The poll gap then passes <code>max.poll.interval.ms</code> and triggers a rebalance.</p></div>
+      <div class="card" style="border-left-color:var(--p4)"><h3>Dead-letter topic</h3><p>Publish the failed record to <code>cdr.voice.DLT</code> with the error in its headers, commit, and replay it after the fix.</p></div>
+      <div class="card"><h3>Frameworks do this for you</h3><p>In Spring Kafka, <code>DefaultErrorHandler</code> with <code>DeadLetterPublishingRecoverer</code> gives you retry, backoff and a DLT.</p></div>
+    </div>
+  </div>
+  <aside class="notes">On the producer side, sort errors into two buckets: retriable ones, such as a leader move or NOT_ENOUGH_REPLICAS, are the client's job. Non-retriable ones, such as RecordTooLargeException, a serialization error or a missing ACL, reach your callback and need a human. On the consumer side the pattern is retry a little, then dead-letter, so one bad CDR never stalls the whole partition. Ask: who owns the DLT, and who is paged when it grows?</aside>
+</section>
+
+<!-- ===================== 14. HANDS-ON ===================== -->
+<section class="slide" data-title="Hands-on">
+  <div class="kicker">Hands-on · Java producer and consumer on the shared AWS cluster</div>
+  <h2>Build it in VS Code, run it <span class="hl">against the real cluster</span></h2>
+  <div class="body">
+    <div style="display:grid;grid-template-columns:520px 1fr;gap:20px">
+      <svg viewBox="0 0 520 300" role="img" aria-label="From the laptop, VS Code with Copilot connects over Remote-SSH to the lab VM, which runs one producer and three consumers against the shared four-broker Apache Kafka cluster using SASL/SCRAM.">
+        <g id="labenv"></g>
+      </svg>
+      <div class="term sm"><div class="bar"><i></i><i></i><i></i></div><span class="c"># (laptop) VS Code → Remote-SSH → learner@lab-lNN, then on the VM:</span>
+<span class="p">$</span> export APACHE=apache-kafka.lab.internal:9092 ME=lNN \
+         CFG=~/kafka/apache.properties
+<span class="p">$</span> kafka-topics.sh --bootstrap-server <span class="y">$APACHE</span> --command-config <span class="y">$CFG</span> \
+    --create --topic <span class="h">$ME.cdr.voice</span> --partitions 6 --replication-factor 3 \
+    --config min.insync.replicas=<span class="y">2</span>
+<span class="c"># Maven project with kafka-clients, scaffolded with Copilot</span>
+<span class="p">$</span> mvn -q compile exec:java -Dexec.mainClass=<span class="h">lab.CdrProducer</span>
+<span class="p">$</span> mvn -q compile exec:java -Dexec.mainClass=<span class="h">lab.BillingConsumer</span> <span class="c"># ×3 tabs</span>
+<span class="p">$</span> kafka-consumer-groups.sh --bootstrap-server <span class="y">$APACHE</span> --command-config <span class="y">$CFG</span> \
+    --describe --group <span class="h">$ME.billing</span>
+<span class="c"># stop all three consumers, then replay from the start</span>
+<span class="p">$</span> kafka-consumer-groups.sh <span class="c">…</span> --reset-offsets --group <span class="h">$ME.billing</span> \
+    --topic <span class="h">$ME.cdr.voice</span> --to-earliest <span class="a">--execute</span></div>
+    </div>
+    <div class="labs" style="grid-template-columns:1fr 1fr">
+      <div class="card"><span class="n">01</span><div><h3>Build in VS Code with Copilot</h3><p>A keyed CDR producer with a callback, and a consumer with manual commits. Check what Copilot generates against today's defaults.</p></div></div>
+      <div class="card"><span class="n">02</span><div><h3>Run on the shared AWS cluster</h3><p>Start three consumers in <code>$ME.billing</code>, watch the rebalance and the lag, then reset offsets and replay.</p></div></div>
+    </div>
+  </div>
+  <aside class="notes">labs/module-04 is not in the repo yet, so these commands are the runtime companion for the deck, and every topic and group must start with your prefix or the ACLs refuse it. The Spring Boot versions in labs/module-03/spring-boot-kafka-producer and spring-boot-kafka-consumer point at a local Docker cluster and show the same ideas through a framework. Watch the CONSUMER-ID column change as you start the second and third consumer. Ask: what does --describe show while all three consumers are stopped?</aside>
+</section>
+
+<!-- ===================== 15. RECAP ===================== -->
+<section class="slide" data-title="Recap">
+  <div class="kicker">Wrap-up</div>
+  <h2>Key takeaways, and a quick self-check</h2>
+  <div class="body recap">
+    <div class="take">
+      <div class="card"><h3><i>01</i>send() is asynchronous</h3><p>Batches leave at <code>batch.size</code> or <code>linger.ms</code>. Read the callback and close the producer.</p></div>
+      <div class="card"><h3><i>02</i>Time bounds retries</h3><p><code>delivery.timeout.ms</code>, 2 min by default, ends retrying, not the retry count.</p></div>
+      <div class="card"><h3><i>03</i>Keep idempotence on</h3><p>It is the default with <code>acks=all</code>. Don't set <code>acks=1</code> and don't write a resend loop.</p></div>
+      <div class="card"><h3><i>04</i>One owner per partition</h3><p>A group's parallelism stops at the partition count. Each group has its own offsets.</p></div>
+      <div class="card"><h3><i>05</i>Commit after processing</h3><p>At-least-once with an idempotent sink is the workhorse. Use transactions for Kafka-to-Kafka steps.</p></div>
+      <div class="card"><h3><i>06</i>Keep the loop moving</h3><p>A slow poll loop triggers rebalances. Park poison records in a DLT.</p></div>
+    </div>
+    <div>
+      <div class="quiz">
+        <div class="q"><span class="hint">click to reveal</span>A topic has 6 partitions and group <code>billing</code> runs 8 consumers. What do the extra two do?<div class="a">They sit idle as standbys. To use more than 6 consumers, you need more partitions.</div></div>
+        <div class="q"><span class="hint">click to reveal</span>You set <code>acks=1</code> "for speed". What else changed without telling you?<div class="a">Idempotence switched off, so retries can now write duplicates. You can also lose writes if the leader fails.</div></div>
+        <div class="q"><span class="hint">click to reveal</span>The consumer commits before processing, then crashes mid-batch. Which semantics is that?<div class="a">At-most-once. The uncommitted work is skipped for good on restart.</div></div>
+        <div class="q"><span class="hint">click to reveal</span><code>--reset-offsets --execute</code> fails and says the group is not inactive. Why?<div class="a">Consumers in the group are still running. Stop every member, then run the reset again.</div></div>
+      </div>
+      <div class="next"><div><div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;opacity:.85">Next up</div><b>Module 5: Cluster operations, replication &amp; high availability</b></div><span style="font-size:26px">→</span></div>
+    </div>
+  </div>
+  <aside class="notes">Run the self-check as a poll before you reveal each answer. Then open VS Code on your lab VM and start Lab 01. Module 5 moves partitions and restarts brokers underneath these clients, so keep your producer and consumer running: you will watch them ride through it.</aside>
+</section>
+</div></div>
+
+<div class="notes-panel" id="notesPanel"><h4>Speaker notes</h4><div id="notesText"></div></div>
+<div class="controls">
+  <button id="prev" aria-label="Previous slide">←</button>
+  <button id="counter" aria-label="Slide number" disabled style="cursor:default"></button>
+  <button id="next" aria-label="Next slide">→</button>
+  <button id="notesBtn" title="Speaker notes (N)">Notes</button>
+  <button id="themeBtn" title="Toggle theme (T)">Theme</button>
+  <button id="fsBtn" title="Fullscreen (F)">⛶</button>
+</div>
+
+<script>
+(function () {
+  const NS = "http://www.w3.org/2000/svg";
+  const el = (tag, attrs = {}, parent, text) => {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (text != null) n.textContent = text;
+    if (parent) parent.appendChild(n);
+    return n;
+  };
+  const txt = (parent, x, y, s, cls, lh = 14) => {
+    const lines = String(s).split("\n");
+    const t = el("text", { x, y: y - ((lines.length - 1) * lh) / 2, class: cls }, parent);
+    lines.forEach((l, i) => el("tspan", { x, dy: i ? lh : 0 }, t, l));
+    return t;
+  };
+  const dot = (parent, cls, path, dur, begin = 0, r = 7) => {
+    const c = el("circle", { r, class: cls }, parent);
+    el("animateMotion", { dur: dur + "s", begin: begin + "s", repeatCount: "indefinite", path }, c);
+    return c;
+  };
+  // A dot that travels a path only between fractions t0..t1 of a shared cycle
+  const seqDot = (parent, cls, path, dur, t0, t1, r = 7) => {
+    const c = el("circle", { r, class: cls, opacity: 0 }, parent);
+    el("animateMotion", { dur: dur + "s", repeatCount: "indefinite", keyPoints: "0;0;1;1", keyTimes: `0;${t0};${t1};1`, calcMode: "linear", path }, c);
+    el("animate", { attributeName: "opacity", values: "0;1;0", keyTimes: `0;${t0};${t1}`, dur: dur + "s", calcMode: "discrete", repeatCount: "indefinite" }, c);
+    return c;
+  };
+  // Show a node from fraction t of the cycle until near the end
+  const appear = (node, t, dur = 8, until = 0.94) =>
+    el("animate", { attributeName: "opacity", values: "0;1;0", keyTimes: `0;${t};${until}`, dur: dur + "s", calcMode: "discrete", repeatCount: "indefinite" }, node);
+  // Show a node only during one phase of a multi-phase cycle
+  const phase = (node, i, n, dur) => {
+    const vals = Array.from({ length: n }, (_, k) => (k === i ? 1 : 0)).join(";");
+    const kt = Array.from({ length: n }, (_, k) => (k / n).toFixed(4)).join(";");
+    el("animate", { attributeName: "opacity", values: vals, keyTimes: kt, dur: dur + "s", calcMode: "discrete", repeatCount: "indefinite" }, node);
+  };
+
+  const beat = (node, i, n, dur) => {
+    const vals = Array.from({ length: n + 1 }, (_, k) => (k === i || (k === n && i === n - 1) ? 1 : 0)).join(";");
+    const kt = Array.from({ length: n + 1 }, (_, k) => (k / n).toFixed(4)).join(";");
+    el("animate", { attributeName: "opacity", values: vals, keyTimes: kt, dur: dur + "s", calcMode: "discrete", repeatCount: "indefinite" }, node);
+  };
+  const R = (p, x, y, w, h, cls) => el("rect", { x, y, width: w, height: h, rx: 10, class: cls }, p);
+  const T = (p, x, y, s, cls) => el("text", { x, y, class: cls || "t" }, p, s);
+
+  /* ---- Slide 1: the round trip ---- */
+  const ta = document.getElementById("title-anim");
+  const TD = 8;
+  el("path", { d: "M485,40 C 470,4 90,4 75,40", class: "ln-soft arrow", style: "stroke-dasharray:4 4" }, ta);
+  T(ta, 280, 30, "ack once the ISR has it", "m mid");
+  R(ta, 10, 40, 130, 64, "k1");
+  T(ta, 75, 68, "Producer", "cell-t");
+  T(ta, 75, 88, "send()", "m mid mono");
+  R(ta, 170, 40, 200, 64, "box2");
+  for (let i = 0; i < 4; i++) {
+    const g = el("g", {}, ta);
+    R(g, 182 + i * 46, 52, 38, 40, "k1");
+    appear(g, .06 + i * .08, TD, .44);
+    seqDot(ta, "d1", "M140,72 L180,72", TD, .02 + i * .08, .06 + i * .08, 5);
+  }
+  el("path", { d: "M140,72 L168,72", class: "ln arrow" }, ta);
+  el("path", { d: "M370,72 L398,72", class: "ln arrow" }, ta);
+  T(ta, 270, 124, "batch · fills for linger.ms", "m mid");
+  R(ta, 400, 40, 170, 64, "hub");
+  T(ta, 485, 68, "Leader", "t mid");
+  T(ta, 485, 88, "cdr.voice-0", "m mid mono");
+  seqDot(ta, "d1", "M370,72 L398,72", TD, .44, .5, 9);
+  seqDot(ta, "d2", "M485,40 C 470,4 90,4 75,40", TD, .56, .7, 6);
+  T(ta, 10, 146, "The log: offsets 0 … 9", "t");
+  el("path", { d: "M485,104 L485,154", class: "ln arrow" }, ta);
+  seqDot(ta, "d1", "M485,104 L485,154", TD, .5, .56, 6);
+  for (let i = 0; i < 10; i++) {
+    const x = 10 + i * 56;
+    const c = R(ta, x, 160, 50, 48, i < 6 ? "cons" : i < 8 ? "k0" : "k1");
+    if (i >= 8) appear(c, .56, TD, .99);
+    T(ta, x + 25, 226, String(i), "off-t");
+  }
+  const bar = el("g", {}, ta);
+  el("rect", { x: 341, y: 156, width: 4, height: 56, rx: 2, style: "fill:var(--p3)" }, bar);
+  T(bar, 343, 150, "committed", "m mid").setAttribute("style", "fill:var(--p3);font-weight:600");
+  el("animateTransform", { attributeName: "transform", type: "translate", values: "0 0;0 0;112 0;112 0", keyTimes: "0;.78;.86;1", dur: TD + "s", repeatCount: "indefinite" }, bar);
+  R(ta, 10, 270, 160, 64, "k2");
+  T(ta, 90, 298, "Consumer", "cell-t");
+  T(ta, 90, 318, "group billing", "m mid");
+  const pollP = "M400,234 C 400,270 260,302 172,302";
+  el("path", { d: pollP, class: "ln-soft", style: "stroke-dasharray:4 4" }, ta);
+  seqDot(ta, "d2", pollP, TD, .6, .74, 6);
+  R(ta, 390, 270, 180, 64, "k3");
+  T(ta, 480, 298, "__consumer_offsets", "cell-t mono");
+  T(ta, 480, 318, "billing → 8", "m mid mono");
+  el("path", { d: "M170,322 L388,322", class: "ln arrow" }, ta);
+  seqDot(ta, "d3", "M170,322 L388,322", TD, .76, .86, 6);
+  T(ta, 290, 368, "send → batch → ack  ·  poll → process → commit", "m mid");
+
+  /* ---- Slide 2: agenda stops ---- */
+  const stops = [
+    ["Producer path", "send() and batching"], ["Acks & retries", "a time budget"], ["Idempotence", "safe retries"],
+    ["Groups", "one owner, rebalance"], ["Offsets", "commit and reset"], ["Semantics", "lost, twice, once"],
+    ["Java & errors", "apps and DLT"], ["Hands-on", "Java on AWS"]
+  ];
+  const sg = document.getElementById("stops");
+  const step = 1038 / (stops.length - 1);
+  stops.forEach(([a, b], i) => {
+    const x = 60 + i * step, up = i % 2 === 0, last = i === stops.length - 1;
+    el("circle", { cx: x, cy: 125, r: 18, style: `fill:${last ? "var(--p2)" : "var(--slide)"};stroke:${last ? "var(--p2)" : "var(--accent)"};stroke-width:4` }, sg);
+    T(sg, x, 131, last ? "▶" : String(i + 1), "t mid");
+    sg.lastChild.setAttribute("style", `fill:${last ? "#fff" : "var(--accent)"};font-size:15px`);
+    T(sg, x, up ? 68 : 182, a, "t mid");
+    T(sg, x, up ? 86 : 200, b, "m mid");
+  });
+
+  /* ---- Slide 3: producer pipeline ---- */
+  const pp = document.getElementById("pipe");
+  [[0, "Your thread", "send(record)", "k1"], [190, "Serializer", "key, value → bytes", "box"], [380, "Partitioner", "hash(key) % 6", "box"]]
+    .forEach(([x, a, b, cls], i) => {
+      R(pp, x, 70, 150, 80, cls);
+      T(pp, x + 75, 104, a, "t mid");
+      T(pp, x + 75, 126, b, "m mid" + (i ? " mono" : ""));
+      if (i < 2) {
+        const p = `M${x + 150},110 L${x + 188},110`;
+        el("path", { d: p, class: "ln arrow" }, pp);
+        dot(pp, "d1", p, 1.2, -i * .4, 5);
+      }
+    });
+  T(pp, 75, 58, "returns at once", "m mid acc");
+  el("path", { d: "M530,110 L568,110", class: "ln arrow" }, pp);
+  dot(pp, "d1", "M530,110 L568,110", 1.2, -.8, 5);
+  R(pp, 570, 10, 240, 190, "box2");
+  T(pp, 690, 32, "RecordAccumulator", "t mid");
+  [3, 1, 2, 0, 2, 1].forEach((n, i) => {
+    const y = 46 + i * 26;
+    T(pp, 586, y + 14, "P" + i, "m mono");
+    for (let j = 0; j < n; j++) R(pp, 614 + j * 44, y, 38, 18, "k" + i).setAttribute("rx", 4);
+    if (!n) T(pp, 614, y + 14, "empty", "m");
+  });
+  el("path", { d: "M810,110 L848,110", class: "ln arrow" }, pp);
+  dot(pp, "d3", "M810,110 L848,110", 1.4, 0, 5);
+  R(pp, 850, 70, 130, 80, "k3");
+  T(pp, 915, 104, "Sender thread", "t mid");
+  T(pp, 915, 126, "network I/O", "m mid");
+  [0, 1, 2].forEach(i => {
+    const y = 10 + i * 68;
+    R(pp, 1020, y, 140, 56, "hub");
+    T(pp, 1090, y + 24, "broker " + (i + 1), "t mid");
+    T(pp, 1090, y + 43, "leader of P" + i + ", P" + (i + 3), "m mid");
+    const p = `M980,110 C 1000,110 1000,${y + 28} 1018,${y + 28}`;
+    el("path", { d: p, class: "ln arrow" }, pp);
+    dot(pp, "d3", p, 1.6, -i * .5, 5);
+  });
+  const cb = "M915,150 C 915,240 75,240 75,152";
+  el("path", { d: cb, class: "ln-soft arrow", style: "stroke-dasharray:5 4" }, pp);
+  dot(pp, "d2", cb, 4, 0, 5);
+  T(pp, 495, 244, "callback(metadata, exception) runs on the sender thread", "m mid halo");
+
+  /* ---- Slide 4: batching lanes ---- */
+  const bt = document.getElementById("batching");
+  T(bt, 0, 16, "linger.ms = 0 · every record ships at once", "t");
+  R(bt, 0, 30, 130, 56, "k1");
+  T(bt, 65, 63, "Producer", "cell-t");
+  R(bt, 1030, 30, 130, 56, "box");
+  T(bt, 1095, 63, "Leader", "cell-t");
+  el("path", { d: "M130,58 L1028,58", class: "ln-soft arrow" }, bt);
+  for (let i = 0; i < 8; i++) dot(bt, "d1", "M130,58 L1028,58", 2.4, -i * .3, 4);
+  T(bt, 580, 100, "many tiny requests · little to compress", "m mid");
+  T(bt, 0, 132, "linger.ms = 20 · batch.size = 64 KB", "t");
+  R(bt, 0, 150, 130, 56, "k1");
+  T(bt, 65, 183, "Producer", "cell-t");
+  R(bt, 170, 142, 290, 72, "box2");
+  const BD = 6;
+  for (let i = 0; i < 8; i++) {
+    const g = el("g", {}, bt);
+    R(g, 182 + i * 34, 152, 28, 52, "k1").setAttribute("rx", 5);
+    appear(g, .04 + i * .065, BD, .6);
+    seqDot(bt, "d1", "M130,178 L178,178", BD, .01 + i * .065, .04 + i * .065, 4);
+  }
+  el("path", { d: "M130,178 L168,178", class: "ln arrow" }, bt);
+  R(bt, 1030, 150, 130, 56, "box");
+  T(bt, 1095, 183, "Leader", "cell-t");
+  el("path", { d: "M460,178 L1028,178", class: "ln-acc arrow-acc" }, bt);
+  seqDot(bt, "d1", "M460,178 L1028,178", BD, .6, .85, 13);
+  T(bt, 745, 166, "one request, compressed as a whole", "m mid");
+  T(bt, 315, 230, "ships when full or when linger.ms is up", "m mid");
+
+  /* ---- Slide 5: delivery time budget ---- */
+  const bd = document.getElementById("budget");
+  T(bd, 0, 18, "One send, one time budget: delivery.timeout.ms = 120 s  (not to scale)", "t");
+  el("path", { d: "M74,58 L74,50 L324,50 L324,58", class: "ln-soft" }, bd);
+  T(bd, 199, 44, "request.timeout.ms ≤ 30 s per attempt", "m mid");
+  [[0, 70, "linger", "5 ms", "k1"], [74, 250, "attempt 1", "NOT_LEADER_OR_FOLLOWER", "lag"], [328, 60, "backoff", "100 ms", "kx"],
+   [392, 250, "attempt 2", "NOT_ENOUGH_REPLICAS", "lag"], [646, 70, "backoff", "≤ 1 s", "kx"], [720, 200, "attempt 3", "ack ✓", "cons"],
+   [924, 236, "unused budget", "", "ghost"]].forEach(([x, w, a, b, cls]) => {
+    R(bd, x, 62, w, 48, cls);
+    T(bd, x + w / 2, 82, a, "cell-t" + (cls === "ghost" ? " m" : ""));
+    if (b) T(bd, x + w / 2, 99, b, "m mid mono").setAttribute("style", "font-size:11px" + (cls === "cons" ? ";fill:var(--ok);font-weight:600" : ""));
+  });
+  el("path", { d: "M1158,54 L1158,122", style: "stroke:var(--bad);stroke-width:2.5" }, bd);
+  T(bd, 1160, 138, "deadline → TimeoutException in the callback", "m end bad-t");
+  T(bd, 0, 138, "send()", "m mono");
+  seqDot(bd, "d1", "M4,118 L916,118", 7, .02, .8, 6);
+  T(bd, 580, 172, "retries = 2147483647 by default: the clock ends retrying, not the counter", "m mid");
+
+  /* ---- Slide 6: idempotence, off vs on ---- */
+  const id = document.getElementById("idem");
+  const ID = 8;
+  [[0, false], [590, true]].forEach(([x0, on]) => {
+    R(id, x0, 0, 570, 250, "box");
+    T(id, x0 + 16, 28, on ? "enable.idempotence = true (default)" : "enable.idempotence = false", "t");
+    T(id, x0 + 554, 28, on ? "PID 42 · seq 7" : "no sequence numbers", "m end mono");
+    R(id, x0 + 16, 70, 130, 70, "k1");
+    T(id, x0 + 81, 100, "Producer", "cell-t");
+    T(id, x0 + 81, 120, on ? "batch seq 7" : "batch A", "m mid mono");
+    R(id, x0 + 300, 50, 250, 130, "hub");
+    T(id, x0 + 425, 74, "Leader · cdr.voice-0", "t mid");
+    const send = `M${x0 + 146},92 L${x0 + 298},92`, ack = `M${x0 + 298},118 L${x0 + 146},118`;
+    el("path", { d: send, class: "ln arrow" }, id);
+    el("path", { d: ack, class: "ln arrow", style: "stroke-dasharray:5 4" }, id);
+    T(id, x0 + 222, 84, "send · retry", "m mid");
+    [["…", "cons"], ["…", "cons"], ["A", "k1"], ["A", on ? "" : "badbox"]].forEach(([s, cls], j) => {
+      if (!cls) return;
+      const g = el("g", {}, id);
+      R(g, x0 + 316 + j * 48, 92, 44, 40, cls);
+      T(g, x0 + 338 + j * 48, 117, s, "cell-t" + (cls === "badbox" ? " bad-t" : ""));
+      T(g, x0 + 338 + j * 48, 150, String(41 + j), "off-t");
+      if (j === 2) appear(g, .2, ID, .97);
+      if (j === 3) appear(g, .64, ID, .97);
+    });
+    seqDot(id, "d1", send, ID, .02, .2, 6);
+    seqDot(id, "d2", `M${x0 + 298},118 L${x0 + 222},118`, ID, .22, .34, 6);
+    const x = el("path", { d: `M${x0 + 214},110 l16,16 M${x0 + 230},110 l-16,16`, style: "stroke:var(--bad);stroke-width:3" }, id);
+    appear(x, .34, ID, .97);
+    const lost = T(id, x0 + 222, 146, "ack lost", "m mid bad-t");
+    appear(lost, .34, ID, .97);
+    seqDot(id, "d1", send, ID, .44, .62, 6);
+    seqDot(id, "d2", ack, ID, .68, .82, 6);
+    const res = T(id, x0 + 425, 170, on ? "seq 7 seen: ack, no write" : "written twice", "m mid " + (on ? "ok-t" : "bad-t"));
+    res.setAttribute("style", "font-weight:600");
+    appear(res, .64, ID, .97);
+    T(id, x0 + 16, 214, on ? "The broker remembers the last 5 batches" : "The ack was lost, not the write.", "m");
+    T(id, x0 + 16, 234, on ? "per producer and partition, and skips repeats." : "The retry stores the same CDR a second time.", "m");
+  });
+
+  /* ---- Slide 7: consumer groups ---- */
+  const gr = document.getElementById("groups");
+  T(gr, 580, 14, "cdr.voice · 6 partitions", "t mid");
+  for (let i = 0; i < 6; i++) {
+    R(gr, 490, 30 + i * 40, 180, 32, "k" + i);
+    T(gr, 580, 51 + i * 40, "P" + i, "cell-t");
+  }
+  R(gr, 0, 24, 330, 254, "frame");
+  T(gr, 0, 14, "group billing · 3 consumers", "t");
+  for (let j = 0; j < 3; j++) {
+    R(gr, 20, 40 + j * 78, 290, 60, "k2");
+    T(gr, 40, 66 + j * 78, "consumer " + (j + 1), "t");
+    T(gr, 40, 86 + j * 78, "P" + 2 * j + " · P" + (2 * j + 1), "m mono");
+  }
+  el("rect", { x: 830, y: 24, width: 330, height: 254, rx: 10, class: "frame", style: "stroke:var(--p4)" }, gr);
+  T(gr, 1160, 14, "group fraud · 1 consumer", "t end");
+  R(gr, 850, 110, 290, 80, "k4");
+  T(gr, 870, 142, "fraud consumer", "t");
+  T(gr, 870, 164, "reads all six partitions", "m");
+  for (let i = 0; i < 6; i++) {
+    const y = 46 + i * 40, j = Math.floor(i / 2), cy = 70 + j * 78;
+    const pl = `M490,${y} C 410,${y} 400,${cy} 312,${cy}`;
+    const pr = `M670,${y} C 760,${y} 760,150 848,150`;
+    el("path", { d: pl, class: "ln-soft" }, gr);
+    el("path", { d: pr, class: "ln-soft" }, gr);
+    dot(gr, "d" + i, pl, 2.2, -i * .35, 4.5);
+    dot(gr, "d" + i, pr, 2.6, -i * .4, 4.5);
+  }
+  T(gr, 165, 272, "own offsets", "m mid");
+  T(gr, 995, 272, "own offsets", "m mid");
+
+  /* ---- Slide 8: poll loop and bookmark ---- */
+  const lp = document.getElementById("loop");
+  el("circle", { cx: 190, cy: 125, r: 88, class: "ln-soft", style: "stroke-width:2" }, lp);
+  dot(lp, "d2", "M190,37 A88,88 0 1,1 189.9,37", 5, 0, 6);
+  T(lp, 190, 120, "one loop per consumer", "m mid");
+  T(lp, 190, 138, "≤ 5 min per turn", "m mid");
+  [[190, 37, "poll()", "k2"], [266, 169, "process", "k0"], [114, 169, "commit", "k3"]].forEach(([x, y, s, cls]) => {
+    R(lp, x - 60, y - 18, 120, 36, cls);
+    T(lp, x, y + 5, s, "cell-t mono");
+  });
+  T(lp, 400, 24, "cdr.voice-3, as consumer 2 sees it", "t");
+  for (let i = 0; i < 10; i++) {
+    const x = 400 + i * 74;
+    R(lp, x, 70, 66, 56, i < 4 ? "cons" : i < 7 ? "unrep" : "box");
+    T(lp, x + 33, 144, String(40 + i), "off-t");
+  }
+  el("path", { d: "M692,58 L692,134", style: "stroke:var(--p3);stroke-width:3" }, lp);
+  T(lp, 692, 50, "committed = 44", "m mid").setAttribute("style", "fill:var(--p3);font-weight:600");
+  el("path", { d: "M914,58 L914,134", style: "stroke:var(--accent);stroke-width:3" }, lp);
+  T(lp, 914, 50, "position = 47", "m mid acc").setAttribute("style", "font-weight:600");
+  T(lp, 1136, 50, "log end = 50", "m end");
+  el("path", { d: "M692,156 L692,164 L1136,164 L1136,156", class: "ln-soft" }, lp);
+  T(lp, 914, 182, "lag = 50 − 44 = 6", "m mid");
+  const crash = T(lp, 400, 214, "Crash now: the group restarts at 44, so 44–46 are processed again.", "m warn-t");
+  crash.setAttribute("style", "font-weight:600");
+  T(lp, 400, 238, "green: committed · dashed blue: polled, not committed · white: not fetched yet", "m");
+
+  /* ---- Slide 9: reset map ---- */
+  const rs = document.getElementById("reset");
+  T(rs, 0, 18, "Where each --reset-offsets option puts the bookmark (partition 1)", "t");
+  R(rs, 40, 70, 660, 40, "cons");
+  R(rs, 700, 70, 420, 40, "lag");
+  T(rs, 450, 95, "read and committed", "cell-t");
+  T(rs, 910, 95, "lag 615", "cell-t");
+  [[44, "--to-earliest", true], [560, "--shift-by -500", true], [1116, "--to-latest", true], [300, "--to-datetime", false], [700, "current: 1795", false]]
+    .forEach(([x, s, up]) => {
+      el("path", { d: up ? `M${x},52 L${x},68` : `M${x},112 L${x},128`, class: "ln-acc" + (up ? " arrow-acc" : "") }, rs);
+      T(rs, x, up ? 44 : 146, s, "mono " + (x === 44 ? "" : x === 1116 ? "end" : "mid") + " acc").setAttribute("style", "font-size:12.5px;font-weight:600");
+    });
+  T(rs, 300, 164, "first offset at or after that time", "m mid");
+  T(rs, 700, 164, "committed offset, log end 2410", "m mid");
+  el("path", { d: "M700,68 C 680,52 590,52 566,66", class: "ln-soft arrow", style: "stroke-dasharray:4 4" }, rs);
+  const mk = el("g", {}, rs);
+  el("circle", { cx: 700, cy: 90, r: 8, class: "d3", style: "stroke:var(--surface);stroke-width:3" }, mk);
+  el("animateTransform", { attributeName: "transform", type: "translate", values: "0 0;-656 0;-400 0;-140 0;416 0", keyTimes: "0;.2;.4;.6;.8", calcMode: "discrete", dur: "10s", repeatCount: "indefinite" }, mk);
+
+  /* ---- Slide 10: eager vs cooperative rebalance ---- */
+  const rb = document.getElementById("rebal");
+  const RD = 12;
+  T(rb, 0, 80, "Eager", "t");
+  T(rb, 0, 100, "classic, range", "m");
+  T(rb, 0, 200, "Cooperative", "t");
+  T(rb, 0, 220, "cooperative-sticky", "m");
+  const own0 = [[0, 1], [2, 3], [4, 5], []], own2 = [[0, 1], [2, 3], [4], [5]];
+  const rows = [
+    { y: 36, phases: [{ own: own0 }, { own: [[], [], [], []], note: "all partitions revoked · nobody consumes", bad: true }, { own: own2 }] },
+    { y: 156, phases: [{ own: own0 }, { own: own0, paused: 5, note: "only P5 pauses · the rest keep consuming" }, { own: own2 }] }
+  ];
+  const heads = ["① consumer 4 joins the group", "② revoke", "③ assign and resume"];
+  [0, 1, 2].forEach(pi => {
+    const g = el("g", {}, rb);
+    beat(g, pi, 3, RD);
+    T(g, 170, 16, heads[pi], "t acc");
+    rows.forEach(row => {
+      const ph = row.phases[pi];
+      for (let j = 0; j < 4; j++) {
+        const x = 170 + j * 250, joining = pi === 0 && j === 3;
+        R(g, x, row.y, 230, 84, joining ? "ghost" : "k2");
+        T(g, x + 14, row.y + 26, "consumer " + (j + 1) + (joining ? " · joining" : ""), joining ? "t m" : "t");
+        ph.own[j].forEach((p, k) => {
+          const paused = ph.paused === p;
+          const c = R(g, x + 14 + k * 58, row.y + 40, 50, 30, paused ? "ghost" : "k" + p);
+          c.setAttribute("rx", 6);
+          T(g, x + 39 + k * 58, row.y + 60, "P" + p, "cell-t" + (paused ? " m" : ""));
+        });
+      }
+      if (ph.note) T(g, 170, row.y + 104, ph.note, "m " + (ph.bad ? "bad-t" : "warn-t")).setAttribute("style", "font-weight:600");
+    });
+  });
+
+  /* ---- Slide 11: delivery semantics ---- */
+  const sm = document.getElementById("sem");
+  const SD = 7;
+  const cols = [
+    ["At-most-once", "commit first", [["① poll()", "k2"], ["② commitSync()", "k3"], ["③ bill(record)", "k0"]], "crash after ②: never billed → lost", "bad-t", true],
+    ["At-least-once", "process first", [["① poll()", "k2"], ["② bill(record)", "k0"], ["③ commitSync()", "k3"]], "crash after ②: billed again → duplicate", "warn-t", true],
+    ["Exactly-once", "one transaction", [["① poll()", "k2"], ["② send results + offsets", "k0"], ["③ commitTransaction()", "k3"]], "crash: abort, read_committed sees nothing", "ok-t", false]
+  ];
+  cols.forEach(([title, tag, steps, out, oc, crashes], ci) => {
+    const x = ci * 395;
+    R(sm, x, 0, 370, 256, "box");
+    T(sm, x + 18, 28, title, "t");
+    T(sm, x + 352, 28, tag, "m end");
+    steps.forEach(([s, cls], k) => {
+      R(sm, x + 34, 44 + k * 62, 318, 44, cls);
+      T(sm, x + 50, 71 + k * 62, s, "mono").setAttribute("style", "font-size:13px;font-weight:600");
+    });
+    if (!crashes) {
+      el("rect", { x: x + 26, y: 100, width: 334, height: 120, rx: 12, class: "frame" }, sm);
+      T(sm, x + 352, 234, "atomic", "m end acc");
+    }
+    const path = `M${x + 18},66 L${x + 18},${crashes ? 150 : 190}`;
+    el("path", { d: `M${x + 18},60 L${x + 18},196`, class: "ln-soft" }, sm);
+    seqDot(sm, "d2", path, SD, .05, .5, 6);
+    if (crashes) {
+      const cr = el("g", {}, sm);
+      el("path", { d: `M${x + 11},152 l14,14 M${x + 25},152 l-14,14`, style: "stroke:var(--bad);stroke-width:3" }, cr);
+      T(cr, x + 352, 164, "crash between ② and ③", "m end bad-t");
+      appear(cr, .5, SD, .97);
+    } else {
+      const ok = T(sm, x + 8, 212, "✓", "t ok-t");
+      appear(ok, .5, SD, .97);
+    }
+    T(sm, x + 18, crashes ? 240 : 250, out, "m " + oc).setAttribute("style", "font-weight:600");
+  });
+
+  /* ---- Slide 12: thread model ---- */
+  const th = document.getElementById("threads");
+  T(th, 0, 18, "KafkaProducer: thread-safe, share one", "t");
+  [0, 1, 2].forEach(k => {
+    R(th, 0, 34 + k * 44, 120, 34, "box2");
+    T(th, 60, 56 + k * 44, "thread " + (k + 1), "cell-t");
+    const p = `M120,${51 + k * 44} C 160,${51 + k * 44} 160,91 188,91`;
+    el("path", { d: p, class: "ln arrow" }, th);
+    dot(th, "d1", p, 1.8, -k * .6, 4.5);
+  });
+  R(th, 190, 56, 130, 70, "k1");
+  T(th, 255, 86, "KafkaProducer", "cell-t");
+  T(th, 255, 106, "one per app", "m mid");
+  R(th, 380, 56, 90, 70, "hub");
+  T(th, 425, 96, "cluster", "cell-t");
+  el("path", { d: "M320,91 L378,91", class: "ln-acc arrow-acc" }, th);
+  dot(th, "d1", "M320,91 L378,91", 1, 0, 5);
+  T(th, 0, 200, "KafkaConsumer: not thread-safe, one per thread", "t");
+  [0, 1, 2].forEach(k => {
+    const y = 216 + k * 64;
+    R(th, 0, y, 120, 48, "box2");
+    T(th, 60, y + 29, "thread " + (k + 1), "cell-t");
+    el("path", { d: `M120,${y + 24} L148,${y + 24}`, class: "ln" }, th);
+    R(th, 150, y, 150, 48, "k2");
+    T(th, 225, y + 29, "KafkaConsumer", "cell-t");
+    [0, 1].forEach(m => {
+      const p = 2 * k + m;
+      R(th, 330 + m * 70, y + 8, 60, 32, "k" + p).setAttribute("rx", 6);
+      T(th, 360 + m * 70, y + 29, "P" + p, "cell-t");
+    });
+    dot(th, "d2", `M330,${y + 24} L302,${y + 24}`, 1.4, -k * .45, 4.5);
+  });
+  T(th, 0, 426, "close() in finally: flushes batches, leaves the group", "m");
+
+  /* ---- Slide 13: error handling flows ---- */
+  const er = document.getElementById("errors");
+  const ED = 8;
+  T(er, 0, 18, "Producer: who retries?", "t");
+  R(er, 0, 40, 150, 56, "k1");
+  T(er, 75, 66, "send() fails", "cell-t");
+  T(er, 75, 84, "error from broker", "m mid");
+  el("polygon", { points: "270,34 340,68 270,102 200,68", class: "box" }, er);
+  T(er, 270, 73, "retriable?", "cell-t");
+  R(er, 390, 30, 170, 76, "cons");
+  T(er, 475, 62, "client retries", "cell-t");
+  T(er, 475, 82, "until delivery.timeout.ms", "m mid");
+  R(er, 170, 140, 200, 76, "badbox");
+  T(er, 270, 172, "callback gets it", "cell-t bad-t");
+  T(er, 270, 192, "too large · auth · serializer", "m mid");
+  R(er, 410, 140, 150, 76, "box");
+  T(er, 485, 172, "log, alert, park", "cell-t");
+  T(er, 485, 192, "never loop", "m mid");
+  const e1 = "M150,68 L198,68", eYes = "M340,68 L388,68", eNo = "M270,102 L270,138", ePark = "M370,178 L408,178";
+  [e1, eYes, eNo, ePark].forEach(d => el("path", { d, class: "ln arrow" }, er));
+  T(er, 364, 60, "yes", "m mid ok-t");
+  T(er, 282, 126, "no", "m bad-t");
+  seqDot(er, "d1", e1, ED, .02, .12, 5);
+  seqDot(er, "d2", eYes, ED, .14, .26, 5);
+  seqDot(er, "d1", e1, ED, .42, .52, 5);
+  seqDot(er, "d4", eNo, ED, .54, .66, 5);
+  seqDot(er, "d4", ePark, ED, .68, .8, 5);
+  T(er, 0, 244, "retriable: NOT_LEADER_OR_FOLLOWER · NOT_ENOUGH_REPLICAS", "m mono");
+
+  T(er, 600, 18, "Consumer: a record that keeps failing", "t");
+  R(er, 600, 40, 150, 56, "k2");
+  T(er, 675, 66, "bill(record)", "cell-t mono");
+  T(er, 675, 84, "throws", "m mid");
+  R(er, 790, 40, 170, 56, "lag");
+  T(er, 875, 66, "retry in place", "cell-t");
+  T(er, 875, 84, "3× with backoff", "m mid");
+  R(er, 790, 140, 170, 76, "k4");
+  T(er, 875, 172, "cdr.voice.DLT", "cell-t mono");
+  T(er, 875, 192, "record + error headers", "m mid");
+  R(er, 1000, 140, 160, 76, "cons");
+  T(er, 1080, 172, "commit, move on", "cell-t");
+  T(er, 1080, 192, "partition keeps flowing", "m mid");
+  const c1 = "M750,68 L788,68", cBack = "M830,96 C 830,126 700,126 700,98", cDlt = "M875,96 L875,138", cCommit = "M960,178 L998,178";
+  el("path", { d: c1, class: "ln arrow" }, er);
+  el("path", { d: cBack, class: "ln-soft arrow", style: "stroke-dasharray:4 4" }, er);
+  el("path", { d: cDlt, class: "ln arrow" }, er);
+  el("path", { d: cCommit, class: "ln arrow" }, er);
+  T(er, 604, 134, "transient: next try works", "m ok-t");
+  T(er, 887, 124, "still fails", "m bad-t");
+  seqDot(er, "d2", c1, ED, .04, .14, 5);
+  seqDot(er, "d2", cBack, ED, .16, .32, 5);
+  seqDot(er, "d4", c1, ED, .44, .54, 5);
+  seqDot(er, "d4", cDlt, ED, .56, .68, 5);
+  seqDot(er, "d4", cCommit, ED, .7, .82, 5);
+  T(er, 600, 244, "poison pill: bad JSON, unknown MSISDN, schema drift", "m");
+
+  /* ---- Slide 14: lab environment ---- */
+  const lb = document.getElementById("labenv");
+  R(lb, 0, 0, 520, 70, "box2");
+  T(lb, 16, 28, "Your laptop", "t");
+  T(lb, 16, 50, "VS Code + GitHub Copilot", "m");
+  T(lb, 504, 28, "Remote-SSH", "m end acc");
+  el("path", { d: "M260,70 L260,96", class: "ln-acc arrow-acc" }, lb);
+  dot(lb, "d0", "M260,70 L260,96", 1.4, 0, 5);
+  R(lb, 0, 98, 520, 96, "box");
+  T(lb, 16, 122, "lab-lNN VM · Java 21 · Maven", "t");
+  R(lb, 16, 136, 150, 44, "k1");
+  T(lb, 91, 163, "CdrProducer", "cell-t mono");
+  [0, 1, 2].forEach(k => {
+    R(lb, 186 + k * 110, 136, 100, 44, "k2");
+    T(lb, 236 + k * 110, 163, "Billing #" + (k + 1), "cell-t");
+  });
+  el("path", { d: "M240,194 L240,222", class: "ln arrow" }, lb);
+  el("path", { d: "M280,222 L280,194", class: "ln arrow" }, lb);
+  dot(lb, "d1", "M240,194 L240,222", 1.4, 0, 5);
+  dot(lb, "d2", "M280,222 L280,194", 1.4, -.7, 5);
+  T(lb, 294, 213, "SASL/SCRAM · $CFG", "m");
+  R(lb, 0, 224, 520, 76, "box2");
+  T(lb, 16, 246, "Shared Apache Kafka · apache-kafka.lab.internal:9092", "t");
+  [0, 1, 2, 3].forEach(k => {
+    R(lb, 16 + k * 126, 258, 114, 32, "k3");
+    T(lb, 73 + k * 126, 279, "broker " + (k + 1), "cell-t");
+  });
+
+  /* ---- Quiz ---- */
+  document.querySelectorAll(".q").forEach(q => q.addEventListener("click", () => q.classList.toggle("open")));
+
+  /* ---- Deck navigation ---- */
+  const deck = document.getElementById("deck");
+  const slides = [...document.querySelectorAll(".slide")];
+  const N = slides.length;
+  slides.forEach((s, i) => {
+    const f = document.createElement("div");
+    f.className = "foot";
+    f.innerHTML = `<span><b>Module 4</b> · Producing &amp; Consuming Messages</span><span>${String(i + 1).padStart(2, "0")} / ${N}</span>`;
+    s.appendChild(f);
+  });
+  let cur = 0;
+  function fit() {
+    const s = Math.min(window.innerWidth / 1320, window.innerHeight / 750);
+    deck.style.transform = `scale(${s})`;
+  }
+  function motion() {
+    for (let k = 0; k < N; k++) {
+      const on = k === cur;
+      slides[k].querySelectorAll("svg").forEach(svg => {
+        if (!svg.pauseAnimations) return;
+        if (on) svg.unpauseAnimations();
+        else svg.pauseAnimations();
+      });
+    }
+  }
+  function go(i) {
+    cur = Math.max(0, Math.min(N - 1, i));
+    slides.forEach((s, k) => { s.classList.toggle("active", k === cur); s.classList.toggle("before", k < cur); });
+    document.getElementById("counter").textContent = `${cur + 1} / ${N}`;
+    document.getElementById("progress").style.width = ((cur + 1) / N * 100) + "%";
+    const n = slides[cur].querySelector("aside.notes");
+    document.getElementById("notesText").textContent = n ? n.textContent : "";
+    if (location.hash !== "#" + (cur + 1)) history.replaceState(null, "", "#" + (cur + 1));
+    motion();
+  }
+  function toggleTheme() {
+    const r = document.documentElement;
+    const dark = r.dataset.theme ? r.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    r.dataset.theme = dark ? "light" : "dark";
+    try { localStorage.setItem("m4-deck-theme", r.dataset.theme); } catch (e) {}
+  }
+  try { const t = localStorage.getItem("m4-deck-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  const toggleNotes = () => document.getElementById("notesPanel").classList.toggle("show");
+  const fullscreen = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.();
+
+  document.getElementById("prev").onclick = () => go(cur - 1);
+  document.getElementById("next").onclick = () => go(cur + 1);
+  document.getElementById("notesBtn").onclick = toggleNotes;
+  document.getElementById("themeBtn").onclick = toggleTheme;
+  document.getElementById("fsBtn").onclick = fullscreen;
+  document.addEventListener("keydown", e => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const k = e.key;
+    if (["ArrowRight", "ArrowDown", "PageDown", " ", "Enter"].includes(k)) { e.preventDefault(); go(cur + 1); }
+    else if (["ArrowLeft", "ArrowUp", "PageUp", "Backspace"].includes(k)) { e.preventDefault(); go(cur - 1); }
+    else if (k === "Home") go(0);
+    else if (k === "End") go(N - 1);
+    else if (k === "n" || k === "N") toggleNotes();
+    else if (k === "t" || k === "T") toggleTheme();
+    else if (k === "f" || k === "F") fullscreen();
+  });
+  let tx = null;
+  document.addEventListener("touchstart", e => { tx = e.touches[0].clientX; }, { passive: true });
+  document.addEventListener("touchend", e => {
+    if (tx == null) return; const dx = e.changedTouches[0].clientX - tx;
+    if (Math.abs(dx) > 50) go(cur + (dx < 0 ? 1 : -1)); tx = null;
+  });
+  window.addEventListener("resize", fit);
+  window.addEventListener("hashchange", () => go((parseInt(location.hash.slice(1), 10) || 1) - 1));
+  document.querySelectorAll(".slide svg").forEach(svg => { if (svg.pauseAnimations) svg.pauseAnimations(); });
+  fit();
+  go((parseInt(location.hash.slice(1), 10) || 1) - 1);
+  document.documentElement.classList.add("deck-ready");
+})();
+</script>
+</body>
+</html>

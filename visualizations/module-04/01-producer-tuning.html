@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Producer Configuration Tuning</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  #cfgerr { display: none; }
+  #cfgerr.show { display: block; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 4 · Producing &amp; Consuming Messages</a>
+    <div class="nav"><span>1 / 5</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 1</div>
+  <h1>Producer configuration tuning</h1>
+  <p class="lede"><code>send()</code> doesn't put a record on the wire. It drops it into a per-partition batch that ships when
+    the batch is <b>full</b> (<code>batch.size</code>) or has <b>waited long enough</b> (<code>linger.ms</code>). Change the load and the
+    knobs below, watch requests per second and latency move, then drop an ACK to see what idempotence is for.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Load</span>
+      <div class="seg" role="group" aria-label="Load" id="loadSeg">
+        <button data-v="50" aria-pressed="false">trickle 50/s</button>
+        <button data-v="1000" aria-pressed="true">steady 1k/s</button>
+        <button data-v="20000" aria-pressed="false">burst 20k/s</button>
+      </div>
+      <span class="ctl-label"><code>batch.size</code></span>
+      <div class="seg" role="group" aria-label="batch.size" id="batchSeg">
+        <button data-v="4" aria-pressed="false">4 KB</button>
+        <button data-v="16" aria-pressed="true">16 KB</button>
+        <button data-v="64" aria-pressed="false">64 KB</button>
+      </div>
+      <span class="ctl-label"><code>linger.ms</code></span>
+      <div class="seg" role="group" aria-label="linger.ms" id="lingerSeg">
+        <button data-v="0" aria-pressed="false">0</button>
+        <button data-v="5" aria-pressed="true">5</button>
+        <button data-v="20" aria-pressed="false">20</button>
+        <button data-v="100" aria-pressed="false">100</button>
+      </div>
+    </div>
+    <div class="controls">
+      <span class="ctl-label"><code>compression.type</code></span>
+      <div class="seg" role="group" aria-label="compression.type" id="compSeg">
+        <button data-v="none" aria-pressed="true">none</button>
+        <button data-v="lz4" aria-pressed="false">lz4</button>
+        <button data-v="zstd" aria-pressed="false">zstd</button>
+      </div>
+      <span class="ctl-label"><code>acks</code></span>
+      <div class="seg" role="group" aria-label="acks" id="acksSeg">
+        <button data-v="1" aria-pressed="false">1</button>
+        <button data-v="all" aria-pressed="true">all</button>
+      </div>
+      <span class="ctl-label"><code>enable.idempotence</code></span>
+      <div class="seg" role="group" aria-label="enable.idempotence" id="idemSeg">
+        <button data-v="true" aria-pressed="true">true</button>
+        <button data-v="false" aria-pressed="false">false</button>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="primary" id="pause">Pause</button>
+      <button class="danger" id="dropAck">Lose the next ACK</button>
+      <span class="pill" id="verdict"></span>
+    </div>
+    <div class="callout warn" id="cfgerr"><b>ConfigException at startup:</b> <code>Must set acks to all in order to use the
+      idempotent producer. Otherwise we cannot guarantee idempotence.</code> — you set <code>enable.idempotence=true</code>
+      explicitly with <code>acks=1</code>, so <code>new KafkaProducer(props)</code> throws. Set <code>acks=all</code> or turn
+      idempotence off.</div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 340" role="img" aria-label="Producer record accumulator with three partition batches sending to broker leaders"></svg></div>
+    <div class="stats" id="stats"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>The six knobs, and what each one trades</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Setting</th><th>Kafka 4.x default</th><th>Raise it to get</th><th>Cost</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">batch.size</td><td class="mono">16384</td><td>Fewer, larger requests; better compression</td><td>More memory per partition; only fills if load is high or linger allows it</td></tr>
+        <tr><td class="mono">linger.ms</td><td class="mono">5 <em>(was 0 before 4.0)</em></td><td>Fuller batches at low/medium load</td><td>Up to <code>linger.ms</code> added latency per record</td></tr>
+        <tr><td class="mono">compression.type</td><td class="mono">none</td><td>Less network, disk and replication traffic</td><td>Producer/consumer CPU; <code>lz4</code> is cheap, <code>zstd</code> compresses hardest</td></tr>
+        <tr><td class="mono">acks</td><td class="mono">all</td><td>Durability — see Module 3, Topic 5</td><td>Waits for the ISR, so a few ms more per request</td></tr>
+        <tr><td class="mono">retries / delivery.timeout.ms</td><td class="mono">2147483647 / 120000</td><td>Survive leader elections and brief outages</td><td>Without idempotence, retries can create duplicates</td></tr>
+        <tr><td class="mono">enable.idempotence</td><td class="mono">true</td><td>No duplicates from retries, per-partition order kept</td><td>Needs <code>acks=all</code>, <code>retries&gt;0</code>, <code>max.in.flight.requests.per.connection≤5</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>How idempotence works:</b> the broker gives each producer a <b>producer ID</b>, and the producer numbers
+    every batch per partition. If a retried batch arrives with a sequence number the leader already appended, the broker
+    acknowledges it <b>without writing it again</b>. Try "Lose the next ACK" with idempotence on and off.</div>
+  <div class="callout warn"><b>Admin gotcha:</b> <code>retries</code> is not the real limit. The producer keeps retrying until
+    <code>delivery.timeout.ms</code> (2 minutes by default) runs out, then fails the <code>send()</code> callback with a
+    <code>TimeoutException</code>. If an app says records "expired after 120000 ms", look at broker health and
+    <code>NOT_ENOUGH_REPLICAS</code> errors, not at the retry count.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="index.html"><small>← Back</small>Module overview</a>
+    <a class="next" href="02-consumer-groups-offsets.html"><small>Next →</small>Consumer groups, offsets &amp; rebalancing</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), logEl = document.getElementById('log'), statsEl = document.getElementById('stats');
+const TICK = 50, VSTEP = 5;              // 50 ms real = 5 ms virtual → 10× slow motion
+const RATIO = { none: 1, lz4: .5, zstd: .3 };
+const S = { rate: 1000, cap: 16, linger: 5, comp: 'none', acks: 'all', idem: true, paused: false, dropNext: false };
+let vt, lanes, M, carry, lastLog = 0, flying = [false, false, false], nodes = {};
+
+function resetCounters() {
+  vt = 0; carry = 0;
+  lanes = [0, 1, 2].map(() => ({ n: 0, first: 0 }));
+  M = { batches: 0, recs: 0, wait: 0, bytes: 0, dups: 0, appended: [0, 0, 0], seq: [0, 0, 0] };
+}
+const blocked = () => S.idem && S.acks !== 'all';
+
+function scene() {
+  svg.innerHTML = '';
+  el('rect', { x: 16, y: 40, width: 150, height: 270, rx: 12, fill: 'var(--surface)', stroke: 'var(--border)' }, svg);
+  el('text', { x: 30, y: 66, 'font-weight': 700, text: 'billing-svc' }, svg);
+  el('text', { x: 30, y: 86, 'font-size': 12, class: 'muted', text: 'KafkaProducer' }, svg);
+  ['send(record)', '→ serializer', '→ partitioner', '   hash(MSISDN)'].forEach((t, i) =>
+    el('text', { x: 30, y: 130 + i * 22, 'font-size': 12, class: 'mono', text: t }, svg));
+  nodes.prodState = el('text', { x: 30, y: 290, 'font-size': 12, 'font-weight': 600, text: '' }, svg);
+
+  el('rect', { x: 190, y: 40, width: 440, height: 270, rx: 12, fill: 'var(--surface)', stroke: 'var(--accent)', 'stroke-dasharray': '5 4' }, svg);
+  el('text', { x: 206, y: 64, 'font-weight': 700, text: 'RecordAccumulator' }, svg);
+  el('text', { x: 614, y: 64, 'text-anchor': 'end', 'font-size': 11, class: 'muted', text: 'one open batch per partition · sender thread ships them' }, svg);
+  nodes.lanes = [0, 1, 2].map(p => {
+    const y = 88 + p * 74;
+    el('text', { x: 206, y: y + 18, 'font-size': 12, class: 'mono', text: `cdr.voice-${p}` }, svg);
+    el('rect', { x: 300, y, width: 310, height: 26, rx: 6, fill: 'var(--surface-2)', stroke: 'var(--border)' }, svg);
+    const fill = el('rect', { x: 300, y, width: 0, height: 26, rx: 6, fill: PCOLORS[p] }, svg);
+    const txt = el('text', { x: 455, y: y + 17, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 600, text: '' }, svg);
+    el('rect', { x: 300, y: y + 32, width: 310, height: 5, rx: 2, fill: 'var(--surface-2)' }, svg);
+    const ling = el('rect', { x: 300, y: y + 32, width: 0, height: 5, rx: 2, fill: 'var(--warn)' }, svg);
+    const why = el('text', { x: 300, y: y + 52, 'font-size': 11, class: 'muted', text: '' }, svg);
+    return { fill, txt, ling, why, y };
+  });
+
+  nodes.brokers = [0, 1, 2].map(p => {
+    const y = 76 + p * 76;
+    el('rect', { x: 700, y, width: 184, height: 60, rx: 10, fill: 'var(--surface)', stroke: 'var(--ok)' }, svg);
+    el('text', { x: 714, y: y + 22, 'font-weight': 700, 'font-size': 13, text: `broker-${p + 1}` }, svg);
+    el('text', { x: 870, y: y + 22, 'text-anchor': 'end', 'font-size': 11, style: 'fill:var(--ok)', text: `leader P${p}` }, svg);
+    return el('text', { x: 714, y: y + 44, 'font-size': 11, class: 'muted', text: '' }, svg);
+  });
+  el('text', { x: 16, y: 26, 'font-size': 12, class: 'muted', text: 'Records are ~1 KB each. Time runs 10× slower than real so you can watch individual batches.' }, svg);
+  draw();
+}
+
+function draw() {
+  lanes.forEach((L, p) => {
+    const n = nodes.lanes[p];
+    n.fill.setAttribute('width', Math.min(1, L.n / S.cap) * 310);
+    n.txt.textContent = `${Math.floor(L.n)} / ${S.cap} records`;
+    const waited = L.n >= 1 ? vt - L.first : 0;
+    n.ling.setAttribute('width', S.linger ? Math.min(1, waited / S.linger) * 310 : 0);
+    n.why.textContent = L.n >= 1 ? `waited ${waited} ms of linger.ms=${S.linger}` : 'empty — nothing to send';
+  });
+  nodes.brokers.forEach((t, p) => t.textContent = `${M.appended[p]} records appended`);
+  nodes.prodState.textContent = blocked() ? '✕ failed to start' : S.paused ? 'paused' : 'producing…';
+  nodes.prodState.style.fill = blocked() ? 'var(--bad)' : 'var(--ok)';
+  const secs = Math.max(vt, 1) / 1000;
+  const avgBatch = M.batches ? M.recs / M.batches : 0;
+  const ackMs = S.acks === 'all' ? 4 : 1.5;
+  statsEl.innerHTML = `
+    <div class="stat"><b>${Math.round(M.batches / secs)}</b><span>produce requests / s</span></div>
+    <div class="stat"><b>${avgBatch.toFixed(1)}</b><span>records per batch</span></div>
+    <div class="stat"><b>${M.batches ? (M.wait / M.recs + ackMs).toFixed(1) : '–'} ms</b><span>avg send latency (linger + ack)</span></div>
+    <div class="stat"><b>${M.recs ? (M.bytes / M.recs).toFixed(2) : '–'} KB</b><span>bytes on the wire per record</span></div>
+    <div class="stat"><b style="color:${M.dups ? 'var(--bad)' : 'inherit'}">${M.dups}</b><span>duplicate records in log</span></div>`;
+  document.getElementById('verdict').textContent =
+    `batch.size=${S.cap * 1024} · linger.ms=${S.linger} · compression=${S.comp} · acks=${S.acks} · idempotence=${S.idem}`;
+  document.getElementById('cfgerr').classList.toggle('show', blocked());
+}
+
+async function ship(p, n, reason) {
+  const L = lanes[p];
+  const waitAvg = S.linger ? (vt - L.first) / 2 : 0;
+  const ratio = Math.min(1, RATIO[S.comp] * (1 + 1.5 / n));
+  M.batches++; M.recs += n; M.wait += waitAvg * n; M.bytes += n * ratio; M.appended[p] += n;
+  const seq = M.seq[p]; M.seq[p] += n;
+  L.n = 0;
+  const now = performance.now();
+  if (S.dropNext) {
+    S.dropNext = false;
+    logLine(logEl, `P${p}: batch of ${n} (seq ${seq}) appended by broker-${p + 1}, but the <b>ACK is lost</b> on the network — producer waits, then retries`, true);
+    await fly(p, n, true);
+    await sleep(reducedMotion ? 1 : 500);
+    await fly(p, n, false);
+    if (S.idem) logLine(logEl, `retry reaches broker-${p + 1}: same producer ID + sequence ${seq} already appended → <b>acknowledged, not written again</b>`, true);
+    else { M.dups += n; M.appended[p] += n; logLine(logEl, `retry reaches broker-${p + 1}: no sequence number to check → appended again — <b>${n} duplicate records</b> in cdr.voice-${p}`, true); }
+    draw();
+    return;
+  }
+  if (now - lastLog > 700) {
+    lastLog = now;
+    logLine(logEl, `P${p}: sent ${n}-record batch — ${reason}` + (S.comp !== 'none' ? ` · ${S.comp} → ${(n * ratio).toFixed(1)} KB on the wire` : ''));
+  }
+  fly(p, n, false);
+}
+
+async function fly(p, n, lost) {
+  if (flying[p] && !lost) return;
+  flying[p] = true;
+  const y = nodes.lanes[p].y;
+  const g = el('g', {}, svg);
+  el('rect', { x: 0, y: 0, width: 36, height: 22, rx: 5, fill: PCOLORS[p], stroke: lost ? 'var(--bad)' : 'none', 'stroke-width': 2 }, g);
+  el('text', { x: 18, y: 15, 'text-anchor': 'middle', 'font-size': 11, 'font-weight': 700, style: 'fill:#fff', text: n }, g);
+  await tween(g, 612, y + 2, 660, 76 + p * 76 + 19, 260);
+  if (lost) {
+    el('text', { x: 18, y: -6, 'text-anchor': 'middle', 'font-size': 16, 'font-weight': 700, style: 'fill:var(--bad)', text: '✕ ACK' }, g);
+    await sleep(reducedMotion ? 1 : 400);
+  }
+  g.remove();
+  flying[p] = false;
+}
+
+setInterval(() => {
+  if (S.paused || blocked()) return;
+  vt += VSTEP;
+  carry += S.rate * VSTEP / 1000;
+  const arrivals = Math.floor(carry); carry -= arrivals;
+  for (let i = 0; i < arrivals; i++) {
+    const p = Math.floor(Math.random() * 3), L = lanes[p];
+    if (L.n === 0) L.first = vt;
+    L.n++;
+    if (L.n >= S.cap) ship(p, L.n, `<b>batch full</b> (batch.size reached)`);
+  }
+  lanes.forEach((L, p) => {
+    if (L.n >= 1 && vt - L.first >= S.linger) ship(p, L.n, S.linger ? `<b>linger.ms=${S.linger} expired</b> before the batch filled` : `linger.ms=0 → sent as soon as the sender thread is free`);
+  });
+  draw();
+}, TICK);
+
+function changed(msg) { resetCounters(); scene(); logLine(logEl, msg, true); }
+wireSeg('loadSeg', v => { S.rate = +v; changed(`load set to <b>${v} records/s</b>`); });
+wireSeg('batchSeg', v => { S.cap = +v; changed(`batch.size = <b>${v * 1024}</b> bytes (${v} records of ~1 KB)`); });
+wireSeg('lingerSeg', v => { S.linger = +v; changed(`linger.ms = <b>${v}</b>` + (+v === 100 ? ' — fuller batches, but every record may now wait up to 100 ms' : '')); });
+wireSeg('compSeg', v => { S.comp = v; changed(`compression.type = <b>${v}</b>` + (v !== 'none' ? ' — the whole batch is compressed, so bigger batches compress better' : '')); });
+wireSeg('acksSeg', v => { S.acks = v; changed(`acks = <b>${v}</b>` + (blocked() ? ' — <b>ConfigException</b>: idempotence requires acks=all' : '')); });
+wireSeg('idemSeg', v => { S.idem = v === 'true'; changed(`enable.idempotence = <b>${v}</b>` + (!S.idem ? ' — retries can now write duplicates' : '')); });
+document.getElementById('pause').onclick = e => { S.paused = !S.paused; e.target.textContent = S.paused ? 'Resume' : 'Pause'; draw(); };
+document.getElementById('dropAck').onclick = () => { S.dropNext = true; logLine(logEl, 'the next produce response will be lost on the network…', true); };
+
+resetCounters(); scene();
+logLine(logEl, 'producer started with Kafka 4.x defaults: batch.size=16384, linger.ms=5, acks=all, enable.idempotence=true', true);
+
+renderQuiz('quiz', [
+  { q: 'At low load (50 records/s) with <code>linger.ms=0</code>, most batches hold 1 record. What is the cheapest fix for a flood of tiny produce requests?',
+    options: ['Raise <code>linger.ms</code> a little (e.g. 5–20 ms) so records have time to join a batch', 'Raise <code>batch.size</code> to 1 MB', 'Add more partitions', 'Set <code>acks=0</code>'],
+    answer: 0, explain: 'A bigger <code>batch.size</code> does nothing if the batch never fills — it is only an upper limit. <code>linger.ms</code> is what lets records gather, at the cost of that much added latency.' },
+  { q: 'In the simulation, under burst load, why do <code>linger.ms=5</code> and <code>linger.ms=100</code> behave almost the same?',
+    options: ['linger.ms is ignored when compression is on', 'The broker overrides linger.ms', 'Batches reach <code>batch.size</code> long before linger expires, so they ship as soon as they are full', 'Burst load disables batching'],
+    answer: 2, explain: 'A batch ships when it is full <i>or</i> when linger expires, whichever happens first. Under heavy load, being full comes first, so <code>batch.size</code> becomes the knob that matters.' },
+  { q: 'A producer sets <code>enable.idempotence=true</code> and <code>acks=1</code> explicitly. What happens?',
+    options: ['Idempotence is silently turned off', 'acks is upgraded to all automatically', 'It works, but only for one partition', 'The producer fails to start with a <code>ConfigException</code> — idempotence requires <code>acks=all</code>'],
+    answer: 3, explain: 'If you set idempotence explicitly and the settings conflict, the client refuses to start. (If you had only changed <code>acks</code> and left idempotence at its default, the client would quietly disable idempotence instead.)' },
+  { q: 'A produce response is lost on the network and the producer retries. With <code>enable.idempotence=false</code>, what ends up in the partition?',
+    options: ['Exactly one copy — Kafka always dedups', 'Two copies of the batch — the broker cannot tell a retry from a new write', 'Nothing — the broker rejects the retry', 'The batch goes to a dead letter topic'],
+    answer: 1, explain: 'Without a producer ID and sequence numbers the leader has nothing to compare, so it appends the retry again. Unlike an MQ transaction log, Kafka only deduplicates when idempotence is on.' },
+  { q: 'An app logs <code>TimeoutException: Expiring 12 record(s) … 120000 ms has passed</code>. <code>retries</code> is at its default. What does this tell you?',
+    options: ['retries was set too low', 'The consumer is too slow', 'The records sat unacknowledged for the whole <code>delivery.timeout.ms</code> — find out why the partition could not accept writes (leader or ISR problems)', 'linger.ms is too high'],
+    answer: 2, explain: 'The default for <code>retries</code> is effectively unlimited, so <code>delivery.timeout.ms</code> is what actually ends the attempt. Something stopped the writes for two minutes: an offline leader, an ISR below <code>min.insync.replicas</code>, or the network.' }
+]);
+</script>
+</body>
+</html>

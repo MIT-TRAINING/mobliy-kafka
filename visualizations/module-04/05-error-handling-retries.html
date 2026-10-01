@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Error Handling &amp; Retry Patterns</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 4 · Producing &amp; Consuming Messages</a>
+    <div class="nav"><span>5 / 5</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 5</div>
+  <h1>Error handling and retry patterns</h1>
+  <p class="lede">Kafka won't take a record away from a consumer that keeps failing on it. There's no redelivery count and
+    no automatic dead-letter queue, as there is in MQ. You choose what happens. Feed the consumer
+    <b>transient failures</b> (the rating service times out twice, then works) and <b>poison pills</b> (malformed CDRs that
+    never work), and compare four strategies on lag, loss and ordering.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Strategy</span>
+      <div class="seg" role="group" aria-label="Error-handling strategy" id="stratSeg">
+        <button data-v="stop" aria-pressed="false">stop &amp; retry forever</button>
+        <button data-v="skip" aria-pressed="false">log &amp; skip</button>
+        <button data-v="block" aria-pressed="true">blocking retry → DLT</button>
+        <button data-v="topic" aria-pressed="false">retry topic → DLT</button>
+      </div>
+    </div>
+    <div class="controls">
+      <button id="addOk">+ normal CDR</button>
+      <button id="addTr">+ transient failure</button>
+      <button class="danger" id="addPo">+ poison pill</button>
+      <button class="primary" id="auto" aria-pressed="false">Start stream</button>
+      <button id="reset">Reset</button>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 330" role="img" aria-label="Consumer processing cdr.voice with retry topic, dead letter topic and skipped records"></svg></div>
+    <div class="legend">
+      <span><i style="background:var(--p2)"></i>normal CDR</span>
+      <span><i style="background:var(--warn)"></i>transient failure (fails 2×, then works)</span>
+      <span><i style="background:var(--bad)"></i>poison pill (always fails)</span>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Consumer-side strategies</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Strategy</th><th>Transient error</th><th>Poison pill</th><th>Order</th><th>In code</th></tr></thead>
+      <tbody>
+        <tr><td>Stop &amp; retry forever</td><td>Recovers, slowly</td><td class="mono" style="color:var(--bad)">partition blocked; lag grows forever</td><td>Kept</td><td>Uncaught exception, <code>seek()</code> back to the failed offset</td></tr>
+        <tr><td>Log &amp; skip</td><td style="color:var(--bad)">Lost</td><td>Lost (logged)</td><td>Kept</td><td><code>try/catch</code> around processing, then commit</td></tr>
+        <tr><td>Blocking retry → DLT</td><td>Recovers after backoff</td><td>To DLT after N attempts</td><td>Kept</td><td>Spring <code>DefaultErrorHandler</code> + <code>BackOff</code> + <code>DeadLetterPublishingRecoverer</code></td></tr>
+        <tr><td>Retry topic → DLT</td><td>Recovers in the retry topic</td><td>To DLT after N attempts</td><td style="color:var(--warn)">Not kept</td><td>Spring <code>@RetryableTopic</code>, or your own <code>*-retry</code> topics</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout warn"><b>Production trap:</b> blocking retries pause the <b>whole partition</b>, so their total time
+    must stay well under <code>max.poll.interval.ms</code>, or the consumer is kicked out mid-retry and the group rebalances
+    (Topic 2). Retry topics avoid the pause but give up per-key order. That's wrong for a subscriber's balance updates, but fine
+    for independent CDRs.</div>
+
+  <h2>Producer-side errors: retriable or not?</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Exception</th><th>Type</th><th>What the client does</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">NotLeaderOrFollowerException</td><td><span class="pill ok">retriable</span></td><td>Refreshes metadata, retries on the new leader</td></tr>
+        <tr><td class="mono">NotEnoughReplicasException</td><td><span class="pill ok">retriable</span></td><td>Retries until the ISR recovers or <code>delivery.timeout.ms</code> expires</td></tr>
+        <tr><td class="mono">TimeoutException</td><td><span class="pill warn">final after retries</span></td><td>Returned to your callback once <code>delivery.timeout.ms</code> runs out</td></tr>
+        <tr><td class="mono">RecordTooLargeException</td><td><span class="pill bad">non-retriable</span></td><td>Fails immediately; raise <code>max.request.size</code> and the topic's <code>max.message.bytes</code>, or shrink the record</td></tr>
+        <tr><td class="mono">SerializationException</td><td><span class="pill bad">non-retriable</span></td><td>Thrown by <code>send()</code> itself, before the record is buffered</td></tr>
+        <tr><td class="mono">TopicAuthorizationException</td><td><span class="pill bad">non-retriable</span></td><td>Fix the ACLs (Module 7); retrying won't help</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Admin takeaway:</b> create the DLT with enough retention for someone to look at it, e.g.
+    <code>kafka-topics.sh --create --topic cdr.voice-dlt --partitions 6 --replication-factor 3 --config retention.ms=1209600000</code>.
+    Alert when it gets any new records, and replay fixed records from it back to <code>cdr.voice</code>. A DLT nobody reads just loses
+    records more slowly.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="04-java-producer-consumer.html"><small>← Previous</small>Java producer &amp; consumer applications</a>
+    <a class="next" href="index.html"><small>Done →</small>Back to Module 4 overview</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), logEl = document.getElementById('log'), statsEl = document.getElementById('stats');
+const MAX_ATTEMPTS = 3, RETRY_DELAY = 4, RESTART = 3;
+const KCOL = { ok: 'var(--p2)', transient: 'var(--warn)', poison: 'var(--bad)' };
+let S, main, retry, billed, dlt, skipped, cons, seq;
+
+function reset() {
+  S = { strat: S ? S.strat : 'block', auto: false, tick: 0, blocked: 0, reordered: 0, maxDone: -1 };
+  main = []; retry = []; billed = []; dlt = []; skipped = []; cons = { wait: 0, why: '' }; seq = 0;
+  const a = document.getElementById('auto'); a.textContent = 'Start stream'; a.setAttribute('aria-pressed', 'false');
+  logEl.innerHTML = '';
+  ['ok', 'ok', 'transient', 'ok', 'poison', 'ok', 'ok'].forEach(add);
+  logLine(logEl, 'cdr.voice-0 loaded with 7 CDRs — one transient failure (offset 2) and one poison pill (offset 4)', true);
+}
+function add(kind) { main.push({ off: seq++, kind, attempts: 0 }); render(); }
+const works = r => r.kind === 'ok' || (r.kind === 'transient' && r.attempts >= MAX_ATTEMPTS);
+function done(r, where) {
+  billed.push(r);
+  if (r.off < S.maxDone) { S.reordered++; logLine(logEl, `offset ${r.off} billed <b>after</b> offset ${S.maxDone} — order changed (${where})`, true); }
+  S.maxDone = Math.max(S.maxDone, r.off);
+}
+
+function tick() {
+  S.tick++;
+  if (S.auto && S.tick % 2 === 0) { const x = Math.random(); add(x < .08 ? 'poison' : x < .2 ? 'transient' : 'ok'); }
+  retry.forEach(r => r.due--);
+  const due = retry.find(r => r.due <= 0);
+  if (due) {
+    due.attempts++;
+    retry.splice(retry.indexOf(due), 1);
+    if (works(due)) { done(due, 'retry topic'); logLine(logEl, `retry consumer: offset ${due.off} <b>succeeded</b> on attempt ${due.attempts}`); }
+    else if (due.attempts >= MAX_ATTEMPTS) { dlt.push(due); logLine(logEl, `retry consumer: offset ${due.off} failed ${due.attempts}× → <b>published to cdr.voice-dlt</b>`, true); }
+    else { due.due = RETRY_DELAY; retry.push(due); logLine(logEl, `retry consumer: offset ${due.off} failed again (attempt ${due.attempts}) → back to cdr.voice-retry`); }
+  }
+  if (cons.wait > 0) { cons.wait--; if (main.length) S.blocked++; render(); return; }
+  cons.why = '';
+  const r = main[0];
+  if (!r) { render(); return; }
+  r.attempts++;
+  if (works(r)) { main.shift(); done(r, 'main'); logLine(logEl, `offset ${r.off} rated → billing.charges` + (r.attempts > 1 ? ` (attempt ${r.attempts})` : '')); render(); return; }
+  const err = r.kind === 'poison' ? 'RecordDeserializationException / invalid CDR' : 'TimeoutException from rating-svc';
+  if (S.strat === 'stop') {
+    cons.wait = RESTART; cons.why = `crashed on offset ${r.off} · restarting`;
+    logLine(logEl, `offset ${r.off}: <b>${err}</b> → consumer dies, restarts at committed offset ${r.off} and tries again (attempt ${r.attempts})` + (r.kind === 'poison' ? ' — <b>this will never succeed</b>' : ''), true);
+  } else if (S.strat === 'skip') {
+    main.shift(); skipped.push(r);
+    logLine(logEl, `offset ${r.off}: ${err} → logged and <b>skipped</b>` + (r.kind === 'transient' ? ' — it would have worked on retry: <b>charge lost</b>' : ''), true);
+  } else if (S.strat === 'block') {
+    if (r.attempts < MAX_ATTEMPTS) { cons.wait = r.attempts; cons.why = `backoff ${r.attempts}s before attempt ${r.attempts + 1}`; logLine(logEl, `offset ${r.off}: ${err} → blocking retry, backoff ${r.attempts}s — partition paused`); }
+    else { main.shift(); dlt.push(r); logLine(logEl, `offset ${r.off}: failed ${r.attempts}× → DeadLetterPublishingRecoverer <b>publishes to cdr.voice-dlt</b>, commits, moves on`, true); }
+  } else {
+    main.shift(); r.due = RETRY_DELAY; retry.push(r);
+    logLine(logEl, `offset ${r.off}: ${err} → published to <b>cdr.voice-retry</b>, offset committed, main partition keeps flowing`, true);
+  }
+  render();
+}
+
+function cells(list, x, y, max, label) {
+  el('text', { x, y: y - 8, 'font-size': 12, 'font-weight': 700, class: 'mono', text: label }, svg);
+  el('rect', { x, y, width: max * 30 + 8, height: 34, rx: 7, fill: 'var(--surface)', stroke: 'var(--border)' }, svg);
+  list.slice(-max).forEach((r, i) => {
+    el('rect', { x: x + 4 + i * 30, y: y + 4, width: 26, height: 26, rx: 4, fill: KCOL[r.kind] }, svg);
+    el('text', { x: x + 17 + i * 30, y: y + 21, 'text-anchor': 'middle', 'font-size': 10, 'font-weight': 700, style: 'fill:#fff', text: r.off }, svg);
+  });
+  if (list.length > max) el('text', { x: x + max * 30 + 14, y: y + 22, 'font-size': 11, class: 'muted', text: `+${list.length - max}` }, svg);
+}
+
+function render() {
+  svg.innerHTML = '';
+  const head = main.slice(0, 11);
+  el('text', { x: 16, y: 26, 'font-size': 12, 'font-weight': 700, class: 'mono', text: `cdr.voice-0 · lag ${main.length}` }, svg);
+  el('rect', { x: 16, y: 34, width: 350, height: 34, rx: 7, fill: 'var(--surface)', stroke: S.blocked && cons.wait ? 'var(--warn)' : 'var(--border)' }, svg);
+  head.forEach((r, i) => {
+    el('rect', { x: 20 + i * 31, y: 38, width: 27, height: 26, rx: 4, fill: KCOL[r.kind], stroke: i === 0 ? 'var(--text)' : 'none', 'stroke-width': 2 }, svg);
+    el('text', { x: 33.5 + i * 31, y: 55, 'text-anchor': 'middle', 'font-size': 10, 'font-weight': 700, style: 'fill:#fff', text: r.off }, svg);
+  });
+  if (main.length > 11) el('text', { x: 356, y: 84, 'text-anchor': 'end', 'font-size': 11, class: 'muted', text: `+${main.length - 11} more` }, svg);
+  el('path', { d: 'M30 70 L30 108', stroke: 'var(--muted)', 'stroke-width': 2 }, svg);
+
+  const busy = cons.wait > 0;
+  el('rect', { x: 16, y: 110, width: 350, height: 90, rx: 12, fill: busy ? (S.strat === 'stop' ? 'var(--bad-soft)' : 'var(--warn-soft)') : 'var(--surface)',
+    stroke: busy ? (S.strat === 'stop' ? 'var(--bad)' : 'var(--warn)') : 'var(--accent)', 'stroke-width': 2 }, svg);
+  el('text', { x: 32, y: 136, 'font-weight': 700, text: 'rating-svc (group billing-svc)' }, svg);
+  el('text', { x: 32, y: 160, 'font-size': 12, class: 'mono', text: main[0] ? `head: offset ${main[0].off} · attempts ${main[0].attempts}` : 'caught up — waiting for records' }, svg);
+  el('text', { x: 32, y: 184, 'font-size': 12, 'font-weight': 600, style: `fill:${busy ? 'var(--warn)' : 'var(--ok)'}`,
+    text: busy ? `⏸ ${cons.why} (${cons.wait})` : '▶ processing' }, svg);
+  el('text', { x: 16, y: 236, 'font-size': 12, class: 'muted', text: { stop: 'stop: exception escapes → restart → same offset again', skip: 'skip: catch, log, commit, continue',
+    block: `block: retry in place with backoff, ${MAX_ATTEMPTS} attempts, then DLT`, topic: `retry topic: hand off, retry after delay, ${MAX_ATTEMPTS} attempts, then DLT` }[S.strat] }, svg);
+  el('path', { d: 'M366 155 L420 155', stroke: 'var(--muted)', 'stroke-width': 2 }, svg);
+
+  cells(billed, 430, 34, 14, `billing.charges ✓ ${billed.length}`);
+  cells(retry, 430, 110, 14, `cdr.voice-retry (${retry.length})${S.strat === 'topic' ? '' : ' — unused'}`);
+  cells(dlt, 430, 186, 14, `cdr.voice-dlt (${dlt.length})`);
+  cells(skipped, 430, 262, 14, `skipped — log only (${skipped.length})`);
+
+  const lost = skipped.filter(r => r.kind === 'transient').length;
+  statsEl.innerHTML = `
+    <div class="stat"><b>${billed.length}</b><span>billed</span></div>
+    <div class="stat"><b style="color:${main.length > 8 ? 'var(--bad)' : 'inherit'}">${main.length}</b><span>main partition lag</span></div>
+    <div class="stat"><b>${S.blocked}</b><span>ticks partition was blocked</span></div>
+    <div class="stat"><b style="color:${skipped.length ? 'var(--bad)' : 'inherit'}">${skipped.length}</b><span>skipped (${lost} recoverable lost)</span></div>
+    <div class="stat"><b>${dlt.length}</b><span>in DLT</span></div>
+    <div class="stat"><b style="color:${S.reordered ? 'var(--warn)' : 'inherit'}">${S.reordered}</b><span>out-of-order completions</span></div>`;
+}
+
+wireSeg('stratSeg', v => { S.strat = v; cons.wait = 0; logLine(logEl, `strategy → <b>${{ stop: 'stop &amp; retry forever', skip: 'log &amp; skip', block: 'blocking retry → DLT', topic: 'retry topic → DLT' }[v]}</b>`, true); render(); });
+document.getElementById('addOk').onclick = () => add('ok');
+document.getElementById('addTr').onclick = () => { add('transient'); logLine(logEl, `offset ${seq - 1}: transient failure queued`); };
+document.getElementById('addPo').onclick = () => { add('poison'); logLine(logEl, `offset ${seq - 1}: poison pill queued`, true); };
+document.getElementById('auto').onclick = e => { S.auto = !S.auto; e.target.textContent = S.auto ? 'Stop stream' : 'Start stream'; e.target.setAttribute('aria-pressed', S.auto); };
+document.getElementById('reset').onclick = reset;
+reset();
+setInterval(tick, 450);
+
+renderQuiz('quiz', [
+  { q: 'A consumer hits a malformed CDR and throws on every attempt. With no error handler, what does the partition look like?',
+    options: ['The consumer keeps re-reading the same offset: the partition is blocked and lag grows without limit', 'The broker moves the record to a DLQ after 5 tries', 'The record is skipped automatically', 'The topic is marked offline'],
+    answer: 0, explain: 'Kafka has no redelivery counter or built-in DLQ for plain consumers. The committed offset does not move, so every restart reads the poison pill again. You have to add a way past it.' },
+  { q: 'Why is "log &amp; skip" dangerous for a billing consumer?',
+    options: ['It is slow', 'It breaks ordering', 'It fills the DLT', 'Transient errors, such as a rating-service timeout that would succeed on retry, are dropped along with real poison pills, so charges are lost'],
+    answer: 3, explain: 'Skip treats every exception as permanent. Tell retriable errors from non-retriable ones, and never drop a record without putting it somewhere you can replay from.' },
+  { q: 'You switch to retry topics (<code>@RetryableTopic</code>). What trade-off did you accept?',
+    options: ['Records can be lost', 'The consumer can no longer commit offsets', 'Failed records complete later than the ones behind them, so per-partition order is no longer guaranteed', 'Retry topics require Confluent Platform'],
+    answer: 2, explain: 'Moving a record to a retry topic lets the main partition keep flowing, but the retried record finishes after later ones. For events where order matters per key (balance updates), use blocking retries instead.' },
+  { q: 'A blocking retry with exponential backoff sometimes waits 6 minutes in total. The group keeps rebalancing. Why?',
+    options: ['The DLT is full', 'Total retry time is longer than <code>max.poll.interval.ms</code> (5 min default), so the member is removed while it is still retrying', 'session.timeout.ms is too low', 'Backoff disables heartbeats'],
+    answer: 1, explain: 'Blocking retries happen between poll() calls. Keep the total below max.poll.interval.ms, or move long retries to a retry topic.' },
+  { q: 'Which producer exception will <b>not</b> be fixed by retrying?',
+    options: ['<code>NotLeaderOrFollowerException</code>', '<code>NotEnoughReplicasException</code>', '<code>RecordTooLargeException</code>', 'A brief network disconnect'],
+    answer: 2, explain: 'A record larger than the allowed request or topic size will fail every time. Leader changes, a short ISR and network blips are temporary, and the producer retries them automatically within <code>delivery.timeout.ms</code>.' }
+]);
+</script>
+</body>
+</html>

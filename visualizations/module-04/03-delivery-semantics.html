@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Delivery Semantics</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 4 · Producing &amp; Consuming Messages</a>
+    <div class="nav"><span>3 / 5</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 3</div>
+  <h1>Delivery semantics: at-most-once, at-least-once, exactly-once</h1>
+  <p class="lede">Delivery semantics come from <b>where you commit the offset relative to the work</b>. A rating service reads
+    CDRs from <code>cdr.voice</code> and writes one charge per call to <code>billing.charges</code>. Pick a mode, crash the service
+    on the third CDR, and see which subscribers get missed or billed twice.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Mode</span>
+      <div class="seg" role="group" aria-label="Delivery mode" id="modeSeg">
+        <button data-v="amo" aria-pressed="false">at-most-once</button>
+        <button data-v="alo" aria-pressed="true">at-least-once</button>
+        <button data-v="eos" aria-pressed="false">exactly-once</button>
+      </div>
+      <span class="ctl-label">Crash on CDR #3</span>
+      <div class="seg" role="group" aria-label="Crash point" id="crashSeg">
+        <button data-v="none" aria-pressed="false">no crash</button>
+        <button data-v="before" aria-pressed="true">just before the commit</button>
+        <button data-v="after" aria-pressed="false">just after the commit</button>
+      </div>
+    </div>
+    <div class="controls">
+      <span class="ctl-label">Billing reader <code>isolation.level</code></span>
+      <div class="seg" role="group" aria-label="isolation.level" id="isoSeg">
+        <button data-v="read_committed" aria-pressed="true">read_committed</button>
+        <button data-v="read_uncommitted" aria-pressed="false">read_uncommitted</button>
+      </div>
+      <button class="primary" id="run">▶ Run pipeline</button>
+      <span class="pill" id="verdict">not run yet</span>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 390" role="img" aria-label="CDR pipeline from cdr.voice through a rating consumer to billing.charges"></svg></div>
+    <div class="chips" id="steps"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>The three contracts</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Semantics</th><th>Order of operations</th><th>On crash</th><th>Telecom fit</th></tr></thead>
+      <tbody>
+        <tr><td><b>At-most-once</b></td><td>commit offset → process</td><td>Records in flight are <b>lost</b></td><td>Network telemetry samples, dashboards</td></tr>
+        <tr><td><b>At-least-once</b></td><td>process → commit offset</td><td>Records in flight are <b>reprocessed</b> (duplicates)</td><td>Most pipelines, <i>if</i> the consumer is idempotent (dedupe on CDR ID)</td></tr>
+        <tr><td><b>Exactly-once</b></td><td>read → produce + offsets in <b>one transaction</b> → commit</td><td>Open transaction aborted; readers never see it</td><td>Billing, balances, fraud counters: Kafka-to-Kafka processing</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Exactly-once building blocks:</b> an idempotent producer with a stable <code>transactional.id</code>
+    (<code>initTransactions()</code> fences off zombie instances), <code>sendOffsetsToTransaction(offsets, consumer.groupMetadata())</code>
+    so the input offsets commit in the same transaction as the output, and <code>isolation.level=read_committed</code> on every
+    downstream consumer. Kafka Streams wraps all of this as <code>processing.guarantee=exactly_once_v2</code>.</div>
+  <div class="callout warn"><b>Production trap:</b> the default consumer <code>isolation.level</code> is
+    <code>read_uncommitted</code>. A billing reader left on the default <b>does</b> see aborted transactional records. Switch
+    the reader in the simulation and watch a subscriber get double-billed even in exactly-once mode. Also, exactly-once stops
+    at Kafka's edge: writes to an external database or SMS gateway need their own idempotency key.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="02-consumer-groups-offsets.html"><small>← Previous</small>Consumer groups, offsets &amp; rebalancing</a>
+    <a class="next" href="04-java-producer-consumer.html"><small>Next →</small>Java producer &amp; consumer applications</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), logEl = document.getElementById('log'), stepsEl = document.getElementById('steps');
+const MODES = {
+  amo: { name: 'at-most-once', steps: ['poll()', 'commitSync()', 'rate + send(charge)'], commit: 1, send: 2 },
+  alo: { name: 'at-least-once', steps: ['poll()', 'rate + send(charge)', 'commitSync()'], commit: 2, send: 1 },
+  eos: { name: 'exactly-once', steps: ['poll()', 'beginTransaction() + send(charge)', 'sendOffsetsToTransaction()', 'commitTransaction()'], commit: 3, send: 1 },
+};
+const CDRS = ['+4477001', '+4477002', '+4477003', '+4477004', '+4477005', '+4477006'];
+const S = { mode: 'alo', crash: 'before', iso: 'read_committed', running: false };
+let out = [], committed = 0, active = -1, curStep = -1, crashedAt = null;
+
+function renderSteps() {
+  stepsEl.innerHTML = MODES[S.mode].steps.map((s, i) =>
+    `<span class="chip ${i === curStep ? 'on' : ''}">${i + 1}. ${s}${i === MODES[S.mode].commit ? ' ✓offset' : ''}</span>`).join('');
+}
+const visible = o => o.state === 'plain' || o.state === 'committed' || S.iso === 'read_uncommitted';
+
+function render() {
+  svg.innerHTML = '';
+  el('text', { x: 16, y: 24, 'font-size': 13, 'font-weight': 700, text: 'cdr.voice-0 (input)' }, svg);
+  CDRS.forEach((m, i) => {
+    const x = 180 + i * 110;
+    el('rect', { x, y: 36, width: 96, height: 40, rx: 7, fill: PCOLORS[i], opacity: i === active ? 1 : .8,
+      stroke: i === active ? 'var(--text)' : 'none', 'stroke-width': 2 }, svg);
+    el('text', { x: x + 48, y: 53, 'text-anchor': 'middle', 'font-size': 11, style: 'fill:#fff', class: 'mono', text: `offset ${i}` }, svg);
+    el('text', { x: x + 48, y: 68, 'text-anchor': 'middle', 'font-size': 11, style: 'fill:#fff', 'font-weight': 600, text: m }, svg);
+  });
+  const cx = 180 + committed * 110 - 6;
+  el('path', { d: `M${cx} 30 L${cx} 84`, stroke: 'var(--ok)', 'stroke-width': 3 }, svg);
+  el('text', { x: cx, y: 98, 'text-anchor': 'middle', 'font-size': 11, 'font-weight': 700, style: 'fill:var(--ok)', text: `committed = ${committed}` }, svg);
+
+  el('rect', { x: 250, y: 116, width: 400, height: 70, rx: 12, fill: crashedAt !== null && active === crashedAt ? 'var(--bad-soft)' : 'var(--surface)',
+    stroke: crashedAt !== null && active === crashedAt ? 'var(--bad)' : 'var(--accent)', 'stroke-width': 2 }, svg);
+  el('text', { x: 450, y: 142, 'text-anchor': 'middle', 'font-weight': 700, text: `rating-svc · ${MODES[S.mode].name}` }, svg);
+  el('text', { x: 450, y: 166, 'text-anchor': 'middle', 'font-size': 12, class: 'mono',
+    text: curStep >= 0 ? `step ${curStep + 1}: ${MODES[S.mode].steps[curStep]}` : S.running ? '…' : 'idle' }, svg);
+
+  el('text', { x: 16, y: 222, 'font-size': 13, 'font-weight': 700, text: 'billing.charges (output)' }, svg);
+  out.forEach((o, k) => {
+    const x = 180 + (k % 7) * 100, y = 208 + Math.floor(k / 7) * 46;
+    const faded = o.state === 'aborted' || o.state === 'open';
+    el('rect', { x, y, width: 88, height: 36, rx: 7, fill: PCOLORS[o.cdr], opacity: faded ? .3 : 1,
+      stroke: o.state === 'aborted' ? 'var(--bad)' : o.state === 'open' ? 'var(--warn)' : 'none', 'stroke-dasharray': '4 3', 'stroke-width': 2 }, svg);
+    el('text', { x: x + 44, y: y + 15, 'text-anchor': 'middle', 'font-size': 11, 'font-weight': 600, style: faded ? '' : 'fill:#fff', text: `charge ${CDRS[o.cdr].slice(-3)}` }, svg);
+    el('text', { x: x + 44, y: y + 29, 'text-anchor': 'middle', 'font-size': 10, style: faded ? '' : 'fill:#fff', text: o.state === 'plain' ? 'non-txn' : o.state }, svg);
+  });
+
+  el('text', { x: 16, y: 324, 'font-size': 13, 'font-weight': 700, text: `billing reader (${S.iso})` }, svg);
+  CDRS.forEach((m, i) => {
+    const n = out.filter(o => o.cdr === i && visible(o)).length;
+    const x = 180 + i * 110, done = !S.running && out.length;
+    const col = !done ? 'var(--border)' : n === 1 ? 'var(--ok)' : n === 0 ? 'var(--bad)' : 'var(--warn)';
+    el('rect', { x, y: 306, width: 96, height: 50, rx: 7, fill: 'var(--surface)', stroke: col, 'stroke-width': 2 }, svg);
+    el('text', { x: x + 48, y: 326, 'text-anchor': 'middle', 'font-size': 11, class: 'mono', text: m }, svg);
+    el('text', { x: x + 48, y: 345, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 700, style: `fill:${col}`,
+      text: !done ? `${n} seen` : n === 1 ? '✓ billed once' : n === 0 ? '✕ never billed' : `⚠ billed ×${n}` }, svg);
+  });
+  renderSteps();
+}
+
+function verdict() {
+  const counts = CDRS.map((_, i) => out.filter(o => o.cdr === i && visible(o)).length);
+  const lost = counts.filter(n => n === 0).length, dup = counts.filter(n => n > 1).length;
+  const v = document.getElementById('verdict');
+  v.className = 'pill ' + (lost ? 'bad' : dup ? 'warn' : 'ok');
+  v.textContent = lost ? `${lost} charge(s) lost` : dup ? `${dup} subscriber(s) double-billed` : 'every CDR billed exactly once';
+  logLine(logEl, `<b>result:</b> ${v.textContent} (reader: ${S.iso})`, true);
+}
+
+async function pause(ms) { render(); await sleep(reducedMotion ? 60 : ms); }
+
+async function run() {
+  if (S.running) return;
+  S.running = true; document.getElementById('run').disabled = true;
+  out = []; committed = 0; crashedAt = null; logEl.innerHTML = '';
+  const M = MODES[S.mode];
+  let off = 0, crashedOnce = false;
+  logLine(logEl, `▶ ${M.name}: ${M.steps.join(' → ')}`, true);
+  while (off < CDRS.length) {
+    active = off; let crashed = false;
+    for (let s = 0; s < M.steps.length; s++) {
+      if (!crashedOnce && S.crash === 'before' && off === 2 && s === M.commit) { crashed = true; break; }
+      curStep = s;
+      if (s === M.send) { out.push({ cdr: off, state: S.mode === 'eos' ? 'open' : 'plain' }); }
+      if (s === M.commit) {
+        committed = off + 1;
+        if (S.mode === 'eos') out.forEach(o => { if (o.state === 'open') o.state = 'committed'; });
+      }
+      await pause(420);
+      if (!crashedOnce && S.crash === 'after' && off === 2 && s === M.commit) { crashed = true; break; }
+    }
+    if (crashed) {
+      crashedOnce = true; crashedAt = off; curStep = -1;
+      logLine(logEl, `<b>✕ rating-svc crashed</b> on offset ${off} (${CDRS[off]}) ${S.crash === 'before' ? 'before' : 'after'} the offset commit`, true);
+      await pause(700);
+      if (S.mode === 'eos' && out.some(o => o.state === 'open')) {
+        out.forEach(o => { if (o.state === 'open') o.state = 'aborted'; });
+        logLine(logEl, 'restart: <code>initTransactions()</code> with the same transactional.id fences the old instance and <b>aborts</b> its open transaction', true);
+      }
+      logLine(logEl, `restart: group coordinator returns committed offset <b>${committed}</b> → resume from there` +
+        (committed > off ? ` — offset ${off} is <b>skipped</b>, never processed` : committed === off && out.some(o => o.cdr === off && o.state === 'plain') ? ` — offset ${off} will be <b>processed again</b>` : ''), true);
+      crashedAt = null;
+      off = committed;
+      await pause(500);
+      continue;
+    }
+    off++;
+  }
+  active = -1; curStep = -1; S.running = false; document.getElementById('run').disabled = false;
+  render(); verdict();
+}
+
+wireSeg('modeSeg', v => { S.mode = v; out = []; committed = 0; render(); logLine(logEl, `mode: <b>${MODES[v].name}</b> — ${MODES[v].steps.join(' → ')}`, true); });
+wireSeg('crashSeg', v => { S.crash = v; logLine(logEl, `crash point: <b>${v === 'none' ? 'no crash' : v + ' the offset commit'}</b> on CDR #3`); });
+wireSeg('isoSeg', v => { S.iso = v; render(); if (out.length && !S.running) verdict(); });
+document.getElementById('run').onclick = run;
+render();
+logLine(logEl, 'pick a mode and crash point, then run the pipeline', true);
+
+renderQuiz('quiz', [
+  { q: 'A consumer commits the offset <b>before</b> processing each batch. It crashes mid-batch. What is the outcome?',
+    options: ['Duplicates', 'Exactly-once', 'Lost records — the committed offset already points past them (at-most-once)', 'The batch is redelivered by the broker automatically'],
+    answer: 2, explain: 'Committing first means that restarts begin after records that were never processed. That is at-most-once: no duplicates, but possible loss.' },
+  { q: 'In at-least-once mode the service crashes after sending the charge but before <code>commitSync()</code>. What does the billing reader see?',
+    options: ['The charge once', 'No charge', 'An aborted charge', 'The charge twice: the CDR is re-read from the old committed offset and charged again'],
+    answer: 3, explain: 'The work finished but the progress was never saved, so the restarted consumer repeats it. At-least-once is safe only if the downstream write is idempotent, for example deduplicated by CDR ID.' },
+  { q: 'Which combination gives exactly-once for a read-process-write pipeline between two Kafka topics?',
+    options: ['Transactional producer + <code>sendOffsetsToTransaction()</code> + downstream <code>isolation.level=read_committed</code>', '<code>acks=all</code> + <code>enable.auto.commit=true</code>', '<code>enable.idempotence=true</code> alone', '<code>min.insync.replicas=3</code>'],
+    answer: 0, explain: 'Idempotence removes duplicates caused by producer retries. Transactions make the output records and the input offsets commit or abort together. read_committed hides the aborted records from readers.' },
+  { q: 'Exactly-once mode, crash before <code>commitTransaction()</code>, but the billing reader runs with the default isolation level. What happens?',
+    options: ['Nothing different; transactions protect everyone', 'The reader sees the <b>aborted</b> charge as well as the re-done one, so the subscriber is double-billed', 'The reader blocks forever', 'The reader gets an exception'],
+    answer: 1, explain: 'The default is <code>read_uncommitted</code>, which returns aborted transactional records too. Exactly-once needs every downstream consumer to opt in with <code>read_committed</code>.' },
+  { q: 'An MQ admin says: "Kafka is exactly-once now, so our consumer that updates the Oracle balance table can\'t double-apply." What is the right response?',
+    options: ['Correct, EOS covers every sink', 'Only if acks=all', 'Only on Confluent Platform', 'Kafka transactions cover Kafka-to-Kafka writes only. An external database write needs its own idempotency, such as upserting by CDR ID or storing offsets in the same DB transaction'],
+    answer: 3, explain: 'A Kafka transaction cannot include an external system. For a database sink, make the write idempotent or commit the offset in the same database transaction as the update.' }
+]);
+</script>
+</body>
+</html>

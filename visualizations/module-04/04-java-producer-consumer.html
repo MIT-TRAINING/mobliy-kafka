@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Java Producer &amp; Consumer Applications</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .cli-form .opt-p, .cli-form .opt-c { display: flex; }
+  .mode-c .opt-p, .mode-p .opt-c { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 4 · Producing &amp; Consuming Messages</a>
+    <div class="nav"><span>4 / 5</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 4</div>
+  <h1>Writing Kafka producer and consumer applications in Java</h1>
+  <p class="lede">You don't need to write the app, but you will be the one reading its stack trace. Build a
+    <code>KafkaProducer</code> or <code>KafkaConsumer</code> from the options below, read the Java that results, then
+    <b>Run</b> it against the shared cluster. Try to trigger each of the four classic startup failures.</p>
+
+  <div class="card mode-p" id="builder">
+    <div class="controls">
+      <div class="seg" role="group" aria-label="Application" id="appSeg">
+        <button data-v="p" aria-pressed="true">Producer app</button>
+        <button data-v="c" aria-pressed="false">Consumer app</button>
+      </div>
+      <button class="primary" id="run">▶ Run</button>
+      <span class="pill" id="verdict">not run yet</span>
+    </div>
+    <div class="cli-form">
+      <label>bootstrap.servers<select id="boot"><option value="apache-kafka.lab.internal:9092">apache-kafka.lab.internal:9092</option><option value="localhost:9092">localhost:9092</option></select></label>
+      <label class="opt-p">acks<select id="acks"><option>all</option><option>1</option></select></label>
+      <label class="opt-p">enable.idempotence<select id="idem"><option value="">(default)</option><option>true</option><option>false</option></select></label>
+      <label class="opt-p">compression.type<select id="comp"><option>none</option><option>lz4</option><option>zstd</option></select></label>
+      <label class="opt-p">send() style<select id="style"><option value="cb">async + callback</option><option value="get">sync .get()</option><option value="ff">fire-and-forget</option></select></label>
+      <label class="opt-c">group.id<select id="gid"><option value="billing-svc">billing-svc</option><option value="">(not set)</option></select></label>
+      <label class="opt-c">auto.offset.reset<select id="reset"><option>earliest</option><option value="latest">latest (default)</option></select></label>
+      <label class="opt-c">enable.auto.commit<select id="auto"><option>false</option><option value="true">true (default)</option></select></label>
+      <label class="opt-c">value deserializer<select id="deser"><option>StringDeserializer</option><option>LongDeserializer</option></select></label>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 190" role="img" aria-label="Client internals pipeline; click a stage to learn what it does"></svg></div>
+    <div class="code" id="code"></div>
+    <div class="term" id="term"><div class="term-empty">Press Run to start the app (mvn -q exec:java).</div></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Four startup failures and what they mean</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Symptom in the log</th><th>Root cause</th><th>Fix</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">ConfigException: Must set acks to all in order to use the idempotent producer</td><td><code>enable.idempotence=true</code> set explicitly with <code>acks=1</code></td><td>Use <code>acks=all</code>, or drop the explicit idempotence line</td></tr>
+        <tr><td class="mono">Connection to node -1 (localhost/127.0.0.1:9092) could not be established</td><td>Wrong <code>bootstrap.servers</code>; nothing is listening there</td><td>Point at the cluster address (on the lab VMs it's in <code>~/kafka/apache.properties</code>)</td></tr>
+        <tr><td class="mono">InvalidGroupIdException</td><td><code>subscribe()</code> or <code>commitSync()</code> without a <code>group.id</code></td><td>Set <code>group.id</code>, or use <code>assign()</code> and don't commit</td></tr>
+        <tr><td class="mono">RecordDeserializationException … at offset 0</td><td>The deserializer doesn't match what the producer wrote</td><td>Match the serializer and deserializer, or catch the exception and <code>seek()</code> past the record (Topic 5)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout warn"><b>The silent one:</b> a brand-new group with <code>auto.offset.reset=latest</code> (the default)
+    starts at the <b>end</b> of the log, so it reads nothing that was already there. Developers report "the consumer is broken".
+    Before you touch anything, check with <code>kafka-consumer-groups.sh --describe --group billing-svc</code>.</div>
+  <div class="callout"><b>Lifecycle rules worth enforcing in code review:</b> create one <code>KafkaProducer</code> per app and
+    share it (it's thread-safe); keep a <code>KafkaConsumer</code> on a single thread (it isn't); always <code>close()</code> in
+    <code>finally</code> so the producer flushes and the consumer leaves the group cleanly. Spring Boot's <code>KafkaTemplate</code>
+    and <code>@KafkaListener</code>, used in the lab projects, wrap exactly these classes.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="03-delivery-semantics.html"><small>← Previous</small>Delivery semantics</a>
+    <a class="next" href="05-error-handling-retries.html"><small>Next →</small>Error handling &amp; retry patterns</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), logEl = document.getElementById('log'), termEl = document.getElementById('term'), codeEl = document.getElementById('code');
+const $ = id => document.getElementById(id);
+const STAGES = {
+  p: [['KafkaProducer()', 'constructor validates every config — ConfigException happens here, before any network call'],
+      ['serializer', 'turns key/value objects into bytes (StringSerializer for JSON CDRs)'],
+      ['partitioner', 'hash(key) mod partitions — same MSISDN, same partition, ordered'],
+      ['accumulator', 'per-partition batches (batch.size / linger.ms, Topic 1)'],
+      ['sender thread', 'ships batches to partition leaders, handles retries until delivery.timeout.ms'],
+      ['cluster', 'leader appends; with acks=all waits for the ISR']],
+  c: [['KafkaConsumer()', 'constructor validates configs; subscribe() needs group.id'],
+      ['group join', 'finds the group coordinator, joins, receives partitions (Topic 2)'],
+      ['fetcher', 'fetches from committed offset, or auto.offset.reset if none exists'],
+      ['deserializer', 'bytes → objects; a mismatch throws RecordDeserializationException from poll()'],
+      ['your loop', 'process records returned by poll()'],
+      ['commit', 'commitSync() writes offsets to __consumer_offsets']],
+};
+let mode = 'p', failAt = -1, okUpTo = -1;
+
+function drawStages() {
+  svg.innerHTML = '';
+  const st = STAGES[mode];
+  st.forEach(([name, desc], i) => {
+    const x = 12 + i * 148, g = el('g', {}, svg);
+    const col = i === failAt ? 'var(--bad)' : i <= okUpTo ? 'var(--ok)' : 'var(--border)';
+    el('rect', { x, y: 50, width: 130, height: 56, rx: 10, fill: i === failAt ? 'var(--bad-soft)' : 'var(--surface)', stroke: col, 'stroke-width': 2 }, g);
+    el('text', { x: x + 65, y: 83, 'text-anchor': 'middle', 'font-size': 12.5, 'font-weight': 700, class: 'mono', text: name }, g);
+    if (i < st.length - 1) el('path', { d: `M${x + 132} 78 L${x + 146} 78`, stroke: 'var(--muted)', 'stroke-width': 2 }, svg);
+    svgButton(g, `${name}: ${desc}`, () => logLine(logEl, `<b>${name}</b> — ${desc}`, true));
+  });
+  el('text', { x: 12, y: 30, 'font-size': 12, class: 'muted', text: mode === 'p' ? 'Producer internals — click a stage' : 'Consumer internals — click a stage' }, svg);
+  el('text', { x: 12, y: 140, 'font-size': 12, style: `fill:${failAt >= 0 ? 'var(--bad)' : 'var(--ok)'}`, 'font-weight': 600,
+    text: failAt >= 0 ? `✕ failed at: ${st[failAt][0]}` : okUpTo >= 0 ? '✓ records flowed end to end' : '' }, svg);
+}
+
+const k = s => `<span class="kw">${s}</span>`, t = s => `<span class="ty">${s}</span>`, q = s => `<span class="str">"${s}"</span>`, c = s => `<span class="cm">// ${s}</span>`;
+const chg = s => `<span class="chg">${s}</span>`;
+
+function code() {
+  const L = [];
+  const put = (key, val, mark) => L.push((mark ? chg : x => x)(`props.put(${q(key)}, ${val});`));
+  L.push(`${t('Properties')} props = ${k('new')} ${t('Properties')}();`);
+  put('bootstrap.servers', q($('boot').value), $('boot').value.startsWith('localhost'));
+  if (mode === 'p') {
+    put('key.serializer', `${t('StringSerializer')}.${k('class')}.getName()`);
+    put('value.serializer', `${t('StringSerializer')}.${k('class')}.getName()`);
+    put('acks', q($('acks').value), $('acks').value !== 'all');
+    if ($('idem').value) put('enable.idempotence', q($('idem').value), true);
+    if ($('comp').value !== 'none') put('compression.type', q($('comp').value), true);
+    L.push('', `${k('try')} (${t('KafkaProducer')}&lt;${t('String')}, ${t('String')}&gt; producer = ${k('new')} ${t('KafkaProducer')}&lt;&gt;(props)) {`);
+    L.push(`  ${k('for')} (${t('Cdr')} cdr : cdrs) {`);
+    L.push(`    ${t('ProducerRecord')}&lt;${t('String')}, ${t('String')}&gt; rec = ${k('new')} ${t('ProducerRecord')}&lt;&gt;(${q('cdr.voice')}, cdr.msisdn(), cdr.toJson());`);
+    const s = $('style').value;
+    if (s === 'ff') L.push(chg(`    producer.send(rec);                      ${c('no callback: failures are invisible')}`));
+    if (s === 'get') L.push(chg(`    ${t('RecordMetadata')} md = producer.send(rec).get();  ${c('blocks per record')}`));
+    if (s === 'cb') { L.push(`    producer.send(rec, (md, ex) -&gt; {`, `      ${k('if')} (ex != ${k('null')}) log.error(${q('send failed')}, ex);`, `      ${k('else')} log.info(${q('{}-{}@{}')}, md.topic(), md.partition(), md.offset());`, '    });'); }
+    L.push('  }', `}  ${c('close() flushes pending batches')}`);
+  } else {
+    put('key.deserializer', `${t('StringDeserializer')}.${k('class')}.getName()`);
+    put('value.deserializer', `${t($('deser').value)}.${k('class')}.getName()`, $('deser').value !== 'StringDeserializer');
+    if ($('gid').value) put('group.id', q($('gid').value)); else L.push(chg(c('group.id not set')));
+    put('auto.offset.reset', q($('reset').value), $('reset').value === 'latest');
+    put('enable.auto.commit', q($('auto').value), $('auto').value === 'true');
+    L.push('', `${k('try')} (${t('KafkaConsumer')}&lt;${t('String')}, ${t('String')}&gt; consumer = ${k('new')} ${t('KafkaConsumer')}&lt;&gt;(props)) {`);
+    L.push(`  consumer.subscribe(${t('List')}.of(${q('cdr.voice')}));`);
+    L.push(`  ${k('while')} (running) {`);
+    L.push(`    ${t('ConsumerRecords')}&lt;${t('String')}, ${t('String')}&gt; recs = consumer.poll(${t('Duration')}.ofMillis(<span class="num">500</span>));`);
+    L.push(`    ${k('for')} (${t('ConsumerRecord')}&lt;${t('String')}, ${t('String')}&gt; r : recs) rate(r.key(), r.value());`);
+    if ($('auto').value === 'false') L.push(`    consumer.commitSync();   ${c('after processing → at-least-once')}`);
+    else L.push(`    ${c('auto-commit inside poll() every 5 s')}`);
+    L.push('  }', '}');
+  }
+  codeEl.innerHTML = L.join('\n');
+}
+
+async function run() {
+  termEl.innerHTML = ''; failAt = -1; okUpTo = -1; drawStages();
+  const v = $('verdict');
+  const fail = (stage, cmd, lines, msg) => { failAt = stage; termRun(termEl, cmd, lines, true); v.className = 'pill bad'; v.textContent = msg; logLine(logEl, `<b>${msg}</b>`, true); drawStages(); };
+  const ok = (msg) => { okUpTo = 5; v.className = 'pill ok'; v.textContent = msg; logLine(logEl, msg, true); drawStages(); };
+  const cmd = `mvn -q exec:java -Dexec.mainClass=com.telco.${mode === 'p' ? 'CdrProducer' : 'BillingConsumer'}`;
+  const boot = $('boot').value;
+  if (mode === 'p') {
+    if ($('idem').value === 'true' && $('acks').value === '1')
+      return fail(0, cmd, ['org.apache.kafka.common.config.ConfigException: Must set acks to all in order to use the idempotent producer.', 'Otherwise we cannot guarantee idempotence.', '    at org.apache.kafka.clients.producer.ProducerConfig.postProcessAndValidateIdempotenceConfigs(...)'], 'ConfigException in the constructor');
+    if (boot.startsWith('localhost'))
+      return fail(4, cmd, ['WARN [Producer clientId=producer-1] Connection to node -1 (localhost/127.0.0.1:9092) could not be established. Node may not be available.', 'WARN [Producer clientId=producer-1] Bootstrap broker localhost:9092 (id: -1 rack: null) disconnected', '… (repeats) …', 'org.apache.kafka.common.errors.TimeoutException: Topic cdr.voice not present in metadata after 60000 ms.'], 'cannot reach bootstrap servers');
+    const info = [];
+    if ($('acks').value === '1' && !$('idem').value) info.push("INFO Idempotence will be disabled because acks is set to 1, not set to 'all'.");
+    const s = $('style').value;
+    const lines = info.concat(s === 'ff' ? ['(no output: 5 records handed to send(), outcome unknown)']
+      : [0, 1, 2, 3, 4].map(i => `INFO cdr.voice-${[2, 0, 1, 2, 1][i]}@${1040 + i}`));
+    termRun(termEl, cmd, lines);
+    if ($('idem').value === 'false') termRun(termEl, '# enable.idempotence=false: a retried batch can now be written twice', []);
+    if (s === 'get') termRun(termEl, '# 5 records took ~5 round trips: .get() serialises every send', []);
+    return ok(s === 'ff' ? 'sent — but a failure would have been silent' : '5 CDRs produced and acknowledged');
+  }
+  if (boot.startsWith('localhost'))
+    return fail(1, cmd, ['WARN [Consumer clientId=consumer-billing-svc-1, groupId=billing-svc] Connection to node -1 (localhost/127.0.0.1:9092) could not be established. Node may not be available.', '… poll() keeps returning 0 records while it retries …'], 'cannot reach bootstrap servers');
+  if (!$('gid').value)
+    return fail(1, cmd, ['org.apache.kafka.common.errors.InvalidGroupIdException: To use the group management or offset commit APIs, you must provide a valid group.id in the consumer configuration.'], 'InvalidGroupIdException on subscribe()');
+  if ($('reset').value === 'latest') {
+    failAt = -1; okUpTo = 2; drawStages();
+    termRun(termEl, cmd, ['INFO [Consumer groupId=billing-svc] Adding newly assigned partitions: cdr.voice-0, cdr.voice-1, cdr.voice-2', 'INFO Found no committed offset for partition cdr.voice-0', 'INFO Resetting offset for partition cdr.voice-0 to position FetchPosition{offset=1045, …}.', 'polled 0 records', 'polled 0 records', 'polled 0 records']);
+    v.className = 'pill warn'; v.textContent = 'runs, but reads nothing (new group + latest)';
+    return logLine(logEl, '<b>new group + auto.offset.reset=latest</b> → starts at the log end; 1,045 existing CDRs skipped', true);
+  }
+  if ($('deser').value === 'LongDeserializer')
+    return fail(3, cmd, ['INFO Resetting offset for partition cdr.voice-0 to position FetchPosition{offset=0, …}.', 'org.apache.kafka.common.errors.RecordDeserializationException: Error deserializing VALUE for partition cdr.voice-0 at offset 0. If needed, please seek past the record to continue consumption.', 'Caused by: org.apache.kafka.common.errors.SerializationException: Size of data received by LongDeserializer is not 8'], 'RecordDeserializationException in poll()');
+  termRun(termEl, cmd, ['INFO Adding newly assigned partitions: cdr.voice-0, cdr.voice-1, cdr.voice-2', 'INFO Resetting offset for partition cdr.voice-0 to position FetchPosition{offset=0, …}.', 'rated 500 CDRs', 'rated 500 CDRs', 'rated 45 CDRs'].concat($('auto').value === 'true' ? ['(offsets committed by auto-commit every 5 s)'] : ['commitSync() → offsets 1045 committed for billing-svc']));
+  ok('consumed and committed 1,045 CDRs');
+}
+
+function refresh() { $('builder').className = 'card mode-' + mode; failAt = -1; okUpTo = -1; drawStages(); code(); }
+wireSeg('appSeg', v => { mode = v; refresh(); termEl.innerHTML = '<div class="term-empty">Press Run to start the app (mvn -q exec:java).</div>'; logLine(logEl, v === 'p' ? 'building a <b>producer</b> for cdr.voice' : 'building a <b>consumer</b> in group billing-svc', true); });
+document.querySelectorAll('.cli-form select').forEach(s => s.onchange = () => { refresh(); logLine(logEl, `${s.id} → <b>${s.value || '(unset)'}</b> (highlighted lines differ from the safe defaults)`); });
+$('run').onclick = run;
+refresh();
+logLine(logEl, 'highlighted code lines show where you have left the safe defaults', true);
+
+renderQuiz('quiz', [
+  { q: 'A developer calls <code>producer.send(rec)</code> without a callback or <code>.get()</code>. The topic\'s ISR is below <code>min.insync.replicas</code>. What does the app see?',
+    options: ['An exception thrown by send()', 'Nothing. The failure is delivered to a Future nobody reads, so the record is silently dropped from the app\'s point of view', 'A warning in the broker log only', 'The record is stored locally and replayed later'],
+    answer: 1, explain: '<code>send()</code> is asynchronous. Errors arrive through the returned Future or the callback, so fire-and-forget code never finds out. Always attach a callback that logs or alerts.' },
+  { q: 'Why is <code>producer.send(rec).get()</code> in a loop slow?',
+    options: ['It blocks for a full round trip per record, so batching never happens', 'get() disables compression', 'get() forces acks=0', 'It opens a new connection each time'],
+    answer: 0, explain: 'Waiting for each acknowledgement means the accumulator only ever holds one record. An async callback gives the same error visibility and keeps batching.' },
+  { q: 'A consumer throws <code>InvalidGroupIdException</code> at startup. What is wrong?',
+    options: ['The group is already full', 'The topic does not exist', 'The broker is ZooKeeper-based', '<code>group.id</code> is missing, but the code uses <code>subscribe()</code> or commits offsets'],
+    answer: 3, explain: 'Group management and offset commits both need a group.id. Without one, you can only use <code>assign()</code> and track offsets yourself.' },
+  { q: 'A new consumer group runs with no errors but never receives any of the 1 million CDRs already in the topic. What is the most likely cause?',
+    options: ['Retention deleted them', 'Wrong deserializer', '<code>auto.offset.reset=latest</code> (the default) — with no committed offset, the group starts at the end of the log', 'The topic is compacted'],
+    answer: 2, explain: 'auto.offset.reset only applies when the group has no committed offset, and <code>latest</code> skips existing data. Set it to <code>earliest</code>, or reset the group\'s offsets with <code>kafka-consumer-groups.sh --reset-offsets --to-earliest --execute</code>.' },
+  { q: 'Which statement about thread-safety is correct?',
+    options: ['KafkaProducer is thread-safe and should be shared; KafkaConsumer must be used from one thread', 'Both KafkaProducer and KafkaConsumer are thread-safe', 'Neither is thread-safe', 'KafkaConsumer is thread-safe; KafkaProducer is not'],
+    answer: 0, explain: 'One shared producer batches better. A consumer throws <code>ConcurrentModificationException</code> if two threads call it, so scale with more consumers in the group, one thread each.' }
+]);
+</script>
+</body>
+</html>

@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consumer Groups, Offsets &amp; Rebalancing</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 4 · Producing &amp; Consuming Messages</a>
+    <div class="nav"><span>2 / 5</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 2</div>
+  <h1>Consumer groups, offset management &amp; rebalancing</h1>
+  <p class="lede">A consumer group splits a topic's partitions among its members. Each member reads only its own partitions
+    and saves its progress as a <b>committed offset</b> in <code>__consumer_offsets</code>. Add consumers until the group keeps
+    up, then <b>crash one</b> (click its box) and count how many CDRs get processed twice under each commit strategy.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Rebalance protocol</span>
+      <div class="seg" role="group" aria-label="Rebalance protocol" id="protoSeg">
+        <button data-v="eager" aria-pressed="false">eager (RangeAssignor)</button>
+        <button data-v="coop" aria-pressed="true">cooperative-sticky</button>
+      </div>
+      <span class="ctl-label">Commit strategy</span>
+      <div class="seg" role="group" aria-label="Commit strategy" id="commitSeg">
+        <button data-v="auto" aria-pressed="true">auto (every 5 s)</button>
+        <button data-v="manual" aria-pressed="false">manual commitSync after each batch</button>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="primary" id="add">Add consumer</button>
+      <button id="remove">Remove last (graceful close)</button>
+      <button id="reset">Reset group</button>
+      <span class="pill" id="gstate">Stable</span>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 360" role="img" aria-label="Six partitions of cdr.voice assigned to consumers of group billing-svc"></svg></div>
+    <div class="stats" id="stats"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Three offsets to keep apart</h2>
+  <div class="card">
+    <dl class="terms">
+      <dt>log-end offset</dt><dd>The offset the next produced record will get, per partition.</dd>
+      <dt>position</dt><dd>The next offset this consumer will fetch. It lives only in the consumer's memory.</dd>
+      <dt>committed offset</dt><dd>Stored in <code>__consumer_offsets</code>. A new owner starts reading here after a crash or rebalance.</dd>
+      <dt>consumer lag</dt><dd>log-end offset − committed offset. <code>kafka-consumer-groups.sh --describe</code> shows this per partition.</dd>
+    </dl>
+  </div>
+
+  <h2>Commit strategies compared</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Strategy</th><th>How</th><th>After a crash</th><th>Use when</th></tr></thead>
+      <tbody>
+        <tr><td>Auto commit</td><td><code>enable.auto.commit=true</code>, <code>auto.commit.interval.ms=5000</code> (defaults); commits happen inside <code>poll()</code></td><td>Up to ~5 s of records reprocessed</td><td>Simple consumers where duplicates are harmless</td></tr>
+        <tr><td>Sync after each batch</td><td><code>enable.auto.commit=false</code> + <code>commitSync()</code> after processing</td><td>At most one batch reprocessed</td><td>Billing, CDR rating: the default for this course</td></tr>
+        <tr><td>Async + sync on close</td><td><code>commitAsync()</code> in the loop, <code>commitSync()</code> in <code>finally</code> / on revoke</td><td>A few batches at most</td><td>High throughput with a clean shutdown path</td></tr>
+        <tr><td>Traditional MQ</td><td>Per-message acknowledge and delete</td><td>Unacked message redelivered</td><td>Kafka keeps the data, so you choose where to restart</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Kafka 4.x note:</b> the new consumer rebalance protocol (KIP-848, <code>group.protocol=consumer</code>)
+    is generally available. The group coordinator on the broker computes assignments and moves partitions one at a time,
+    so there is no group-wide pause. The classic protocol (<code>group.protocol=classic</code>) is still the client default,
+    and it is what this simulation shows.</div>
+  <div class="callout warn"><b>Admin gotcha:</b> a consumer that takes longer than <code>max.poll.interval.ms</code> (default
+    5 min) between <code>poll()</code> calls is kicked out of the group even though its heartbeats are fine. The group rebalances,
+    its uncommitted work is replayed, and it can loop forever. Fix the processing time or lower <code>max.poll.records</code>.
+    Adding consumers won't help. Check with
+    <code>kafka-consumer-groups.sh --bootstrap-server … --describe --group billing-svc</code>.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="01-producer-tuning.html"><small>← Previous</small>Producer configuration tuning</a>
+    <a class="next" href="03-delivery-semantics.html"><small>Next →</small>Delivery semantics</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), logEl = document.getElementById('log'), statsEl = document.getElementById('stats');
+const NP = 6, PRODUCE = 2, CAPACITY = 5, DETECT = 6, EAGER_PAUSE = 3, COOP_PAUSE = 2, AUTO_EVERY = 10;
+let S, P, C, nextId;
+
+function reset() {
+  S = { proto: S ? S.proto : 'coop', commit: S ? S.commit : 'auto', tick: 0, rebalances: 0, replayed: 0, state: 'Stable' };
+  P = Array.from({ length: NP }, () => ({ leo: 40, pos: 40, committed: 40, owner: null, paused: 0, acc: 0 }));
+  C = []; nextId = 0;
+  logEl.innerHTML = '';
+  join(); join();
+  logLine(logEl, 'group <b>billing-svc</b> subscribed to cdr.voice (6 partitions) — 2 consumers', true);
+}
+
+function members() { return C.filter(c => !c.left); }
+
+function rangeAssign(ms) {
+  const out = new Array(NP).fill(null);
+  const base = Math.floor(NP / ms.length), extra = NP % ms.length;
+  let p = 0;
+  ms.forEach((m, i) => { const n = base + (i < extra ? 1 : 0); for (let k = 0; k < n; k++) out[p++] = m.id; });
+  return out;
+}
+function stickyAssign(ms) {
+  const ids = ms.map(m => m.id);
+  const out = P.map(p => ids.includes(p.owner) ? p.owner : null);
+  const base = Math.floor(NP / ms.length), extra = NP % ms.length;
+  const quota = {}; ids.forEach((id, i) => quota[id] = base + (i < extra ? 1 : 0));
+  ids.forEach(id => { let owned = out.map((o, i) => o === id ? i : -1).filter(i => i >= 0);
+    while (owned.length > quota[id]) out[owned.pop()] = null; });
+  out.forEach((o, i) => { if (o === null) { const id = ids.find(x => out.filter(v => v === x).length < quota[x]); out[i] = id ?? null; } });
+  return out;
+}
+
+function rebalance(reason) {
+  const ms = members();
+  S.rebalances++;
+  const next = ms.length ? (S.proto === 'eager' ? rangeAssign(ms) : stickyAssign(ms)) : new Array(NP).fill(null);
+  let moved = 0;
+  P.forEach((p, i) => {
+    const live = C.some(c => c.id === p.owner && !c.left && !c.crashed);
+    const revoked = S.proto === 'eager' || p.owner !== next[i];
+    if (revoked && live) p.committed = p.pos;                          // onPartitionsRevoked → commit before handing off
+    if (p.owner !== next[i]) {
+      S.replayed += Math.max(0, p.pos - p.committed);
+      p.pos = p.committed; p.acc = 0; moved++;
+    }
+    if (revoked) p.paused = S.proto === 'eager' ? EAGER_PAUSE : COOP_PAUSE;
+    p.owner = next[i];
+  });
+  S.state = 'PreparingRebalance';
+  logLine(logEl, `<b>rebalance #${S.rebalances}</b> (${reason}) — ` + (S.proto === 'eager'
+    ? `eager: <b>every</b> partition revoked, whole group pauses; ${moved} partition(s) change owner`
+    : `cooperative: only the ${moved} partition(s) that move are paused; the rest keep flowing`), true);
+  const idle = ms.filter(m => !next.includes(m.id));
+  if (idle.length) logLine(logEl, `${idle.map(m => m.name).join(', ')} got <b>no partitions</b> — more consumers than partitions means idle members`, true);
+  render();
+}
+
+function join() {
+  if (members().length >= 7) { logLine(logEl, 'max 7 consumers in this demo — 6 partitions already caps useful parallelism at 6'); return; }
+  const id = nextId++;
+  C.push({ id, name: `consumer-${id + 1}`, crashed: false, missed: 0, left: false });
+  if (C.length > 1 || S.tick > 0) rebalance(`consumer-${id + 1} joined`);
+  else { P.forEach(p => p.owner = id); render(); }
+}
+
+function crash(c) {
+  if (c.crashed) { c.crashed = false; c.missed = 0; c.left = true;
+    const id = nextId++; C.push({ id, name: `consumer-${id + 1}`, crashed: false, missed: 0, left: false });
+    logLine(logEl, `${c.name}'s pod restarted as <b>consumer-${id + 1}</b> — joins the group`, true);
+    rebalance(`consumer-${id + 1} joined`); return; }
+  c.crashed = true; c.missed = 0;
+  logLine(logEl, `<b>${c.name} crashed</b> (kill -9) — no commit, no LeaveGroup. Its partitions are stuck until the coordinator notices missing heartbeats`, true);
+  render();
+}
+
+function tick() {
+  S.tick++;
+  if (S.state === 'PreparingRebalance' && P.every(p => p.paused <= 1)) S.state = 'Stable';
+  C.forEach(c => {
+    if (!c.crashed || c.left) return;
+    c.missed++;
+    if (c.missed === DETECT) { c.left = true; rebalance(`session.timeout.ms expired for ${c.name}`); }
+  });
+  P.forEach((p, i) => {
+    p.leo += PRODUCE;
+    if (p.paused > 0) { p.paused--; return; }
+    const owner = C.find(c => c.id === p.owner);
+    if (!owner || owner.crashed || owner.left) return;
+    const share = P.filter(q => q.owner === owner.id).length;
+    p.acc += CAPACITY / share;
+    const take = Math.floor(p.acc); p.acc -= take;
+    p.pos = Math.min(p.leo, p.pos + take);
+    if (S.commit === 'manual') p.committed = p.pos;
+  });
+  if (S.commit === 'auto' && S.tick % AUTO_EVERY === 0) {
+    P.forEach(p => { const o = C.find(c => c.id === p.owner); if (o && !o.crashed && !o.left && !p.paused) p.committed = p.pos; });
+    logLine(logEl, 'auto-commit: live consumers committed their current positions (auto.commit.interval.ms=5000)');
+  }
+  render();
+}
+
+function render() {
+  svg.innerHTML = '';
+  el('text', { x: 16, y: 22, 'font-size': 12, class: 'muted', text: `cdr.voice · producer adds ${PRODUCE}/partition/tick · each consumer processes ~${CAPACITY}/tick · time compressed (session.timeout.ms 45 s ≈ 3 s here)` }, svg);
+  const ms = members();
+  const cy = id => { const k = ms.findIndex(m => m.id === id); return 50 + k * 44; };
+  P.forEach((p, i) => {
+    const y = 44 + i * 50;
+    const lag = p.leo - p.committed;
+    el('rect', { x: 16, y, width: 470, height: 40, rx: 8, fill: 'var(--surface)', stroke: p.paused ? 'var(--warn)' : 'var(--border)', 'stroke-dasharray': p.paused ? '5 3' : '' }, svg);
+    el('text', { x: 28, y: y + 17, 'font-size': 12, 'font-weight': 700, class: 'mono', text: `cdr.voice-${i}` }, svg);
+    el('text', { x: 28, y: y + 33, 'font-size': 10.5, class: 'muted', text: `LEO ${p.leo} · pos ${p.pos} · committed ${p.committed}` + (p.paused ? ' · paused' : '') }, svg);
+    el('rect', { x: 250, y: y + 13, width: 170, height: 14, rx: 4, fill: 'var(--surface-2)' }, svg);
+    el('rect', { x: 250, y: y + 13, width: Math.min(170, lag * 3), height: 14, rx: 4, fill: lag > 30 ? 'var(--bad)' : lag > 10 ? 'var(--warn)' : 'var(--ok)' }, svg);
+    el('text', { x: 476, y: y + 25, 'text-anchor': 'end', 'font-size': 11, 'font-weight': 600, text: `lag ${lag}` }, svg);
+    if (p.owner !== null && ms.some(m => m.id === p.owner)) {
+      const owner = C.find(c => c.id === p.owner);
+      el('path', { d: `M486 ${y + 20} C 560 ${y + 20}, 560 ${cy(p.owner) + 17}, 640 ${cy(p.owner) + 17}`, fill: 'none',
+        stroke: PCOLORS[p.owner % 6], 'stroke-width': 2, opacity: owner.crashed ? .35 : .9, 'stroke-dasharray': owner.crashed || p.paused ? '5 4' : '' }, svg);
+    }
+  });
+  ms.forEach(m => {
+    const y = cy(m.id), owned = P.filter(p => p.owner === m.id).length;
+    const g = el('g', {}, svg);
+    el('rect', { x: 640, y, width: 244, height: 34, rx: 8, fill: m.crashed ? 'var(--bad-soft)' : 'var(--surface)',
+      stroke: m.crashed ? 'var(--bad)' : PCOLORS[m.id % 6], 'stroke-width': 2 }, g);
+    el('text', { x: 654, y: y + 22, 'font-size': 13, 'font-weight': 700, text: m.name }, g);
+    el('text', { x: 872, y: y + 22, 'text-anchor': 'end', 'font-size': 11,
+      style: `fill:${m.crashed ? 'var(--bad)' : owned ? 'var(--muted)' : 'var(--warn)'}`,
+      text: m.crashed ? `✕ crashed · ${DETECT - m.missed} heartbeats to timeout` : owned ? `${owned} partition(s) · click to crash` : 'idle · click to crash' }, g);
+    svgButton(g, `${m.name}: ${m.crashed ? 'restart' : 'crash'}`, () => crash(m));
+  });
+  const totalLag = P.reduce((a, p) => a + p.leo - p.committed, 0);
+  const idle = ms.filter(m => !P.some(p => p.owner === m.id)).length;
+  statsEl.innerHTML = `
+    <div class="stat"><b>${ms.filter(m => !m.crashed).length}</b><span>live members</span></div>
+    <div class="stat"><b style="color:${totalLag > 120 ? 'var(--bad)' : 'inherit'}">${totalLag}</b><span>total consumer lag</span></div>
+    <div class="stat"><b>${S.rebalances}</b><span>rebalances</span></div>
+    <div class="stat"><b style="color:${S.replayed ? 'var(--warn)' : 'inherit'}">${S.replayed}</b><span>records reprocessed</span></div>
+    <div class="stat"><b>${idle}</b><span>idle consumers</span></div>`;
+  const gs = document.getElementById('gstate');
+  gs.textContent = `group state: ${S.state}`;
+  gs.className = 'pill ' + (S.state === 'Stable' ? 'ok' : 'warn');
+}
+
+wireSeg('protoSeg', v => { S.proto = v; logLine(logEl, v === 'eager' ? 'protocol: <b>eager</b> — every rebalance revokes all partitions from all members' : 'protocol: <b>cooperative-sticky</b> — members keep what they own; only moved partitions are revoked', true); });
+wireSeg('commitSeg', v => { S.commit = v; logLine(logEl, v === 'auto' ? 'commit: <b>auto</b> every 5 s — a crash replays everything since the last auto-commit' : 'commit: <b>manual commitSync()</b> after each processed batch — a crash replays at most one batch', true); });
+document.getElementById('add').onclick = join;
+document.getElementById('remove').onclick = () => {
+  const ms = members().filter(m => !m.crashed);
+  if (ms.length <= 1) { logLine(logEl, 'keep at least one live consumer in this demo'); return; }
+  const m = ms[ms.length - 1];
+  P.forEach(p => { if (p.owner === m.id) p.committed = p.pos; });
+  m.left = true;
+  logLine(logEl, `${m.name}.close() — commits its final offsets and sends LeaveGroup: <b>no reprocessing, no timeout wait</b>`, true);
+  rebalance(`${m.name} left`);
+};
+document.getElementById('reset').onclick = reset;
+
+reset();
+setInterval(tick, 500);
+
+renderQuiz('quiz', [
+  { q: '<code>cdr.voice</code> has 6 partitions and group <code>billing-svc</code> runs 8 consumers. What happens?',
+    options: ['All 8 share the load evenly', 'Kafka creates 2 extra partitions', 'The group refuses to start', '6 consumers get one partition each and 2 sit idle'],
+    answer: 3, explain: 'Within a group, each partition goes to exactly one consumer, so parallelism is capped at the partition count. The extra members sit idle, although they are useful as hot standbys.' },
+  { q: 'A consumer with auto commit (every 5 s) is killed with <code>kill -9</code> 4 seconds after its last commit. What happens to the records it processed in those 4 seconds?',
+    options: ['The new owner starts at the last committed offset and <b>processes them again</b>', 'They are lost', 'Kafka rolls them back', 'They go to __consumer_offsets'],
+    answer: 0, explain: 'The committed offset is the only progress that survives a crash. Everything after it is fetched and processed again, which is at-least-once behaviour. Committing after each batch shrinks that window.' },
+  { q: 'What is the practical difference between eager and cooperative-sticky rebalancing?',
+    options: ['Cooperative commits offsets automatically', 'Eager revokes every partition from every member (a stop-the-world pause); cooperative only revokes the partitions that move', 'Eager is only for KRaft clusters', 'There is none; they are aliases'],
+    answer: 1, explain: 'With eager rebalancing, the whole group stops for every membership change. Cooperative-sticky (and the new KIP-848 protocol) keeps unaffected partitions flowing, which matters a lot for large groups and rolling deploys.' },
+  { q: 'Consumers in a group keep getting kicked out and rejoining, even though the brokers are healthy. Processing one batch takes ~7 minutes. What is the cause?',
+    options: ['session.timeout.ms is too high', 'Too many partitions', 'The time between <code>poll()</code> calls exceeds <code>max.poll.interval.ms</code> (default 5 min)', 'Auto commit is off'],
+    answer: 2, explain: 'Heartbeats run on a background thread, so the session stays alive. But a member that does not call poll() within max.poll.interval.ms is considered stuck and removed. Reduce <code>max.poll.records</code> or speed up processing.' },
+  { q: 'A traditional MQ admin asks: "After the consumer reads a record, is it removed from the topic?" What is the correct answer?',
+    options: ['Yes, once committed', 'No. The record stays until retention removes it; the group only moves its committed offset, so you can rewind with <code>--reset-offsets</code>', 'Only with acks=all', 'Only for compacted topics'],
+    answer: 1, explain: 'Consuming never deletes data in Kafka. Other groups read the same records independently, and an admin can move a group\'s offsets back to replay (Module 2, Topic 2).' }
+]);
+</script>
+</body>
+</html>
