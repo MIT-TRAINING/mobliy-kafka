@@ -48,6 +48,13 @@
     <build>
         <finalName>cdr-clients</finalName>
         <plugins>
+            <!-- Pinned: older Maven installs default to compiler-plugin 3.1, which ignores
+                 maven.compiler.release and falls back to Java 5 (unsupported on JDK 9+) -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+            </plugin>
             <!-- One runnable jar with all dependencies: java -jar target/cdr-clients.jar <command> ... -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
