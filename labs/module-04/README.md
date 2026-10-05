@@ -35,7 +35,7 @@ is independent of Labs 01–03 and can be done at any point in the module.
 | VS Code with Remote-SSH (GitHub Copilot optional) | VS Code → Remote Explorer | Lab 01 Part 6 uses Copilot Chat if you have a licence; the lab works without it |
 | Port **8080** free on the VM | `ss -ltn \| grep 8080` | Used by the Spring Boot app (Labs 02–03) |
 | 3–4 terminals | VS Code → Terminal → Split | Consumers, producer and CLI side by side |
-| **Lab 04 only:** Docker and ports 9092–9094, 2181, 8088, 7071, 7072 free | `docker compose version` | Local ZooKeeper cluster + Kafka UI (~2.5 GB RAM). Forward port 8088 in VS Code to open Kafka UI |
+| **Lab 04 only:** Docker and ports 9092–9094, 2181, 8088, 7071, 7072 free | `docker compose version` | Local ZooKeeper cluster + Kafka UI (~2.5 GB RAM). Kafka UI opens at `https://lab-lNN.kafka.supercloudlabs.com/absproxy/8088/`, not at `/proxy/8088/` |
 
 > **No Docker cluster in Labs 01–03.** They run against the shared
 > cluster. (Lab 04 starts its own local ZooKeeper cluster from

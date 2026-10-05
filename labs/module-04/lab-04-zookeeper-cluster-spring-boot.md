@@ -41,7 +41,7 @@ to:
 | --------- | ------- | --- |
 | Broker image | `apache/kafka:3.9.2` | Apache Kafka **4.0 removed ZooKeeper mode**. 3.9.x is the last Apache Kafka line that can run with ZooKeeper |
 | ZooKeeper | `zookeeper:3.8.5` (official Apache image) | The ZooKeeper line that Kafka 3.9 is built and tested against |
-| Kafka UI | `provectuslabs/kafka-ui:v0.7.2` | Web UI for the cluster on **http://localhost:8088** (8080 stays free for `cdr-billing-spring`) |
+| Kafka UI | `provectuslabs/kafka-ui:v0.7.2` | Web UI for the cluster on port **8088**, under the path `/absproxy/8088/` (see [Opening Kafka UI](#opening-kafka-ui)) |
 | Spring Boot / Spring for Apache Kafka | 4.1.1 / 4.1.1 | Latest GA releases |
 | Kafka Java client (`kafka-clients`) | **4.3.1** | Latest Apache Kafka client, pinned in each `pom.xml` |
 
@@ -60,7 +60,7 @@ flowchart LR
         direction TB
         P["spring-boot-kafka-producer<br/>:7071  POST /publish"]
         C["spring-boot-kafka-consumer<br/>:7072  @KafkaListener"]
-        B["Browser<br/>http://localhost:8088"]
+        B["Browser<br/>…/absproxy/8088/"]
         subgraph NET["Docker network kafka-net"]
             direction TB
             ZK[("zookeeper :2181<br/>metadata · controller election")]
@@ -88,7 +88,7 @@ flowchart LR
 | ---- | ---------------- | ------------------------------ |
 | Brokers | `localhost:9092`, `localhost:9093`, `localhost:9094` | `kafka-1:29092`, `kafka-2:29092`, `kafka-3:29092` (`$BS`) |
 | ZooKeeper | `localhost:2181` | `zookeeper:2181` |
-| Kafka UI | http://localhost:8088 | — |
+| Kafka UI | See [Opening Kafka UI](#opening-kafka-ui) | — |
 | Producer app / consumer app | http://localhost:7071 / :7072 | — |
 
 > **Convention used in this lab**
@@ -100,9 +100,29 @@ flowchart LR
 >   (`kafka-1:29092,...`). Use these tools here, **not** the Kafka 4.x CLI and
 >   `$CFG` on the VM, which point at the shared cluster.
 >
-> **On the lab VM**, VS Code Remote-SSH forwards ports to your laptop: open the
-> **Ports** tab and add `8088` if it is not forwarded automatically. Then
-> http://localhost:8088 in your laptop's browser reaches Kafka UI on the VM.
+### Opening Kafka UI
+
+Kafka UI runs **on the VM**, so `http://localhost:8088` in your laptop's
+browser does not reach it: there, `localhost` is your laptop. Use the URL for
+the way you work:
+
+| You use the VM through | Open |
+| ---------------------- | ---- |
+| **The browser** (code-server at `https://lab-lNN.kafka.supercloudlabs.com`) | **`https://lab-lNN.kafka.supercloudlabs.com/absproxy/8088/`**. Replace `lNN` with your VM. You must be logged in to code-server in the same browser |
+| **VS Code desktop + Remote-SSH** | Forward port `8088` in the **Ports** tab, then **`http://localhost:8088/absproxy/8088/`** |
+| Docker on your own laptop | `http://localhost:8088/absproxy/8088/` |
+
+> **Use `/absproxy/`, not `/proxy/`.** code-server also offers
+> `https://…/proxy/8088/` (that is what the *Ports* tab links to), but it strips
+> the `/proxy/8088` prefix before passing the request on. Kafka UI's page loads
+> its scripts from absolute paths like `/assets/index-….js`. Behind `/proxy/`
+> the browser requests them from code-server's root, gets 404, and you see a
+> blank page. The Compose file starts Kafka UI with
+> `SERVER_SERVLET_CONTEXT_PATH=/absproxy/8088`, so every page, script and API
+> call lives under `/absproxy/8088/`, which code-server forwards unchanged.
+>
+> Do not move Kafka UI to port 8080: code-server itself listens on
+> `127.0.0.1:8080` on the lab VMs.
 
 ---
 
@@ -312,7 +332,7 @@ Leave this shell open.
 
 ## Part 3 — Tour the cluster in Kafka UI (5 min)
 
-Open **http://localhost:8088**. The cluster appears as **lab-04-local**.
+Open Kafka UI (**`https://lab-lNN.kafka.supercloudlabs.com/absproxy/8088/`**, or the other URLs in [Opening Kafka UI](#opening-kafka-ui)). The cluster appears as **lab-04-local**.
 
 | Page | Check |
 | ---- | ----- |

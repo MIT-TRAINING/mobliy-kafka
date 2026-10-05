@@ -8,7 +8,8 @@
 #   Start:   docker compose up -d
 #   Stop:    docker compose down        (keeps data in the named volumes)
 #   Reset:   docker compose down -v     (deletes all topics and data)
-#   Web UI:  http://localhost:8088   (8080 is left free for cdr-billing-spring)
+#   Web UI:  lab VM in the browser (code-server):  https://lab-lNN.kafka.supercloudlabs.com/absproxy/8088/
+#            laptop / VS Code Remote-SSH:          http://localhost:8088/absproxy/8088/
 #
 # Why Kafka 3.9: Apache Kafka 4.x removed ZooKeeper mode entirely, so
 # apache/kafka:4.x can only run KRaft. 3.9 is the last Apache Kafka release line
@@ -152,6 +153,13 @@ services:
 
   # Web UI for the cluster: brokers, topics, messages, consumer groups and lag.
   # It connects over the internal PLAINTEXT listener, like any other container.
+  #
+  # Base path /absproxy/8088: the lab VMs are used through code-server, which
+  # publishes port 8088 at https://<vm>/proxy/8088/ and /absproxy/8088/.
+  # /proxy/ strips the prefix, but Kafka UI's page loads its scripts from
+  # absolute paths (/assets/...), so they 404 and the dashboard stays blank.
+  # /absproxy/ forwards the full path, and Kafka UI serves everything under it.
+  # To serve from / instead (plain laptop): KAFKA_UI_BASE_PATH= docker compose up -d
   kafka-ui:
     image: provectuslabs/kafka-ui:v0.7.2
     container_name: kafka-ui
@@ -160,6 +168,7 @@ services:
     ports:
       - "8088:8080"
     environment:
+      SERVER_SERVLET_CONTEXT_PATH: ${KAFKA_UI_BASE_PATH-/absproxy/8088}
       KAFKA_CLUSTERS_0_NAME: lab-04-local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
       # Lets you add or edit clusters from the UI (Settings > Configure)
