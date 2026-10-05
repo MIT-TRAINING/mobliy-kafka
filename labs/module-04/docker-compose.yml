@@ -1,14 +1,10 @@
-# Module 4 Lab 04 environment: a 3-broker Kafka cluster managed by ZooKeeper
-# (the "legacy" architecture), plus Kafka UI to watch topics, consumer groups
-# and lag in a browser.
-#
-# Run from labs/module-04/lab-04. Stop the Module 2/3 KRaft cluster first: it
-# uses the same container names, the kafka-net network and port 9092.
+# Module 4 local lab environment: a 3-broker Kafka cluster managed by ZooKeeper,
+# plus Kafka UI to watch topics, consumer groups and lag in a browser.
 #
 #   Start:   docker compose up -d
 #   Stop:    docker compose down        (keeps data in the named volumes)
 #   Reset:   docker compose down -v     (deletes all topics and data)
-#   Web UI:  http://localhost:8088   (8080 is left free for cdr-billing-spring)
+#   Web UI:  http://localhost:8080
 #
 # Why Kafka 3.9: Apache Kafka 4.x removed ZooKeeper mode entirely, so
 # apache/kafka:4.x can only run KRaft. 3.9 is the last Apache Kafka release line
@@ -158,9 +154,9 @@ services:
     hostname: kafka-ui
     networks: [kafka-net]
     ports:
-      - "8088:8080"
+      - "8080:8080"
     environment:
-      KAFKA_CLUSTERS_0_NAME: lab-04-local
+      KAFKA_CLUSTERS_0_NAME: module-04-local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-1:29092,kafka-2:29092,kafka-3:29092
       # Lets you add or edit clusters from the UI (Settings > Configure)
       DYNAMIC_CONFIG_ENABLED: "true"

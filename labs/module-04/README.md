@@ -18,8 +18,10 @@ service ([`cdr-billing-spring/`](cdr-billing-spring/)). Do the labs in order.
 | 01 | [Validating message flow & tuning the Java producer](lab-01-java-producer-tuning.md) | Beginner | 60 min | CLI produce/consume through your config file, `kafka-producer-perf-test.sh` with batching metrics and quotas, build and run a Java producer, tune `batch.size` / `linger.ms` / compression, review a Copilot draft |
 | 02 | [Consumer groups, offsets & rebalancing in Java](lab-02-consumer-groups-offsets-rebalancing.md) | Beginner → Intermediate | 70 min | Scale a Java consumer group 1 → 3, clean leave vs `kill -9`, the KIP-848 consumer protocol, offset resets as an administrator, the same group in Spring Boot |
 | 03 | [Delivery semantics & error handling](lab-03-delivery-semantics-error-handling.md) | Intermediate → Advanced | 80 min | Prove at-least-once and at-most-once with a crash, a poison pill that blocks a partition, a dead-letter topic in Java and in Spring Boot, exactly-once with transactions |
+| 04 | [A ZooKeeper-mode cluster with Spring Boot producer & consumer](lab-04-zookeeper-cluster-spring-boot.md) | Intermediate | 75 min | **Local** 3-broker cluster on ZooKeeper (Kafka 3.9.2) with Kafka UI, znodes and controller election, minimal Spring Boot `KafkaTemplate` / `@KafkaListener` apps, queue vs pub/sub, controller failover, a ZooKeeper outage |
 
-Estimated total: **about 3 h 30 min**, including checkpoint questions.
+Estimated total: **about 4 h 45 min**, including checkpoint questions. Lab 04
+is independent of Labs 01–03 and can be done at any point in the module.
 
 ---
 
@@ -33,9 +35,11 @@ Estimated total: **about 3 h 30 min**, including checkpoint questions.
 | VS Code with Remote-SSH (GitHub Copilot optional) | VS Code → Remote Explorer | Lab 01 Part 6 uses Copilot Chat if you have a licence; the lab works without it |
 | Port **8080** free on the VM | `ss -ltn \| grep 8080` | Used by the Spring Boot app (Labs 02–03) |
 | 3–4 terminals | VS Code → Terminal → Split | Consumers, producer and CLI side by side |
+| **Lab 04 only:** Docker and ports 9092–9094, 2181, 8088, 7071, 7072 free | `docker compose version` | Local ZooKeeper cluster + Kafka UI (~2.5 GB RAM). Forward port 8088 in VS Code to open Kafka UI |
 
-> **No Docker cluster in this module.** Everything runs against the shared
-> cluster. If your Module 3 cluster is still up, you can stop it — nothing
+> **No Docker cluster in Labs 01–03.** They run against the shared
+> cluster. (Lab 04 starts its own local ZooKeeper cluster from
+> [`lab-04/`](lab-04/).) If your Module 3 cluster is still up, you can stop it — nothing
 > here uses it:
 >
 > ```bash

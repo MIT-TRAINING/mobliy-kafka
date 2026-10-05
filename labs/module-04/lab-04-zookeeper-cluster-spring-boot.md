@@ -4,17 +4,24 @@
 | --- | --- |
 | **Level** | Intermediate |
 | **Duration** | ~75 minutes |
-| **Guide sections** | §5 Core components · §6 Architecture · §8 ZooKeeper vs KRaft |
-| **You will need** | Docker Desktop, **JDK 17+** (`java -version`), `curl`, two or three terminals, a browser |
+| **Guide sections** | Module 4 guide §4 Consumer groups · §8 Writing producer and consumer applications · [Module 1 guide](../../guides/module-01-messaging-kafka-fundamentals.md) §8 ZooKeeper vs KRaft |
+| **You will need** | Docker, **JDK 17+** (`java -version`), `curl`, three terminals, a browser. Labs 01–03 are **not** required: this lab runs on its own local cluster |
 | **Files** | [`lab-04/`](lab-04/): `docker-compose.yml`, `spring-boot-kafka-producer/`, `spring-boot-kafka-consumer/` |
 
 ## Learning objectives
 
-Labs 01–03 ran Kafka the modern way: **KRaft**, where the brokers keep their
-own metadata. Many production clusters still run (or have just migrated off)
-the older architecture, where **Apache ZooKeeper** holds the metadata. An
-administrator has to be able to read both. By the end of this lab you will be
-able to:
+Every cluster in this course so far has run the modern way: **KRaft**, where
+the brokers keep their own metadata. That covers the Module 2/3 Docker cluster
+and the shared cluster from Labs 01–03. Many production clusters still run (or
+have just migrated off) the older architecture, where **Apache ZooKeeper** holds
+the metadata. An administrator has to be able to read both.
+
+Labs 01–03 used plain `kafka-clients` and `cdr-billing-spring` against the shared
+cluster. This lab runs a **local** ZooKeeper-mode cluster on your VM and connects
+two minimal Spring Boot apps to it. You get full admin access, so you can stop
+brokers and ZooKeeper itself, which you cannot do on the shared cluster. There
+is no `$ME` prefix, SASL or `$CFG` here. By the end of this lab you will be able
+to:
 
 1. Start a **3-broker Apache Kafka cluster managed by ZooKeeper** and explain
    why it needs Kafka **3.9** rather than 4.x.
@@ -34,7 +41,7 @@ able to:
 | --------- | ------- | --- |
 | Broker image | `apache/kafka:3.9.2` | Apache Kafka **4.0 removed ZooKeeper mode**. 3.9.x is the last Apache Kafka line that can run with ZooKeeper |
 | ZooKeeper | `zookeeper:3.8.5` (official Apache image) | The ZooKeeper line that Kafka 3.9 is built and tested against |
-| Kafka UI | `provectuslabs/kafka-ui:v0.7.2` | Web UI for the cluster on **http://localhost:8080** |
+| Kafka UI | `provectuslabs/kafka-ui:v0.7.2` | Web UI for the cluster on **http://localhost:8088** (8080 stays free for `cdr-billing-spring`) |
 | Spring Boot / Spring for Apache Kafka | 4.1.1 / 4.1.1 | Latest GA releases |
 | Kafka Java client (`kafka-clients`) | **4.3.1** | Latest Apache Kafka client, pinned in each `pom.xml` |
 
@@ -49,18 +56,18 @@ able to:
 
 ```mermaid
 flowchart LR
-    subgraph LAPTOP["Your laptop"]
+    subgraph LAPTOP["Your lab VM (or laptop)"]
         direction TB
         P["spring-boot-kafka-producer<br/>:7071  POST /publish"]
         C["spring-boot-kafka-consumer<br/>:7072  @KafkaListener"]
-        B["Browser<br/>http://localhost:8080"]
+        B["Browser<br/>http://localhost:8088"]
         subgraph NET["Docker network kafka-net"]
             direction TB
             ZK[("zookeeper :2181<br/>metadata · controller election")]
             K1["kafka-1<br/>broker.id=1"]
             K2["kafka-2<br/>broker.id=2"]
             K3["kafka-3<br/>broker.id=3"]
-            UI["kafka-ui :8080"]
+            UI["kafka-ui :8088"]
             K1 --- ZK
             K2 --- ZK
             K3 --- ZK
@@ -77,31 +84,54 @@ flowchart LR
     style UI fill:#d4edda,stroke:#28a745,stroke-width:1px,color:#1a1a1a
 ```
 
-| What | From your laptop | From inside the Docker network |
+| What | From the VM (or your laptop) | From inside the Docker network |
 | ---- | ---------------- | ------------------------------ |
 | Brokers | `localhost:9092`, `localhost:9093`, `localhost:9094` | `kafka-1:29092`, `kafka-2:29092`, `kafka-3:29092` (`$BS`) |
 | ZooKeeper | `localhost:2181` | `zookeeper:2181` |
-| Kafka UI | http://localhost:8080 | — |
+| Kafka UI | http://localhost:8088 | — |
 | Producer app / consumer app | http://localhost:7071 / :7072 | — |
 
 > **Convention used in this lab**
 >
-> - `# (host)` — run on your laptop from **`labs/module-01/lab-04`**.
-> - `# (kafka-1)` — run inside `docker exec -it kafka-1 bash`. The Kafka CLI
->   tools are on the `PATH` and `$BS` is the internal bootstrap list, as before.
+> - `# (VM)`: run on your lab VM (VS Code terminal) from
+>   **`labs/module-04/lab-04`**, or on your laptop if you run Docker locally.
+> - `# (kafka-1)`: run inside `docker exec -it kafka-1 bash`. The Kafka **3.9**
+>   CLI tools are on the `PATH` and `$BS` is the internal bootstrap list
+>   (`kafka-1:29092,...`). Use these tools here, **not** the Kafka 4.x CLI and
+>   `$CFG` on the VM, which point at the shared cluster.
+>
+> **On the lab VM**, VS Code Remote-SSH forwards ports to your laptop: open the
+> **Ports** tab and add `8088` if it is not forwarded automatically. Then
+> http://localhost:8088 in your laptop's browser reaches Kafka UI on the VM.
 
 ---
 
 ## Part 1 — Start the ZooKeeper-mode cluster (10 min)
 
-### 1.1 Stop the KRaft lab broker
+### 1.1 Stop any other local Kafka
 
-The Lab 01–03 container also uses port 9092, so stop it first:
+The Module 2/3 Docker cluster uses the same container names (`kafka-1`...),
+the same network (`kafka-net`) and port 9092. Check, and stop it if it is up:
 
 ```bash
-# (host) - from labs/module-01
-docker compose down          # add -v if you no longer need the Lab 01-03 topics
-cd lab-04
+# (VM)
+docker ps -a --format '{{.Names}}\t{{.Status}}\t{{.Ports}}'
+
+# if kafka-1/2/3 are listed: remove them by project name (works from any folder;
+# Module 3 used -p kafka-m2, Module 2 the default project name module-02)
+docker compose -p kafka-m2 down
+docker compose -p module-02 down
+```
+
+`down` without `-v` keeps that cluster's volumes. Stopping the containers is
+not enough: containers that are stopped but not removed still hold the names
+`kafka-1`... and the `kafka-net` network.
+
+Then go to this lab's folder:
+
+```bash
+# (VM)
+cd ~/mobliy-kafka/labs/module-04/lab-04
 ```
 
 ### 1.2 Read the Compose file before you run it
@@ -119,7 +149,7 @@ Open [`lab-04/docker-compose.yml`](lab-04/docker-compose.yml) and find:
 ### 1.3 Start it
 
 ```bash
-# (host) - from labs/module-01/lab-04
+# (VM) - from labs/module-04/lab-04
 docker compose up -d
 docker compose ps
 ```
@@ -139,7 +169,7 @@ zookeeper   zookeeper:3.8.5                 Up 31 seconds (healthy)
 Ask ZooKeeper how it is doing with a *four-letter word* command:
 
 ```bash
-# (host)
+# (VM)
 docker exec zookeeper bash -c 'echo ruok | nc localhost 2181; echo; echo srvr | nc localhost 2181'
 ```
 
@@ -162,7 +192,7 @@ Open a shell on a broker. Every command in this part uses `zookeeper-shell.sh`,
 which ships with Kafka 3.9:
 
 ```bash
-# (host)
+# (VM)
 docker exec -it kafka-1 bash
 ```
 
@@ -250,7 +280,6 @@ Topic: demo  TopicId: cMr3GpVESX2L3byPGf93lQ  PartitionCount: 3  ReplicationFact
     Topic: demo  Partition: 2  Leader: 1  Replicas: 1,2,3  Isr: 1,2,3
 ```
 
-Unlike Lab 03, `--replication-factor 3` works because there are three brokers.
 Now read the same information **from ZooKeeper**:
 
 ```bash
@@ -283,7 +312,7 @@ Leave this shell open.
 
 ## Part 3 — Tour the cluster in Kafka UI (5 min)
 
-Open **http://localhost:8080**. The cluster appears as **lab-04-local**.
+Open **http://localhost:8088**. The cluster appears as **lab-04-local**.
 
 | Page | Check |
 | ---- | ----- |
@@ -308,16 +337,21 @@ Compose file and the Kafka Admin API, and never talks to ZooKeeper.
 | `spring-boot-kafka-producer/.../SpringBootKafkaProducerApplication.java` | `POST /publish?topic=` and `POST /publishObj?topic=`. Each message gets a **random key**, so messages spread across partitions |
 | `spring-boot-kafka-consumer/.../SpringBootKafkaConsumerApplication.java` | Six `@KafkaListener`s: one on `test`, **three in the same group** on `demo`, and **two different groups** on `test1` |
 | `spring-boot-kafka-consumer/.../KafkaConsumerConfig.java` | A container factory with `JacksonJsonDeserializer<Greeting>`, used by the `test1` listeners |
-| Both `pom.xml` | `<kafka.version>4.3.1</kafka.version>` overrides the client version that Spring Boot would otherwise pick |
+| Both `pom.xml` | `<kafka.version>4.3.1</kafka.version>` overrides the client version that Spring Boot would otherwise pick (same as `cdr-clients`) |
+
+Compare with `cdr-billing-spring` from Labs 02–03: there the connection came from
+`~/kafka/apache.properties` (SASL, shared cluster) and the listener had a DLT
+error handler. These apps are the bare minimum: a bootstrap list and a
+serializer. Everything else uses the defaults.
 
 ### 4.2 Start the consumer
 
 Open a **new terminal**:
 
 ```bash
-# (host) - from labs/module-01/lab-04
+# (VM) - terminal 2, from labs/module-04/lab-04
 cd spring-boot-kafka-consumer
-./mvnw spring-boot:run          # Windows: mvnw.cmd spring-boot:run
+./mvnw spring-boot:run          # Windows laptop: mvnw.cmd spring-boot:run
 ```
 
 The first run downloads Maven and the dependencies (2–3 minutes). Then look for:
@@ -349,7 +383,7 @@ Read the assignment carefully:
 Open a **third terminal**:
 
 ```bash
-# (host) - from labs/module-01/lab-04
+# (VM) - terminal 3, from labs/module-04/lab-04
 cd spring-boot-kafka-producer
 ./mvnw spring-boot:run
 ```
@@ -358,10 +392,10 @@ Wait for `Started SpringBootKafkaProducerApplication`.
 
 ### 4.4 Send messages
 
-Use your original terminal (exit the `kafka-1` shell, or open another):
+Use your original terminal (terminal 1: exit the `kafka-1` shell, or open another):
 
 ```bash
-# (host)
+# (VM)
 curl -X POST "localhost:7071/publish?topic=test" \
      -H 'Content-Type: text/plain' -d 'Hello from Mobily'
 
@@ -375,7 +409,7 @@ curl -X POST "localhost:7071/publishObj?topic=test1" \
      -d '{"id":1,"message":"Welcome to Mobily 5G"}'
 ```
 
-> **Windows PowerShell:** use `curl.exe` instead of `curl`, and double quotes
+> **Windows laptop (PowerShell):** use `curl.exe` instead of `curl`, and double quotes
 > around the JSON with the inner quotes escaped: `-d "{\"id\":1,\"message\":\"Hi\"}"`.
 
 Each call answers `Message published successfully`. In the **consumer**
@@ -437,7 +471,7 @@ zookeeper-shell.sh zookeeper:2181 ls /consumers
 ```
 
 Empty. Even in a ZooKeeper cluster, modern consumers commit offsets to the
-**`__consumer_offsets` topic**, the same as in Lab 02. `/consumers` is a leftover
+**`__consumer_offsets` topic**, the same as on the shared cluster in Lab 02. `/consumers` is a leftover
 from the pre-0.9 consumer that stored offsets in ZooKeeper, which did not scale.
 
 Now open **Kafka UI → Consumers**. You should see the four groups, their
@@ -457,7 +491,7 @@ Keep both apps running. Stop the broker that is currently the controller
 (the one you wrote down in 2.2. Replace `2` below with your controller's ID):
 
 ```bash
-# (host)
+# (VM)
 docker compose stop kafka-2
 ```
 
@@ -494,7 +528,7 @@ Send more messages while broker 2 is down. They still succeed, because each
 partition still has 2 in-sync replicas and `min.insync.replicas=2`:
 
 ```bash
-# (host)
+# (VM)
 for i in 7 8 9; do
   curl -s -X POST "localhost:7071/publish?topic=demo" -H 'Content-Type: text/plain' -d "CDR $i"; echo
 done
@@ -506,7 +540,7 @@ clients got new metadata and moved to the new leaders automatically.
 Bring the broker back and check again after ~10 seconds:
 
 ```bash
-# (host)
+# (VM)
 docker compose start kafka-2
 ```
 
@@ -531,6 +565,10 @@ $Z get /controller
   300 s), or immediately with
   `kafka-leader-election.sh --bootstrap-server $BS --election-type preferred --all-topic-partitions`.
 
+Module 5 covers this properly on KRaft: broker failure, ISR, preferred-leader
+election and rolling restarts. The client-side behaviour you just saw is the
+same in both modes.
+
 ---
 
 ## Part 7 — What happens when ZooKeeper is down? (10 min)
@@ -538,14 +576,14 @@ $Z get /controller
 ZooKeeper is the cluster's **control plane**. Stop it:
 
 ```bash
-# (host)
+# (VM)
 docker compose stop zookeeper
 ```
 
 **Data plane:** produce through the app:
 
 ```bash
-# (host)
+# (VM)
 curl -X POST "localhost:7071/publish?topic=demo" -H 'Content-Type: text/plain' -d 'CDR 10'
 ```
 
@@ -569,7 +607,7 @@ leader.
 Start ZooKeeper again and wait ~15 seconds:
 
 ```bash
-# (host)
+# (VM)
 docker compose start zookeeper
 ```
 
@@ -597,7 +635,7 @@ retry an admin operation.
 
 ## Part 8 — ZooKeeper vs KRaft, from what you just saw (5 min)
 
-| | ZooKeeper mode (this lab) | KRaft (Labs 01–03) |
+| | ZooKeeper mode (this lab) | KRaft (Module 2/3 cluster, shared cluster) |
 | - | ------------------------- | ------------------ |
 | Systems to run, secure, monitor and upgrade | **Two**: a ZooKeeper ensemble + Kafka | **One**: Kafka |
 | Where metadata lives | znodes in ZooKeeper | The `__cluster_metadata` log, replicated by the controller quorum |
@@ -617,7 +655,7 @@ you will meet both architectures at work for years to come.
 ## Checkpoint questions
 
 <details>
-<summary>1. Why does this lab use <code>apache/kafka:3.9.2</code> instead of the <code>4.3.1</code> image from Labs 01–03?</summary>
+<summary>1. Why does this lab use <code>apache/kafka:3.9.2</code> instead of the <code>4.3.1</code> image from Module 2?</summary>
 
 Apache Kafka 4.0 removed ZooKeeper mode completely. A 4.x broker can only run
 in KRaft mode. 3.9.x is the last release line that supports ZooKeeper (and the
@@ -677,13 +715,19 @@ broker). Older clients continue to work with newer brokers.
 Stop both Spring Boot apps with **Ctrl+C** in their terminals, then:
 
 ```bash
-# (host) - from labs/module-01/lab-04
+# (VM) - from labs/module-04/lab-04
 docker compose down -v
 ```
 
-To go back to the Lab 01–03 environment: `cd .. && docker compose up -d`.
+This lab created nothing on the shared cluster, so there is nothing to delete
+under your `$ME` prefix.
 
-**Next module:** *Module 2 — Kafka Installation, Setup & CLI Operations* uses
-KRaft again, now with three nodes. Compare its Compose file with
-`lab-04/docker-compose.yml`. The `CONTROLLER` listener and
-`KAFKA_CONTROLLER_QUORUM_VOTERS` replace `KAFKA_ZOOKEEPER_CONNECT`.
+**Compare:** open `../../module-02/docker-compose.yml` next to
+`lab-04/docker-compose.yml`. In KRaft, the `CONTROLLER` listener,
+`KAFKA_PROCESS_ROLES` and `KAFKA_CONTROLLER_QUORUM_VOTERS` replace
+`KAFKA_ZOOKEEPER_CONNECT`, and every node needs the same `CLUSTER_ID`.
+
+**Next module:** *Module 5 — Cluster Operations, Replication & High
+Availability* ([guide](../../guides/module-05-cluster-operations-replication-ha.md)).
+It covers broker failure, ISR, partition reassignment and rolling restarts on
+KRaft.
