@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ISR, Leader Election &amp; Broker Failure</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 5 · Cluster Operations, Replication &amp; High Availability</a>
+    <div class="nav"><span>2 / 4</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 2</div>
+  <h1>ISR, leader election &amp; handling broker failures</h1>
+  <p class="lede">Partition <code>cdr.voice-0</code> on your 3-broker Docker cluster has replicas 1, 2 and 3. Only replicas in
+    the <b>ISR</b> (in-sync replicas) can take over cleanly when the leader fails. <b>Click a broker</b> to crash or restart
+    it. Kill the leader, then kill a second broker, then all three. Bring the wrong one back first and see whether the
+    partition comes back. Switch to <code>acks=1</code> to find acknowledged CDRs that later vanish.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Producer acks</span>
+      <div class="seg" role="group" aria-label="Producer acks" id="acksSeg">
+        <button data-v="all" aria-pressed="true">all</button>
+        <button data-v="1" aria-pressed="false">1</button>
+      </div>
+      <span class="ctl-label">min.insync.replicas</span>
+      <div class="seg" role="group" aria-label="min.insync.replicas" id="misrSeg">
+        <button data-v="1" aria-pressed="false">1</button>
+        <button data-v="2" aria-pressed="true">2</button>
+        <button data-v="3" aria-pressed="false">3</button>
+      </div>
+      <span class="ctl-label">unclean.leader.election.enable</span>
+      <div class="seg" role="group" aria-label="unclean.leader.election.enable" id="uncSeg">
+        <button data-v="false" aria-pressed="true">false</button>
+        <button data-v="true" aria-pressed="false">true</button>
+      </div>
+    </div>
+    <div class="controls">
+      <button id="stall">Stall a follower's disk</button>
+      <button id="pause">Pause</button>
+      <button id="reset">Reset</button>
+      <span class="pill" id="pstate">Healthy</span>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 372" role="img" aria-label="Logs of the three replicas of cdr.voice-0 with the high watermark, leader and ISR"></svg></div>
+    <div class="cli-preview" id="desc" aria-label="kafka-topics.sh --describe output"></div>
+    <div class="stats" id="stats"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>The moving parts</h2>
+  <div class="card">
+    <dl class="terms">
+      <dt>LEO</dt><dd>Log-end offset: the offset of the next record this replica will write. Each replica has its own LEO.</dd>
+      <dt>high watermark</dt><dd>The highest offset that every ISR member has copied. Consumers only read below it, and <code>acks=all</code> producers get their ack when it passes their record.</dd>
+      <dt>ISR</dt><dd>The leader plus the followers that are caught up. A follower that falls behind for longer than <code>replica.lag.time.max.ms</code> (default 30 s) is removed.</dd>
+      <dt>fencing</dt><dd>If a broker misses heartbeats for <code>broker.session.timeout.ms</code> (default 9 s), the KRaft controller fences it. It is removed from every ISR, and any partition it led gets a new leader.</dd>
+      <dt>leader epoch</dt><dd>Goes up by one with every new leader. A returning replica uses it to find where its log diverges, and <b>deletes</b> everything after that point.</dd>
+    </dl>
+  </div>
+
+  <h2>What survives a failure (RF 3, <code>min.insync.replicas=2</code>)</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Brokers down</th><th><code>acks=all</code> producers</th><th><code>acks=1</code> producers</th><th>Consumers</th></tr></thead>
+      <tbody>
+        <tr><td>0</td><td>OK</td><td>OK</td><td>OK</td></tr>
+        <tr><td>1 (leader)</td><td>Short stall (about 9 s until fencing), then OK on the new leader. No acked data lost.</td><td>OK after failover, but records acked by the old leader that no follower had copied are lost</td><td>Short pause, then continue</td></tr>
+        <tr><td>2</td><td><code>NotEnoughReplicasException</code>: writes refused</td><td>Writes accepted, but at risk: only one copy exists</td><td>Can read data that was committed before</td></tr>
+        <tr><td>3</td><td>Partition offline (<code>Leader: none</code>)</td><td>Offline</td><td>Offline</td></tr>
+        <tr><td>3, and an out-of-sync replica returns first</td><td colspan="3">Stays offline until the last ISR member returns. The alternative is an <b>unclean election</b>, which brings it back but loses the records that replica never received.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Admin takeaway:</b> look for trouble before it becomes an outage.
+    <code>kafka-topics.sh --bootstrap-server $BS --describe --under-replicated-partitions</code> lists partitions that are
+    missing a replica. <code>--under-min-isr-partitions</code> lists partitions that are refusing <code>acks=all</code> writes.
+    <code>--unavailable-partitions</code> lists partitions with no leader. Any output from the last two means an incident is
+    already under way.</div>
+  <div class="callout warn"><b>Production trap:</b> an unclean election is a deliberate choice to lose data, not a recovery
+    procedure. Leave <code>unclean.leader.election.enable=false</code>. If you must bring a partition back, do it for that one
+    partition with <code>kafka-leader-election.sh --election-type unclean --topic cdr.voice --partition 0</code>, after the
+    business has accepted the loss. Kafka 4.1+ also tracks <b>eligible leader replicas</b> (the <code>Elr</code> column in
+    <code>--describe</code>): replicas that left the ISR but still hold every committed record. This simulation leaves ELR
+    out and shows the classic ISR rules.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="01-broker-scaling-reassignment.html"><small>← Previous</small>Adding brokers &amp; partition reassignment</a>
+    <a class="next" href="03-rolling-restarts-upgrades.html"><small>Next →</small>Rolling restarts &amp; upgrades</a>
+  </div>
+</div>
+
+<script>
+const R = [1, 2, 3], LAG_TICKS = 6, FENCE_TICKS = 2, TICK_S = 5, WIN = 23, CX = 322, CWID = 24;
+const svg = document.getElementById('svg'), log = document.getElementById('log');
+const scene = el('g', {}, svg);
+let S = null;
+
+function init() {
+  S = { acks: S ? S.acks : 'all', minIsr: S ? S.minIsr : 2, unclean: S ? S.unclean : false,
+    B: {}, leader: 1, isr: [1, 2, 3], epoch: 0, next: 1, pending: [], retry: [], acked: new Set(),
+    ackedN: 0, rejected: 0, lost: 0, hw: 0, paused: false, t: 0, status: 'ok', slowB: null, ctl: 'Leader 1, ISR 1,2,3' };
+  R.forEach(b => S.B[b] = { alive: true, fenced: false, fenceIn: 0, behind: 0, log: [] });
+  for (let i = 0; i < 10; i++) { const id = S.next++; R.forEach(b => S.B[b].log.push(id)); S.acked.add(id); S.ackedN++; }
+  S.hw = 10;
+  render();
+}
+
+const up = b => S.B[b].alive && !S.B[b].fenced;
+const leaderLog = () => S.leader ? S.B[S.leader].log : [];
+
+function setStatus(st, html, hl) {
+  if (S.status === st) return;
+  S.status = st;
+  if (html) logLine(log, html, hl);
+}
+
+function produce() {
+  if (!S.leader) { S.rejected++; setStatus('offline', 'Producer: no leader for <code>cdr.voice-0</code>. Records wait in the producer buffer and fail with <code>TimeoutException</code> after <code>delivery.timeout.ms</code> (120 s).', true); return; }
+  if (!S.B[S.leader].alive) { setStatus('stuck', `Producer: requests to leader ${S.leader} time out. The producer keeps retrying until the controller fences broker ${S.leader}.`, true); return; }
+  if (S.acks === 'all' && S.isr.length < S.minIsr) {
+    S.rejected++;
+    setStatus('nerr', `Producer: <code>NotEnoughReplicasException: Messages are rejected since there are fewer in-sync replicas than required.</code> (ISR ${S.isr.length} &lt; min.insync.replicas ${S.minIsr})`, true);
+    return;
+  }
+  setStatus('ok', 'Producer: writes are succeeding again.');
+  const id = S.retry.length ? S.retry.shift() : S.next++;
+  S.B[S.leader].log.push(id);
+  if (S.acks === '1') ack(id); else S.pending.push(id);
+}
+
+function ack(id) { S.acked.add(id); S.ackedN++; }
+
+function truncate(b) {
+  const L = leaderLog(), f = S.B[b];
+  let k = 0;
+  while (k < f.log.length && k < L.length && f.log[k] === L[k]) k++;
+  const cut = f.log.length - k;
+  if (cut > 0) {
+    f.log = f.log.slice(0, k);
+    logLine(log, `Broker ${b} checks the leader epoch, finds where its log diverges, and <b>deletes ${cut}</b> record${cut > 1 ? 's' : ''} the new leader never had.`, true);
+  }
+}
+
+function elect(why) {
+  let c = R.find(b => S.isr.includes(b) && up(b)), unclean = false;
+  if (!c && S.unclean) { c = R.find(up); unclean = !!c; }
+  if (!c) {
+    S.leader = null;
+    S.ctl = `No ISR member alive (ISR ${S.isr}) → Leader: none`;
+    logLine(log, `Controller: ${why}. No in-sync replica is available, so the partition is <b>OFFLINE</b> (<code>Leader: none</code>).`, true);
+    return;
+  }
+  S.leader = c; S.epoch++;
+  if (unclean) S.isr = [c];
+  const L = S.B[c].log;
+  S.hw = Math.min(S.hw, L.length);
+  let gone = 0;
+  [...S.acked].forEach(id => { if (!L.includes(id)) { S.acked.delete(id); gone++; } });
+  S.lost += gone;
+  S.pending = S.pending.filter(id => { if (L.includes(id)) return true; S.retry.push(id); return false; });
+  S.ctl = `${unclean ? 'UNCLEAN election' : 'Elected'} leader ${c}, epoch ${S.epoch}`;
+  logLine(log, `Controller: ${why} → ${unclean ? '<b>unclean</b> election of out-of-sync' : 'elected'} broker <b>${c}</b> as leader (leader epoch ${S.epoch}).` +
+    (gone ? ` <b>${gone} acknowledged record${gone > 1 ? 's are' : ' is'} gone</b>: the new leader never received ${gone > 1 ? 'them' : 'it'}.` : ''), true);
+  R.forEach(b => { if (b !== c && up(b)) truncate(b); });
+}
+
+function fence(b) {
+  S.B[b].fenced = true;
+  logLine(log, `Controller: broker ${b} missed heartbeats for <code>broker.session.timeout.ms</code> (9 s) and is <b>fenced</b>.`);
+  if (S.isr.includes(b) && S.isr.length > 1) S.isr = S.isr.filter(x => x !== b);
+  S.ctl = `Fenced broker ${b}; ISR ${S.isr}`;
+  if (S.leader === b) elect(`leader ${b} fenced`);
+}
+
+function tick() {
+  if (S.paused) return;
+  S.t += TICK_S;
+  R.forEach(b => { const x = S.B[b]; if (!x.alive && !x.fenced && --x.fenceIn <= 0) fence(b); });
+  if (S.leader && S.B[S.leader].alive) {
+    const L = leaderLog();
+    R.forEach(b => {
+      if (b === S.leader || !up(b) || b === S.slowB) return;
+      const f = S.B[b], n = Math.min(4, L.length - f.log.length);
+      for (let i = 0; i < n; i++) f.log.push(L[f.log.length]);
+    });
+    R.forEach(b => {
+      if (b === S.leader) return;
+      const f = S.B[b], caught = up(b) && f.log.length === L.length;
+      if (S.isr.includes(b)) {
+        f.behind = caught ? 0 : f.behind + 1;
+        if (f.behind >= LAG_TICKS) {
+          S.isr = S.isr.filter(x => x !== b); f.behind = 0;
+          S.ctl = `Leader ${S.leader} shrank ISR to ${S.isr}`;
+          logLine(log, `Leader ${S.leader}: broker ${b} has been behind for <code>replica.lag.time.max.ms</code> (30 s), so it is removed from the ISR.`, true);
+        }
+      } else if (caught) {
+        S.isr = R.filter(x => S.isr.includes(x) || x === b);
+        S.ctl = `Leader ${S.leader} expanded ISR to ${S.isr}`;
+        logLine(log, `Broker ${b} caught up to the leader's LEO and is back in the ISR.`, true);
+      }
+    });
+    if (S.isr.length >= S.minIsr) {
+      const m = Math.min(...S.isr.map(b => S.B[b].log.length));
+      if (m > S.hw) S.hw = m;
+    }
+    S.pending = S.pending.filter(id => { const o = L.indexOf(id); if (o > -1 && o < S.hw) { ack(id); return false; } return true; });
+  }
+  produce();      // after replication: the newest record is always still on the leader only
+  render();
+}
+
+function toggleBroker(b) {
+  const x = S.B[b];
+  if (x.alive) {
+    x.alive = false; x.fenced = false; x.fenceIn = FENCE_TICKS;
+    if (S.slowB === b) S.slowB = null;
+    logLine(log, `<b>kill -9</b> broker ${b}${S.leader === b ? ' (the leader)' : ''}. The controller notices only when its heartbeats stop.`, true);
+  } else {
+    x.alive = true; x.fenced = false; x.behind = 0;
+    logLine(log, `Broker ${b} restarts and registers with the controller.`);
+    if (S.leader) truncate(b);
+    else if (S.isr.includes(b) || S.unclean) elect(`broker ${b} returned`);
+    else logLine(log, `Broker ${b} is <b>not</b> in the ISR (the last ISR was ${S.isr}). With <code>unclean.leader.election.enable=false</code>, the partition stays offline until broker ${S.isr} returns.`, true);
+  }
+  render();
+}
+
+function render() {
+  scene.innerHTML = '';
+  const L = leaderLog(), maxLen = Math.max(...R.map(b => S.B[b].log.length));
+  const base = Math.max(0, maxLen - WIN);
+  el('rect', { x: 160, y: 6, width: 720, height: 34, rx: 8, fill: 'var(--warn-soft)', stroke: 'var(--warn)' }, scene);
+  el('text', { x: 174, y: 28, 'font-size': 13, text: `KRaft controller · ${S.ctl}` }, scene);
+  for (let o = base; o < base + WIN; o += 4) el('text', { x: CX + (o - base) * CWID + 2, y: 60, class: 'muted mono', 'font-size': 10, text: o }, scene);
+
+  R.forEach((b, i) => {
+    const y = 70 + i * 95, x = S.B[b], isL = S.leader === b, inIsr = S.isr.includes(b);
+    const role = !x.alive ? (x.fenced ? 'crashed · fenced' : 'crashed · not yet fenced') : isL ? 'LEADER' : 'follower';
+    const sub = !x.alive ? `last LEO ${x.log.length}` : `${inIsr ? 'in ISR' : 'out of ISR'} · LEO ${x.log.length}${S.slowB === b ? ' · disk stalled' : ''}`;
+    const g = el('g', {}, scene);
+    el('rect', { x: 160, y, width: 150, height: 80, rx: 10,
+      fill: !x.alive ? 'var(--bad-soft)' : isL ? 'var(--ok-soft)' : inIsr ? 'var(--surface)' : 'var(--warn-soft)',
+      stroke: !x.alive ? 'var(--bad)' : isL ? 'var(--ok)' : inIsr ? 'var(--border)' : 'var(--warn)', 'stroke-width': isL ? 2.5 : 1.5 }, g);
+    el('text', { x: 174, y: y + 24, 'font-weight': 700, text: `broker-${b}` }, g);
+    el('text', { x: 174, y: y + 44, 'font-size': 12, fill: !x.alive ? 'var(--bad)' : isL ? 'var(--ok)' : 'var(--text)', text: role }, g);
+    el('text', { x: 174, y: y + 62, 'font-size': 11, class: 'muted', text: sub }, g);
+    el('text', { x: 296, y: y + 24, 'font-size': 11, 'text-anchor': 'end', class: 'muted', text: x.alive ? '⏻' : '↻' }, g);
+    svgButton(g, `${x.alive ? 'Crash' : 'Restart'} broker ${b}`, () => toggleBroker(b));
+    for (let o = base; o < base + WIN; o++) {
+      const cx = CX + (o - base) * CWID, cy = y + 24;
+      if (o >= x.log.length) { el('rect', { x: cx, y: cy, width: CWID - 3, height: 30, rx: 4, fill: 'none', stroke: 'var(--border)', 'stroke-dasharray': '2 3' }, scene); continue; }
+      const div = S.leader && b !== S.leader && o < L.length && L[o] !== x.log[o];
+      const committed = o < S.hw && !div;
+      el('rect', { x: cx, y: cy, width: CWID - 3, height: 30, rx: 4,
+        fill: div ? 'var(--bad)' : committed ? 'var(--p0)' : 'var(--warn-soft)',
+        stroke: div ? 'var(--bad)' : committed ? 'var(--p0)' : 'var(--warn)', opacity: x.alive ? 1 : .45 }, scene);
+    }
+  });
+  const hx = CX + (S.hw - base) * CWID - 2;
+  if (S.hw >= base) {
+    el('line', { x1: hx, y1: 64, x2: hx, y2: 345, stroke: 'var(--ok)', 'stroke-width': 2, 'stroke-dasharray': '6 4' }, scene);
+    el('text', { x: hx, y: 362, 'text-anchor': 'middle', 'font-size': 12, fill: 'var(--ok)', 'font-weight': 600, text: `high watermark ${S.hw}` }, scene);
+  }
+  const st = { ok: ['writing', 'var(--ok)'], nerr: ['NotEnoughReplicas', 'var(--bad)'], stuck: ['retrying…', 'var(--warn)'], offline: ['no leader', 'var(--bad)'] }[S.status];
+  el('rect', { x: 12, y: 150, width: 130, height: 84, rx: 10, fill: 'var(--surface)', stroke: 'var(--border)' }, scene);
+  el('text', { x: 24, y: 174, 'font-weight': 700, text: 'producer' }, scene);
+  el('text', { x: 24, y: 194, 'font-size': 12, class: 'muted mono', text: `acks=${S.acks}` }, scene);
+  el('text', { x: 24, y: 216, 'font-size': 12, fill: st[1], text: st[0] }, scene);
+  if (S.leader) el('line', { x1: 142, y1: 192, x2: 160, y2: 110 + R.indexOf(S.leader) * 95, stroke: st[1], 'stroke-width': 2 }, scene);
+  el('text', { x: 12, y: 300, 'font-size': 11, class: 'muted', text: 'committed' }, scene);
+  el('rect', { x: 94, y: 291, width: 12, height: 12, rx: 2, fill: 'var(--p0)' }, scene);
+  el('text', { x: 12, y: 320, 'font-size': 11, class: 'muted', text: 'uncommitted' }, scene);
+  el('rect', { x: 94, y: 311, width: 12, height: 12, rx: 2, fill: 'var(--warn-soft)', stroke: 'var(--warn)' }, scene);
+  el('text', { x: 12, y: 340, 'font-size': 11, class: 'muted', text: 'divergent' }, scene);
+  el('rect', { x: 94, y: 331, width: 12, height: 12, rx: 2, fill: 'var(--bad)' }, scene);
+
+  document.getElementById('desc').textContent =
+    `Topic: cdr.voice\tPartition: 0\tLeader: ${S.leader || 'none'}\tReplicas: ${R}\tIsr: ${S.isr}`;
+  const urp = S.isr.length < 3, under = S.isr.length < S.minIsr;
+  const ps = document.getElementById('pstate');
+  ps.textContent = !S.leader ? 'Offline' : under ? 'Under min ISR' : urp ? 'Under-replicated' : 'Healthy';
+  ps.className = 'pill ' + (!S.leader || under ? 'bad' : urp ? 'warn' : 'ok');
+  document.getElementById('stats').innerHTML = [
+    [S.leader || 'none', 'leader'], [S.isr.join(','), 'ISR'], [S.hw, 'high watermark'], [S.epoch, 'leader epoch'],
+    [S.ackedN, 'records acked'], [S.rejected, 'sends refused'],
+    [`<span style="color:var(${S.lost ? '--bad' : '--ok'})">${S.lost}</span>`, 'acked, then lost']
+  ].map(([v, k]) => `<div class="stat"><b>${v}</b><span>${k}</span></div>`).join('');
+  document.getElementById('stall').textContent = S.slowB ? `Unstall broker ${S.slowB}` : "Stall a follower's disk";
+}
+
+wireSeg('acksSeg', v => { S.acks = v; logLine(log, v === 'all' ? '<code>acks=all</code>: a record is acknowledged once the high watermark passes it.' : '<code>acks=1</code>: a record is acknowledged as soon as the leader writes it, before any follower has a copy.'); render(); });
+wireSeg('misrSeg', v => { S.minIsr = +v; logLine(log, `<code>min.insync.replicas=${v}</code>: <code>acks=all</code> needs at least ${v} replica${v > 1 ? 's' : ''} in the ISR.`); render(); });
+wireSeg('uncSeg', v => {
+  S.unclean = v === 'true';
+  logLine(log, `<code>unclean.leader.election.enable=${v}</code>`, true);
+  if (S.unclean && !S.leader && R.some(up)) elect('unclean election now allowed');
+  render();
+});
+document.getElementById('stall').onclick = () => {
+  if (S.slowB) { logLine(log, `Broker ${S.slowB}'s disk recovers and it starts fetching again.`); S.slowB = null; }
+  else {
+    const f = [...R].reverse().find(b => b !== S.leader && S.B[b].alive);
+    if (!f) { logLine(log, 'No live follower to stall.'); return; }
+    S.slowB = f;
+    logLine(log, `Broker ${f}'s disk stalls: it is still alive and heartbeating, but it stops fetching. Watch the high watermark and the <code>acks=all</code> acks freeze.`, true);
+  }
+  render();
+};
+document.getElementById('pause').onclick = e => { S.paused = !S.paused; e.target.textContent = S.paused ? 'Resume' : 'Pause'; };
+document.getElementById('reset').onclick = () => { init(); document.getElementById('pause').textContent = 'Pause'; logLine(log, 'Reset: all three replicas in sync.'); };
+setInterval(tick, 700);
+init();
+logLine(log, 'Leader 1 is taking writes, and brokers 2 and 3 copy them. Click a broker to crash it.', true);
+
+renderQuiz('quiz', [
+  { q: 'With <code>unclean.leader.election.enable=false</code>, which replicas can the controller choose as the new leader?',
+    options: ['Any live replica, preferring the one with the highest LEO',
+      'The broker with the lowest <code>node.id</code>',
+      'The preferred replica only, even if it is out of sync',
+      'Only replicas that are in the ISR'],
+    answer: 3,
+    explain: 'A clean election only picks from the ISR, because only ISR members are guaranteed to hold every committed record (everything below the high watermark). If no ISR member is alive, the partition goes offline rather than lose data.' },
+  { q: 'RF 3, <code>min.insync.replicas=2</code>, <code>acks=all</code>. Two brokers crash. What do producers and consumers see?',
+    options: ['Both carry on normally, because one replica is enough',
+      'Producers get <code>NotEnoughReplicasException</code>; consumers can still read records committed before the failure',
+      'Producers succeed, but consumers are blocked',
+      'The controller lowers <code>min.insync.replicas</code> to 1 until the brokers return'],
+    answer: 1,
+    explain: 'With one replica in the ISR, the leader refuses <code>acks=all</code> writes, because it can\'t meet the durability floor you set. The partition still has a leader, so consumers can read committed data. Kafka never lowers your settings for you.' },
+  { q: 'With <code>acks=1</code>, you crash the leader and the "acked, then lost" counter goes up. What happened?',
+    options: ['The leader acknowledged records before any follower copied them. The new leader never had them, and the old leader deleted them when it returned.',
+      'The consumer committed its offsets too early',
+      'The producer\'s idempotence feature dropped them as duplicates',
+      'The high watermark went backwards and the controller deleted the segment'],
+    answer: 0,
+    explain: '<code>acks=1</code> acknowledges on the leader\'s write alone. The new leader comes from the ISR, but the followers hadn\'t fetched those records yet. When the old leader rejoins, it compares leader epochs and deletes the records that diverge. With <code>acks=all</code>, an ack means every ISR member has the record.' },
+  { q: 'All three brokers are down. Broker 1, which had dropped out of the ISR earlier, comes back first. The last ISR member was broker 3. What happens?',
+    options: ['Broker 1 becomes leader, because it is the preferred replica',
+      'Broker 1 becomes leader, and broker 3 copies its log when it returns',
+      'The partition stays offline until broker 3 returns, unless you choose an unclean election and accept losing data',
+      'Kafka fills the gap from broker 1\'s page cache'],
+    answer: 2,
+    explain: 'The controller keeps the last ISR member recorded even while it is down. Broker 1 might be missing committed records, so a clean election won\'t choose it. Your choices are to bring broker 3 back (the safe one) or to run a targeted unclean election (<code>kafka-leader-election.sh --election-type unclean</code>) and lose whatever broker 1 never received.' },
+  { q: 'A follower\'s disk stalls, but the process stays up and keeps heartbeating. What do <code>acks=all</code> producers see?',
+    options: ['Nothing. Heartbeats keep the follower in the ISR forever.',
+      'The follower is fenced after 9 s',
+      'An immediate <code>NotEnoughReplicasException</code>',
+      'Acks stop for up to <code>replica.lag.time.max.ms</code> (30 s). Then the leader removes the follower from the ISR and acks resume.'],
+    answer: 3,
+    explain: 'Fencing is based on heartbeats, so a stalled but heartbeating broker isn\'t fenced. ISR membership is based on whether the follower is caught up. The high watermark can\'t move past the stalled follower until the leader removes it from the ISR, so <code>acks=all</code> latency jumps for about 30 s. Watch for that pattern in p99 latency.' }
+]);
+</script>
+</body>
+</html>

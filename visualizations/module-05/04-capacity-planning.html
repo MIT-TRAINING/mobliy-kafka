@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cluster Capacity Planning</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 5 · Cluster Operations, Replication &amp; High Availability</a>
+    <div class="nav"><span>4 / 4</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 4</div>
+  <h1>Cluster capacity planning</h1>
+  <p class="lede">How many brokers does an operator with 20 million subscribers need for its usage records? Disk, network in,
+    network out and the replication factor each set a minimum number of brokers, and the largest one decides. Move the
+    sliders to see which limit binds. Raise retention, add consumer groups, switch compression off, and watch the binding
+    limit change.</p>
+
+  <div class="card">
+    <div class="sliders">
+      <label><span>Subscribers (MSISDNs) <output id="o-subs"></output></span><input type="range" id="subs" min="1" max="60" value="20"></label>
+      <label><span>Usage records per subscriber per day <output id="o-ev"></output></span><input type="range" id="ev" min="10" max="1000" step="10" value="300"></label>
+      <label><span>Average record size <output id="o-size"></output></span><input type="range" id="size" min="200" max="2000" step="50" value="800"></label>
+      <label><span>Peak-to-average ratio <output id="o-peak"></output></span><input type="range" id="peak" min="1" max="8" step="0.5" value="3"></label>
+      <label><span>Retention <output id="o-ret"></output></span><input type="range" id="ret" min="1" max="30" value="3"></label>
+      <label><span>Consumer groups reading the topic <output id="o-grp"></output></span><input type="range" id="grp" min="1" max="8" value="3"></label>
+      <label><span>Disk per broker <output id="o-disk"></output></span><input type="range" id="disk" min="1" max="16" value="8"></label>
+      <label><span>Usable network per broker <output id="o-nic"></output></span><input type="range" id="nic" min="100" max="2500" step="50" value="600"></label>
+      <label><span>Throughput per partition (measured) <output id="o-pp"></output></span><input type="range" id="pp" min="1" max="50" value="10"></label>
+      <label><span>Consumers in the largest group <output id="o-cons"></output></span><input type="range" id="cons" min="1" max="48" value="12"></label>
+    </div>
+    <div class="controls">
+      <span class="ctl-label">Compression (assumed ratio)</span>
+      <div class="seg" role="group" aria-label="Compression" id="compSeg">
+        <button data-v="1" aria-pressed="false">none 1×</button>
+        <button data-v="2" aria-pressed="true">lz4 ~2×</button>
+        <button data-v="3" aria-pressed="false">zstd ~3×</button>
+      </div>
+      <span class="ctl-label">Replication factor</span>
+      <div class="seg" role="group" aria-label="Replication factor" id="rfSeg">
+        <button data-v="2" aria-pressed="false">2</button>
+        <button data-v="3" aria-pressed="true">3</button>
+      </div>
+      <span class="ctl-label">Max utilisation</span>
+      <div class="seg" role="group" aria-label="Maximum utilisation" id="utilSeg">
+        <button data-v="0.5" aria-pressed="false">50%</button>
+        <button data-v="0.6" aria-pressed="true">60%</button>
+        <button data-v="0.8" aria-pressed="false">80%</button>
+      </div>
+    </div>
+    <div class="controls checks" style="flex-direction:row;flex-wrap:wrap;gap:16px">
+      <label><input type="checkbox" id="n1" checked> +1 broker so you can lose one (N+1)</label>
+      <label><input type="checkbox" id="az" checked> Same number of brokers in each of 3 AZs</label>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 330" role="img" aria-label="Brokers needed for each capacity limit and the recommended cluster size"></svg></div>
+    <div class="stats" id="stats"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>The arithmetic</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Limit</th><th>Formula</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr><td>Ingress</td><td>subscribers × records/day ÷ 86 400 × bytes ÷ compression</td><td>Size disk with the <b>average</b> rate, and network and partitions with the <b>peak</b>. For telecom, the evening peak or a big event (a New Year's Eve CDR surge) sets the peak.</td></tr>
+        <tr><td>Disk</td><td>avg ingress × retention × RF ÷ (disk per broker × max utilisation)</td><td>Leave headroom for a reassignment, during which old and new copies exist at the same time (Topic 1), and for segments waiting to be deleted</td></tr>
+        <tr><td>Network in</td><td>peak × RF ÷ (network per broker × max utilisation)</td><td>Producer traffic plus copies arriving from leaders</td></tr>
+        <tr><td>Network out</td><td>peak × (RF − 1 + consumer groups) ÷ (network per broker × max utilisation)</td><td>Every consumer group reads the whole stream. Usually the first network limit you hit.</td></tr>
+        <tr><td>Partitions</td><td>max(peak ÷ throughput per partition, consumers in the largest group)</td><td>Measure throughput per partition with <code>kafka-producer-perf-test.sh</code> and <code>kafka-consumer-perf-test.sh</code> on your own hardware</td></tr>
+        <tr><td>Traditional MQ</td><td>Queue depth × message size</td><td>Kafka stores everything for the whole retention period, even after it has been consumed, so retention drives disk, not consumer lag</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout warn"><b>Admin gotcha:</b> <code>cdr.voice</code> is keyed by MSISDN so that each subscriber's records
+    stay in order. Adding partitions later sends many keys to a different partition, so ordering breaks for in-flight data.
+    Size keyed topics for 2–3 years of growth on day one (<code>kafka-topics.sh --create --partitions 24 …</code>). Don't plan
+    on running <code>--alter --partitions</code> later.</div>
+  <div class="callout"><b>Admin takeaway:</b> plan to run with a broker down. When one fails, the rest serve its leaders, and
+    its replacement copies a full broker's data. That's why the plan keeps a 60% ceiling and an N+1 broker. Repeat the
+    exercise every quarter using measured rates, from <code>kafka-log-dirs.sh --describe</code> for disk and broker
+    <code>BytesInPerSec</code> / <code>BytesOutPerSec</code> for network (Module 8).</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="03-rolling-restarts-upgrades.html"><small>← Previous</small>Rolling restarts &amp; upgrades</a>
+    <a class="next" href="index.html"><small>Done →</small>Back to Module 5 overview</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), log = document.getElementById('log');
+const scene = el('g', {}, svg);
+const S = { comp: 2, rf: 3, util: 0.6, last: '' };
+const IDS = ['subs', 'ev', 'size', 'peak', 'ret', 'grp', 'disk', 'nic', 'pp', 'cons'];
+const FMT = {
+  subs: v => `${v} M`, ev: v => v, size: v => `${v} B`, peak: v => `${v}×`, ret: v => `${v} day${v > 1 ? 's' : ''}`,
+  grp: v => v, disk: v => `${v} TB`, nic: v => `${v} MB/s`, pp: v => `${v} MB/s`, cons: v => v
+};
+const val = id => +document.getElementById(id).value;
+const mb = x => x >= 1000 ? `${(x / 1000).toFixed(1)} GB/s` : `${x.toFixed(1)} MB/s`;
+
+function calc() {
+  const v = {}; IDS.forEach(id => v[id] = val(id));
+  const avg = v.subs * 1e6 * v.ev / 86400 * v.size / 1e6 / S.comp;   // MB/s
+  const peak = avg * v.peak;
+  const diskTB = avg * 86400 * v.ret * S.rf / 1e6;
+  const cap = { disk: v.disk * S.util, nic: v.nic * S.util };
+  const need = {
+    disk: Math.ceil(diskTB / cap.disk),
+    nin: Math.ceil(peak * S.rf / cap.nic),
+    nout: Math.ceil(peak * (S.rf - 1 + v.grp) / cap.nic),
+    rf: S.rf
+  };
+  const base = Math.max(need.disk, need.nin, need.nout, need.rf);
+  const bind = Object.keys(need).find(k => need[k] === base);
+  const n1 = document.getElementById('n1').checked ? 1 : 0;
+  let total = base + n1;
+  const az = document.getElementById('az').checked ? Math.ceil(total / 3) * 3 - total : 0;
+  total += az;
+  const parts = Math.max(Math.ceil(peak / v.pp), v.cons);
+  const partsRound = Math.ceil(parts / total) * total;
+  return { v, avg, peak, diskTB, need, base, bind, n1, az, total, parts, partsRound };
+}
+
+const LABEL = { disk: 'Disk (retention × RF)', nin: 'Network in (peak × RF)', nout: 'Network out (peak × (RF−1+groups))', rf: 'Replication factor floor' };
+
+function render() {
+  IDS.forEach(id => document.getElementById('o-' + id).textContent = FMT[id](val(id)));
+  const c = calc();
+  scene.innerHTML = '';
+  const maxN = Math.max(c.total, 6), X = 290, W = 480, sc = W / maxN;
+  el('text', { x: 20, y: 22, 'font-size': 12, class: 'muted', text: 'Brokers needed by each limit' }, scene);
+  Object.keys(LABEL).forEach((k, i) => {
+    const y = 36 + i * 42, n = c.need[k], hot = k === c.bind;
+    el('text', { x: 20, y: y + 20, 'font-size': 13, 'font-weight': hot ? 700 : 400, text: LABEL[k] }, scene);
+    el('rect', { x: X, y: y + 4, width: W, height: 22, rx: 5, fill: 'var(--surface-2)' }, scene);
+    el('rect', { x: X, y: y + 4, width: Math.max(2, n * sc), height: 22, rx: 5, fill: hot ? 'var(--accent)' : 'var(--muted)', opacity: hot ? 1 : .45 }, scene);
+    el('text', { x: X + Math.max(2, n * sc) + 8, y: y + 20, 'font-size': 13, 'font-weight': 600, text: n + (hot ? '  ← binding' : '') }, scene);
+  });
+  const ry = 36 + 4 * 42 + 10;
+  el('text', { x: 20, y: ry + 20, 'font-size': 13, 'font-weight': 700, text: 'Recommended cluster' }, scene);
+  [[c.base, 'var(--accent)', 'needed '], [c.n1, 'var(--warn)', '+'], [c.az, 'var(--p2)', 'AZ +']].reduce((x, [n, fill, lab]) => {
+    if (!n) return x;
+    el('rect', { x, y: ry + 4, width: n * sc - 2, height: 22, rx: 5, fill }, scene);
+    if (n * sc > 40) el('text', { x: x + 6, y: ry + 20, 'font-size': 11, fill: '#fff', text: `${lab}${n}` }, scene);
+    return x + n * sc;
+  }, X);
+  el('text', { x: X + c.total * sc + 8, y: ry + 20, 'font-size': 14, 'font-weight': 700, text: `${c.total} brokers` }, scene);
+  // AZ layout
+  const ay = ry + 46;
+  ['ap-south-1a', 'ap-south-1b', 'ap-south-1c'].forEach((az, i) => {
+    const x = 20 + i * 292;
+    el('rect', { x, y: ay, width: 276, height: 64, rx: 8, fill: 'none', stroke: 'var(--border)', 'stroke-dasharray': '4 4' }, scene);
+    el('text', { x: x + 10, y: ay + 16, 'font-size': 11, class: 'muted', text: az }, scene);
+    const mine = Array.from({ length: c.total }, (_, k) => k).filter(k => k % 3 === i);
+    mine.forEach((k, j) => {
+      const bx = x + 10 + (j % 13) * 20, by = ay + 24 + Math.floor(j / 13) * 18;
+      if (j < 26) el('rect', { x: bx, y: by, width: 16, height: 14, rx: 3, fill: k >= c.base + c.n1 ? 'var(--p2)' : k >= c.base ? 'var(--warn)' : 'var(--accent)' }, scene);
+    });
+    if (mine.length > 26) el('text', { x: x + 266, y: ay + 58, 'text-anchor': 'end', 'font-size': 11, class: 'muted', text: `+${mine.length - 26}` }, scene);
+  });
+
+  const perBrokerDisk = c.diskTB / c.total, perBrokerOut = c.peak * (S.rf - 1 + c.v.grp) / c.total;
+  document.getElementById('stats').innerHTML = [
+    [mb(c.avg), 'average ingress'], [mb(c.peak), 'peak ingress'],
+    [`${c.diskTB.toFixed(1)} TB`, 'stored incl. replicas'],
+    [`${Math.round(perBrokerDisk / c.v.disk * 100)}%`, 'disk used per broker'],
+    [`${Math.round(perBrokerOut / c.v.nic * 100)}%`, 'network out per broker at peak'],
+    [`${c.parts} → ${c.partsRound}`, `partitions (min → multiple of ${c.total})`]
+  ].map(([v, k]) => `<div class="stat"><b>${v}</b><span>${k}</span></div>`).join('');
+
+  const key = `${c.bind}|${c.total}`;
+  if (key !== S.last) {
+    S.last = key;
+    const why = { disk: `disk binds: ${c.diskTB.toFixed(1)} TB of replicas across ${c.v.disk} TB brokers at ${S.util * 100}%.`,
+      nin: `network in binds: ${mb(c.peak * S.rf)} of producer and replication traffic at peak.`,
+      nout: `network out binds: ${c.v.grp} consumer groups plus ${S.rf - 1} follower copies is ${mb(c.peak * (S.rf - 1 + c.v.grp))} at peak.`,
+      rf: `replication factor binds: you need at least ${S.rf} brokers to place ${S.rf} replicas, and the load is small.` }[c.bind];
+    logLine(log, `<b>${c.total} brokers</b>. The ${why}`, true);
+  }
+}
+
+IDS.forEach(id => document.getElementById(id).addEventListener('input', render));
+wireSeg('compSeg', v => { S.comp = +v; render(); });
+wireSeg('rfSeg', v => { S.rf = +v; if (S.rf === 2) logLine(log, 'RF 2 with <code>min.insync.replicas=2</code> stops <code>acks=all</code> writes whenever one broker is down. With <code>min.insync.replicas=1</code>, an acked record may exist on only one broker.', true); render(); });
+wireSeg('utilSeg', v => { S.util = +v; render(); });
+['n1', 'az'].forEach(id => document.getElementById(id).addEventListener('change', render));
+render();
+
+renderQuiz('quiz', [
+  { q: 'Which rate should you use to size <b>disk</b>, and which to size <b>network</b> and partitions?',
+    options: ['Peak for both, to be safe',
+      'Average for disk, because retention stores the whole day\'s traffic. Peak for network and partitions, because they have to absorb the busiest second.',
+      'Peak for disk, average for network',
+      'Average for both. Kafka smooths out peaks by batching.'],
+    answer: 1,
+    explain: 'Disk holds everything written during the retention window, which is roughly the average rate × time. Network links and partition throughput have to carry the peak as it happens, or producers back up and consumer lag grows.' },
+  { q: 'With RF 3 and 3 consumer groups, why is <b>network out</b> usually higher than network in?',
+    options: ['Each consumer group reads the whole stream, and leaders also send each record to RF − 1 followers. That is 2 + 3 = 5× the peak going out, against 3× coming in.',
+      'Consumers read uncompressed data',
+      'Followers send every record back to the leader to confirm it',
+      'The controller copies every record to the KRaft quorum'],
+    answer: 0,
+    explain: 'Inbound traffic is producer writes plus copies arriving at followers (RF × peak). Outbound traffic is copies sent to followers (RF − 1) plus one full copy per consumer group. Add a new analytics group and outbound traffic grows, with no change on the inbound side.' },
+  { q: '<code>cdr.voice</code> is keyed by MSISDN. Why decide the partition count up front instead of adding partitions later?',
+    options: ['Kafka can\'t add partitions to an existing topic',
+      'More partitions always need a rolling restart',
+      'Adding partitions deletes the existing data',
+      'Adding partitions changes which partition many keys go to, so per-subscriber ordering breaks while old and new records are spread across different partitions'],
+    answer: 3,
+    explain: 'The default partitioner hashes the key and takes it modulo the partition count. Change the count and many MSISDNs move to a different partition, while their older records stay where they were. <code>--alter --partitions</code> works, but for keyed topics it breaks ordering, so size them with room to grow.' },
+  { q: 'Why does the plan add an N+1 broker even when N brokers meet every limit?',
+    options: ['Kafka needs an even number of brokers',
+      'The spare broker stores the cluster metadata',
+      'When a broker fails, the others must take over its leaders and then copy its data to a replacement. Without spare capacity, a failure becomes a slowdown.',
+      'To act as the dedicated controller'],
+    answer: 2,
+    explain: 'Capacity planning is about running correctly with a broker down. The remaining brokers absorb the failed broker\'s traffic, and the rebuild adds replication load. With N+1 and a 60% ceiling, that fits without going past 100%. In KRaft, controllers are separate nodes, not spare brokers.' },
+  { q: 'A topic averages 30 MB/s after compression, with 3 days of retention and RF 3. Roughly how much disk do the replicas use before headroom?',
+    options: ['About 23 TB (30 MB/s × 86 400 s × 3 days × 3 replicas)',
+      'About 7.8 TB',
+      'About 2.6 TB',
+      'About 70 TB'],
+    answer: 0,
+    explain: '30 MB/s × 86 400 s is about 2.6 TB per day. Three days is about 7.8 TB for one copy, and RF 3 makes that about 23 TB. At a 60% ceiling you need about 39 TB of raw disk across the cluster.' }
+]);
+</script>
+</body>
+</html>

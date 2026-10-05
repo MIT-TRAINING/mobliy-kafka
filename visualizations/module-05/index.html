@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka Module 5 Visualizations</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .topics { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: 24px; }
+  .topic { display: block; text-decoration: none; color: var(--text); transition: border-color .15s, transform .15s; }
+  .topic:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .topic .num { font-family: var(--mono); color: var(--accent); font-size: 13px; font-weight: 600; }
+  .topic h3 { margin: 6px 0; }
+  .topic p { margin: 0 0 10px; color: var(--muted); font-size: 15px; }
+  .topic .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  ol.hands { margin: 0; padding-left: 20px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <span>Apache Kafka &amp; Confluent Kafka Administration</span>
+    <div class="nav"><a href="../module-04/index.html">← Module 4</a><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Module 5</div>
+  <h1>Cluster Operations, Replication &amp; High Availability</h1>
+  <p class="lede">Interactive visualizations for each Module 5 topic. Each page has a hands-on simulation you can
+    play with, followed by a 5-question self-quiz with explanations.</p>
+  <p style="color:var(--muted);font-size:14px;margin:4px 0 0"><b style="color:var(--text)">Objective:</b> Complete core Apache
+    Kafka administration: cluster operations and high availability.</p>
+
+  <div class="topics">
+    <a class="card topic" href="01-broker-scaling-reassignment.html">
+      <div class="num">01</div><h3>Adding brokers &amp; partition reassignment</h3>
+      <p>Add broker 14 or retire broker 13, then run <code>kafka-reassign-partitions.sh --generate</code>, <code>--execute</code> and <code>--verify</code>. See what rack awareness and throttles cost.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="02-isr-leader-election.html">
+      <div class="num">02</div><h3>ISR, leader election &amp; broker failure</h3>
+      <p>Crash and restart brokers, stall a follower, and watch the ISR, high watermark and leader epoch. Find out when <code>acks=all</code> refuses writes and when acked data is lost.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="03-rolling-restarts-upgrades.html">
+      <div class="num">03</div><h3>Rolling restarts &amp; upgrades</h3>
+      <p>Roll 3 controllers and 4 brokers with a health check or a fixed sleep, compare SIGTERM with <code>kill -9</code>, and finalize a 4.2 → 4.3 upgrade.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="04-capacity-planning.html">
+      <div class="num">04</div><h3>Cluster capacity planning</h3>
+      <p>Size a cluster for an operator's usage records from subscribers, record size, retention and consumer groups, and see whether disk, network or the replication factor sets the broker count.</p>
+      <div class="tags"><span class="pill">explorer</span><span class="pill">5-question quiz</span></div>
+    </a>
+  </div>
+
+  <h2>Hands-on for this module</h2>
+  <div class="card">
+    <ol class="hands">
+      <li>Partition reassignment exercise on the shared Apache Kafka cluster</li>
+      <li>Simulate broker failure and recovery</li>
+    </ol>
+  </div>
+</div>
+</body>
+</html>

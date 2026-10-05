@@ -1,0 +1,1206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka Cluster Operations &amp; HA Deck</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* ---------- Tokens (same palette as the Module 1 deck) ---------- */
+:root {
+  --bg: #e9ecf1; --slide: #fbfbfd; --surface: #ffffff; --surface-2: #eef1f5; --border: #d8dde5;
+  --text: #1b2330; --muted: #5b6678; --accent: #2f6fdb; --accent-soft: #dce8fb;
+  --ok: #1f8a4c; --ok-soft: #dcf2e4; --bad: #c43b3b; --bad-soft: #f9e0e0; --warn: #b7791f; --warn-soft: #fbefd8;
+  --p0: #2f6fdb; --p1: #d0682a; --p2: #2a9d6f; --p3: #8a4fd1; --p4: #c2417b; --p5: #3a8fa8;
+  --grid: rgba(27, 35, 48, .045);
+  --shadow: 0 1px 2px rgba(20,30,50,.06), 0 6px 20px rgba(20,30,50,.06);
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0a0d12; --slide: #11151c; --surface: #1a1f28; --surface-2: #232a35; --border: #333c4a;
+    --text: #e6eaf0; --muted: #9aa5b5; --accent: #6b9cf0; --accent-soft: #22324f;
+    --ok: #4cc27e; --ok-soft: #1d3527; --bad: #ef7070; --bad-soft: #3d2222; --warn: #e0a84a; --warn-soft: #3a2f1c;
+    --p0: #6b9cf0; --p1: #ec8d52; --p2: #4cc29a; --p3: #ad84ec; --p4: #e8729f; --p5: #5dbbd4;
+    --grid: rgba(230, 234, 240, .035); --shadow: none; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0a0d12; --slide: #11151c; --surface: #1a1f28; --surface-2: #232a35; --border: #333c4a;
+  --text: #e6eaf0; --muted: #9aa5b5; --accent: #6b9cf0; --accent-soft: #22324f;
+  --ok: #4cc27e; --ok-soft: #1d3527; --bad: #ef7070; --bad-soft: #3d2222; --warn: #e0a84a; --warn-soft: #3a2f1c;
+  --p0: #6b9cf0; --p1: #ec8d52; --p2: #4cc29a; --p3: #ad84ec; --p4: #e8729f; --p5: #5dbbd4;
+  --grid: rgba(230, 234, 240, .035); --shadow: none; color-scheme: dark;
+}
+
+/* ---------- Stage & slides ---------- */
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--text); font-family: var(--sans); overflow: hidden; }
+code, .mono { font-family: var(--mono); }
+.viewport { position: fixed; inset: 0; display: grid; place-items: center; }
+.deck { position: relative; width: 1280px; height: 720px; transform-origin: center center; flex: none; }
+.slide {
+  position: absolute; inset: 0; padding: 44px 64px 60px; display: flex; flex-direction: column;
+  background: var(--slide); border-radius: 18px; box-shadow: var(--shadow); overflow: hidden;
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 32px 32px;
+  opacity: 0; visibility: hidden; transform: translateX(24px); transition: opacity .35s ease, transform .35s ease, visibility 0s .35s;
+}
+.slide.active { opacity: 1; visibility: visible; transform: none; transition: opacity .35s ease, transform .35s ease; }
+.slide.before { transform: translateX(-24px); }
+.slide::before { /* accent rail */
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px;
+  background: linear-gradient(var(--p0), var(--p3), var(--p1));
+}
+.foot {
+  position: absolute; left: 64px; right: 64px; bottom: 20px; display: flex; justify-content: space-between;
+  font-size: 13px; color: var(--muted); letter-spacing: .02em;
+}
+.foot b { color: var(--text); font-weight: 600; }
+
+.kicker { text-transform: uppercase; letter-spacing: .12em; font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px; }
+h1, h2 { margin: 0; letter-spacing: -.02em; }
+h2 { font-size: 38px; line-height: 1.12; font-weight: 800; }
+h2 .hl { color: var(--accent); }
+.sub { color: var(--muted); font-size: 18px; margin: 8px 0 0; max-width: 980px; line-height: 1.45; }
+.body { flex: 1; min-height: 0; margin-top: 22px; }
+.row { display: flex; gap: 20px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow);
+}
+.card h3 { margin: 0 0 6px; font-size: 17px; font-weight: 700; }
+.card p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.45; }
+.pill { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; background: var(--accent-soft); color: var(--accent); }
+.tag { display: inline-block; font-family: var(--mono); font-size: 12.5px; padding: 1px 7px; border-radius: 6px; background: var(--surface-2); color: var(--text); }
+.callout {
+  display: flex; gap: 14px; align-items: center; border-radius: 14px; padding: 14px 18px; font-size: 16px; line-height: 1.4;
+  background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.callout.warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.callout .big { font-size: 26px; font-weight: 800; color: var(--accent); flex: none; }
+.callout.warn .big { color: var(--warn); }
+
+/* ---------- SVG vocabulary ---------- */
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+svg text { font-family: var(--sans); fill: var(--text); font-size: 14px; }
+svg .t { font-weight: 600; font-size: 15px; }
+svg .m { fill: var(--muted); font-size: 12.5px; }
+svg .mono { font-family: var(--mono); }
+svg .acc { fill: var(--accent); }
+svg .box { fill: var(--surface); stroke: var(--border); stroke-width: 1.5; }
+svg .box2 { fill: var(--surface-2); stroke: var(--border); stroke-width: 1.2; }
+svg .frame { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 6 5; }
+svg .frame-m { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 5; }
+svg .ln { stroke: var(--muted); stroke-width: 1.6; fill: none; }
+svg .ln-soft { stroke: var(--border); stroke-width: 1.4; fill: none; }
+svg .ln-acc { stroke: var(--accent); stroke-width: 2; fill: none; }
+svg .arrow { marker-end: url(#arr); }
+svg .arrow-acc { marker-end: url(#arr-acc); }
+svg .hub { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 2; }
+svg .k0, svg .k1, svg .k2, svg .k3, svg .k4, svg .k5 { stroke-width: 1.8; }
+svg .k0 { fill: color-mix(in srgb, var(--p0) 22%, var(--surface)); stroke: var(--p0); }
+svg .k1 { fill: color-mix(in srgb, var(--p1) 22%, var(--surface)); stroke: var(--p1); }
+svg .k2 { fill: color-mix(in srgb, var(--p2) 22%, var(--surface)); stroke: var(--p2); }
+svg .k3 { fill: color-mix(in srgb, var(--p3) 22%, var(--surface)); stroke: var(--p3); }
+svg .k4 { fill: color-mix(in srgb, var(--p4) 22%, var(--surface)); stroke: var(--p4); }
+svg .k5 { fill: color-mix(in srgb, var(--p5) 22%, var(--surface)); stroke: var(--p5); }
+svg .kx { fill: var(--surface-2); stroke: var(--border); stroke-width: 1.4; }
+svg .ghost { fill: none; stroke: var(--border); stroke-width: 1.4; stroke-dasharray: 4 4; }
+svg .tomb { fill: var(--surface); stroke: var(--p1); stroke-width: 1.8; stroke-dasharray: 5 4; }
+svg .cons { fill: var(--ok-soft); stroke: var(--ok); stroke-width: 1.6; }
+svg .lag { fill: var(--warn-soft); stroke: var(--warn); stroke-width: 1.6; }
+svg .unrep { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.6; stroke-dasharray: 5 4; }
+svg .gone { fill: var(--bad-soft); stroke: var(--bad); stroke-width: 1.2; stroke-dasharray: 3 4; opacity: .7; }
+svg .d0 { fill: var(--p0); } svg .d1 { fill: var(--p1); } svg .d2 { fill: var(--p2); }
+svg .d3 { fill: var(--p3); } svg .d4 { fill: var(--p4); } svg .d5 { fill: var(--p5); }
+svg .cell-t { font-size: 12px; font-weight: 600; text-anchor: middle; }
+svg .off-t { font-size: 11px; fill: var(--muted); text-anchor: middle; font-family: var(--mono); }
+svg .mid { text-anchor: middle; }
+svg .end { text-anchor: end; }
+svg .bad-t { fill: var(--bad); } svg .ok-t { fill: var(--ok); } svg .warn-t { fill: var(--warn); }
+
+/* ---------- Slide specifics ---------- */
+.title-grid { display: grid; grid-template-columns: 1fr 580px; gap: 36px; align-items: center; height: 100%; }
+.title-grid h1 { font-size: 64px; line-height: 1.02; font-weight: 800; letter-spacing: -.03em; }
+.title-grid h1 span {
+  background: linear-gradient(90deg, var(--p0), var(--p3) 55%, var(--p1)); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.title-grid .lede { font-size: 20px; color: var(--muted); line-height: 1.45; margin: 20px 0 26px; max-width: 520px; }
+.chips { display: flex; gap: 10px; flex-wrap: wrap; }
+@keyframes drop { 0% { opacity: 0; transform: translateY(-40px); } 25%, 85% { opacity: 1; transform: none; } 100% { opacity: 0; transform: none; } }
+.new-cell { animation: drop 3s ease-out infinite; transform-box: fill-box; }
+
+.modmap { display: grid; grid-template-columns: repeat(10, 1fr); gap: 8px; }
+.mod { border-radius: 10px; padding: 10px 10px 12px; font-size: 13px; line-height: 1.3; background: var(--surface); border: 1px solid var(--border); min-height: 78px; }
+.mod b { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; letter-spacing: .06em; }
+.mod.now { background: var(--accent); color: #fff; border-color: var(--accent); box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 35%, transparent); }
+.mod.now b { color: rgba(255,255,255,.85); }
+.bands { display: grid; grid-template-columns: 1fr 4fr 4fr 1fr; gap: 8px; margin-top: 8px; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.bands div { border-top: 3px solid; padding-top: 6px; text-align: center; }
+
+.decouple { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 16px; }
+.decouple .card h3 { display: flex; align-items: center; gap: 8px; }
+.decouple .num { width: 26px; height: 26px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 13px; color: #fff; }
+
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 16px 18px; box-shadow: var(--shadow); display: flex; flex-direction: column; }
+.panel h3 { margin: 0; font-size: 20px; display: flex; align-items: center; gap: 10px; }
+.panel .cap { color: var(--muted); font-size: 15px; line-height: 1.45; margin: 4px 0 8px; }
+.panel .foot-note { margin-top: auto; font-size: 14px; color: var(--muted); border-top: 1px dashed var(--border); padding-top: 8px; }
+
+table.cmp { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14.5px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+table.cmp th, table.cmp td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+table.cmp tr:last-child td { border-bottom: 0; }
+table.cmp th { background: var(--surface-2); font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+table.cmp td:first-child { font-weight: 600; white-space: nowrap; }
+table.cmp td.k { color: var(--accent); font-weight: 600; }
+
+.quote { font-size: 28px; line-height: 1.3; font-weight: 700; letter-spacing: -.01em; margin: 0 0 18px; }
+.quote em { font-style: normal; color: var(--accent); }
+.event { font-family: var(--mono); font-size: 14px; line-height: 1.75; }
+.event .f { color: var(--muted); display: inline-block; width: 92px; }
+.event .v { color: var(--text); }
+.usecases { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.usecases span { font-size: 13px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); }
+
+.legend5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-top: 12px; }
+.legend5 .card { padding: 12px 14px; border-top: 4px solid var(--accent); }
+.legend5 .card h3 { font-size: 15px; }
+.legend5 .card p { font-size: 13.5px; }
+.cards4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 14px; }
+.cards4 .card { padding: 12px 14px; }
+.cards4 .card p { font-size: 14px; color: var(--text); }
+.cards4 .card p b { color: var(--accent); }
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.rule { display: flex; gap: 12px; align-items: flex-start; }
+.rule .ico { flex: none; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font-weight: 800; color: #fff; font-size: 15px; }
+.rule h3 { margin: 0 0 2px; font-size: 16px; }
+.rule p { margin: 0; font-size: 14px; color: var(--muted); line-height: 1.4; }
+
+.term {
+  background: #0d1117; color: #d6deeb; border-radius: 12px; font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
+  padding: 12px 14px; border: 1px solid #2a3240; white-space: pre; overflow: hidden;
+}
+.term .bar { display: flex; gap: 6px; margin: -2px 0 8px; }
+.term .bar i { width: 10px; height: 10px; border-radius: 50%; background: #ff5f57; }
+.term .bar i:nth-child(2) { background: #febc2e; } .term .bar i:nth-child(3) { background: #28c840; }
+.term .c { color: #7d8799; } .term .p { color: #7fd1a7; } .term .h { color: #82aaff; } .term .y { color: #ffcb6b; }
+.baseline { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+.baseline div { text-align: center; background: var(--surface-2); border-radius: 10px; padding: 8px 4px; }
+.baseline b { display: block; font-size: 24px; color: var(--accent); }
+.baseline span { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+
+.timeline { display: grid; grid-template-columns: repeat(6, 1fr); position: relative; margin-top: 14px; }
+.timeline::before { content: ""; position: absolute; left: 8%; right: 8%; top: 13px; height: 3px; background: linear-gradient(90deg, var(--muted), var(--accent)); border-radius: 2px; }
+.timeline .ev { text-align: center; position: relative; font-size: 13.5px; line-height: 1.35; padding: 0 6px; }
+.timeline .ev::before { content: ""; display: block; width: 16px; height: 16px; border-radius: 50%; background: var(--slide); border: 3px solid var(--accent); margin: 5px auto 8px; }
+.timeline .ev.key::before { background: var(--accent); }
+.timeline .ev b { display: block; font-size: 16px; }
+.timeline .ev span { color: var(--muted); }
+
+.labs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 14px; }
+.labs .card { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; }
+.labs .n { flex: none; font-weight: 800; font-size: 22px; color: var(--accent); line-height: 1; }
+
+.recap { display: grid; grid-template-columns: 1.25fr 1fr; gap: 24px; }
+.take { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-content: start; }
+.take .card { padding: 12px 14px; }
+.take .card h3 { font-size: 15px; display: flex; gap: 8px; align-items: baseline; }
+.take .card h3 i { font-style: normal; color: var(--accent); font-weight: 800; }
+.take .card p { font-size: 13.5px; }
+.quiz { display: flex; flex-direction: column; gap: 10px; }
+.q { position: relative; padding-right: 110px !important; cursor: pointer; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 11px 14px; font-size: 15px; transition: border-color .2s; }
+.q:hover { border-color: var(--accent); }
+.q .a { display: none; margin-top: 6px; color: var(--ok); font-size: 14px; font-weight: 500; }
+.q.open .a { display: block; }
+.q .hint { color: var(--muted); font-size: 12px; position: absolute; right: 14px; top: 13px; }
+.q.open .hint { display: none; }
+.next { margin-top: 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-radius: 14px; background: var(--accent); color: #fff; }
+.next b { font-size: 18px; }
+
+/* ---------- Chrome: controls, progress, notes ---------- */
+.progress { position: fixed; left: 0; top: 0; height: 4px; background: linear-gradient(90deg, var(--p0), var(--p3)); transition: width .3s; z-index: 5; }
+.controls { position: fixed; right: 16px; top: 12px; display: flex; gap: 6px; z-index: 5; }
+.controls button {
+  font: 600 13px var(--sans); color: var(--text); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 10px; cursor: pointer; opacity: .75;
+}
+.controls button:hover { opacity: 1; border-color: var(--accent); }
+.notes-panel {
+  position: fixed; left: 16px; right: 16px; bottom: 16px; max-height: 32vh; overflow: auto; z-index: 6; display: none;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; font-size: 15px; line-height: 1.5;
+  box-shadow: 0 10px 40px rgba(0,0,0,.25);
+}
+.notes-panel.show { display: block; }
+.notes-panel h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--accent); }
+aside.notes { display: none; }
+
+/* ---------- Print: one slide per page ---------- */
+@page { size: 1280px 720px; margin: 0; }
+@media print {
+  body { overflow: visible; background: none; }
+  .viewport { position: static; display: block; }
+  .deck { transform: none !important; width: 1280px; height: auto; }
+  .slide { position: relative; opacity: 1; visibility: visible; transform: none; height: 720px; border-radius: 0; box-shadow: none; break-after: page; transition: none; }
+  .controls, .progress, .notes-panel { display: none !important; }
+  .q .a { display: block; } .q .hint { display: none; }
+}
+
+/* ---------- Module 5 additions ---------- */
+svg .halo { paint-order: stroke; stroke: var(--slide); stroke-width: 5px; stroke-linejoin: round; }
+svg .halo-s { paint-order: stroke; stroke: var(--surface); stroke-width: 5px; stroke-linejoin: round; }
+svg .badbox { fill: var(--bad-soft); stroke: var(--bad); stroke-width: 1.6; }
+.term.sm { font-size: 12px; line-height: 1.55; }
+.term .b { color: #ef7070; } .term .a { color: #c3a6ff; }
+.term { font-variant-ligatures: none; }
+table.cmp.tight { font-size: 13.5px; }
+table.cmp.tight th, table.cmp.tight td { padding: 7px 11px; }
+table.cmp.tight td:first-child { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+.rules2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-content: start; }
+.rules2 .card { padding: 12px 14px; border-left: 4px solid var(--accent); }
+.rules2 .card h3 { font-size: 15px; }
+.rules2 .card p { font-size: 13.5px; }
+/* Off-screen slides are not painted. Animations on them are paused in the script. */
+@media screen {
+  html.deck-ready .slide:not(.active) { content-visibility: hidden; contain-intrinsic-size: 1280px 720px; }
+}
+.slide { transition-duration: .16s, .16s, 0s; transition-delay: 0s, 0s, .16s; }
+</style>
+</head>
+<body>
+
+<!-- Shared SVG defs (markers) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" style="fill: var(--muted)"/>
+    </marker>
+    <marker id="arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" style="fill: var(--accent)"/>
+    </marker>
+    <linearGradient id="resp" x1="0" x2="1" y1="0" y2="0">
+      <stop offset="0" style="stop-color: var(--p1)"/>
+      <stop offset=".5" style="stop-color: var(--p0)"/>
+      <stop offset="1" style="stop-color: var(--p2)"/>
+    </linearGradient>
+  </defs>
+</svg>
+
+<div class="progress" id="progress"></div>
+<div class="viewport"><div class="deck" id="deck">
+
+<!-- ===================== 1. TITLE ===================== -->
+<section class="slide" data-title="Title">
+  <div class="title-grid">
+    <div>
+      <div class="kicker">Apache Kafka &amp; Confluent Kafka Administration · Module 5</div>
+      <h1>Cluster Operations,<br><span>Replication &amp; HA</span></h1>
+      <p class="lede">Add and drain brokers, move partitions while traffic flows, and keep every partition writable when a broker or a whole rack goes away.</p>
+      <div class="chips">
+        <span class="pill">Beginner → Intermediate</span>
+        <span class="pill">4 topics · 2 hands-on labs</span>
+        <span class="pill">Apache Kafka 4.x · KRaft · AWS + Docker</span>
+      </div>
+    </div>
+    <svg viewBox="0 0 580 380" role="img" aria-label="Three racks hold brokers 11, 12 and 13, and new broker 14 joins rack a next to broker 11. A reassignment plan is generated, executed and verified, and three of broker 11's replicas move to broker 14.">
+      <g id="title-anim"></g>
+    </svg>
+  </div>
+  <aside class="notes">In Module 4 your producers and consumers ran on the shared cluster; today you look after the cluster underneath them. Point at the animation: broker-14 joins rack a empty, and only a reassignment plan moves replicas onto it. Ask the room: in MQ, what happens to messages already on a queue manager when you add another one to the cluster?</aside>
+</section>
+
+<!-- ===================== 2. AGENDA ===================== -->
+<section class="slide" data-title="Agenda">
+  <div class="kicker">Today's route</div>
+  <h2>From a new broker to <span class="hl">a cluster that survives losing one</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 250" role="img" aria-label="Agenda as a metro line with eight stops from adding a broker to the hands-on">
+      <path id="metro" d="M60,125 L1098,125" style="stroke: var(--accent); stroke-width: 8; stroke-linecap: round; fill: none; opacity: .25"/>
+      <path d="M60,125 L1098,125" style="stroke: var(--accent); stroke-width: 8; stroke-linecap: round; fill: none; stroke-dasharray: 1 22"/>
+      <circle r="9" class="d2"><animateMotion dur="8s" repeatCount="indefinite"><mpath href="#metro"/></animateMotion></circle>
+      <g id="stops"></g>
+    </svg>
+    <div style="margin-top:6px">
+      <div class="kicker" style="color:var(--muted)">Where Module 5 sits in the 40-hour course</div>
+      <div class="modmap">
+        <div class="mod"><b>M1</b>Messaging &amp; Kafka fundamentals</div>
+        <div class="mod"><b>M2</b>Install, setup &amp; CLI</div>
+        <div class="mod"><b>M3</b>Config, storage &amp; retention</div>
+        <div class="mod"><b>M4</b>Producing &amp; consuming</div>
+        <div class="mod now"><b>M5</b>Cluster ops &amp; HA</div>
+        <div class="mod"><b>M6</b>Confluent platform</div>
+        <div class="mod"><b>M7</b>Security &amp; RBAC</div>
+        <div class="mod"><b>M8</b>Monitoring &amp; tuning</div>
+        <div class="mod"><b>M9</b>Troubleshooting &amp; message loss</div>
+        <div class="mod"><b>M10</b>Ecosystem, DR &amp; capstone</div>
+      </div>
+      <div class="bands">
+        <div style="border-color:var(--p0);color:var(--p0)">Model</div>
+        <div style="border-color:var(--p1);color:var(--p1)">Apache Kafka administration</div>
+        <div style="border-color:var(--p4);color:var(--p4)">Confluent Kafka</div>
+        <div style="border-color:var(--p2);color:var(--p2)">Capstone</div>
+      </div>
+    </div>
+  </div>
+  <aside class="notes">The first three stops change the shape of the cluster, the next two explain what keeps a partition writable, and the last two are routine work: restarts, upgrades and sizing. This module closes the Apache Kafka administration band, and Module 6 shows the same jobs in Confluent, where Self-Balancing Clusters automate part of the reassignment work. Under-replicated partitions come back as an alert in Module 8. Ask: who here has done a rolling restart of a production messaging cluster, and what did you check between nodes?</aside>
+</section>
+
+<!-- ===================== 3. ADD A BROKER ===================== -->
+<section class="slide" data-title="Add a broker">
+  <div class="kicker">Topic 1 · Adding and removing brokers</div>
+  <h2>A new broker joins the cluster <span class="hl">empty</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 252" role="img" aria-label="Brokers 11, 12 and 13 hold all six cdr.voice partitions and send heartbeats to the KRaft controller quorum. Broker 14 is formatted with the cluster ID, starts and registers. A new topic, cdr.sms, places replicas on all four brokers, but the cdr.voice replicas stay where they were.">
+      <g id="add"></g>
+    </svg>
+    <div class="cards4">
+      <div class="card"><p><b>A unique node.id.</b> On the shared cluster, the controllers are 1–3 and the brokers are 11–14.</p></div>
+      <div class="card"><p><b>The same cluster ID.</b> Read it with <code>kafka-cluster.sh cluster-id</code>, then run <code>kafka-storage.sh format -t &lt;id&gt;</code> on the new disk.</p></div>
+      <div class="card"><p><b>The same quorum.</b> Copy <code>controller.quorum.voters</code> from the other brokers. The broker registers with the controllers when it starts.</p></div>
+      <div class="card"><p><b>Its rack.</b> Set <code>broker.rack</code> to its availability zone so that replica placement stays rack-aware.</p></div>
+    </div>
+  </div>
+  <aside class="notes">Walk through the right-hand steps: format, start, register, and then nothing happens to existing data. Kafka only places replicas when a partition is created, so broker-14 picks up new topics but never takes over old ones by itself. Apache Kafka has no built-in rebalancer, which is why the next slide exists; Confluent's Self-Balancing Clusters in Module 6 automate it. Ask: a broker was added on Monday, so why is it still at 2% disk on Friday?</aside>
+</section>
+
+<!-- ===================== 4. REASSIGNMENT WORKFLOW ===================== -->
+<section class="slide" data-title="Reassignment">
+  <div class="kicker">Topic 1 · Partition reassignment · kafka-reassign-partitions.sh</div>
+  <h2>A reassignment is a plan you <span class="hl">generate, execute, verify</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 172" role="img" aria-label="A topics file and a broker list go into the generate step, which outputs the current assignment, saved as a rollback file, and a proposed plan. The trainer executes the plan, the controller copies the replicas, and verify reports completion and removes the throttle.">
+      <g id="flow"></g>
+    </svg>
+    <div class="term sm" style="margin-top:12px"><div class="bar"><i></i><i></i><i></i></div><span class="p">$</span> cat topics.json
+{"version":1,"topics":[{"topic":"<span class="h">l07.cdr.voice</span>"}]}
+<span class="p">$</span> kafka-reassign-partitions.sh --bootstrap-server <span class="y">$APACHE</span> --command-config <span class="y">$CFG</span> \
+    --topics-to-move-json-file topics.json --broker-list <span class="y">11,12,13,14</span> <span class="a">--generate</span>
+Current partition replica assignment            <span class="c"># copy this JSON to rollback.json</span>
+Proposed partition reassignment configuration   <span class="c"># copy this JSON to plan.json</span>
+<span class="c"># the trainer runs this step: it needs Alter on the cluster</span>
+<span class="p">$</span> kafka-reassign-partitions.sh <span class="c">…</span> --reassignment-json-file plan.json <span class="a">--execute</span> --throttle <span class="y">50000000</span>
+<span class="p">$</span> kafka-reassign-partitions.sh <span class="c">…</span> --reassignment-json-file plan.json <span class="a">--verify</span>
+Reassignment of partition l07.cdr.voice-1 is <span class="p">completed</span>.</div>
+  </div>
+  <aside class="notes">--generate only reads metadata and proposes a plan, so it is safe to run as often as you like; it changes nothing. Always keep the "Current" JSON as rollback.json, because it is the only record of where the replicas were. On the shared cluster you generate and verify, and the trainer executes, because --execute needs Alter on the cluster and that would also let you change ACLs. Ask: why might you edit plan.json by hand instead of using the proposal as it is?</aside>
+</section>
+
+<!-- ===================== 5. DURING A MOVE ===================== -->
+<section class="slide" data-title="During a move">
+  <div class="kicker">Topic 1 · Cluster balancing · throttled reassignment</div>
+  <h2>A move adds the new replica first, <span class="hl">then drops the old one</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 232" role="img" aria-label="Partition 1 moves from broker 11 to broker 14 in four stages. It starts on 12, 11 and 13. Broker 14 is added and copies the data at a throttled rate. Once 14 is in sync, the partition briefly has four in-sync replicas. Finally broker 11 is removed, leaving 12, 14 and 13.">
+      <g id="move"></g>
+    </svg>
+    <table class="cmp tight" style="margin-top:12px">
+      <thead><tr><th>Option</th><th>Use it with</th><th>What it does</th></tr></thead>
+      <tbody>
+        <tr><td>--throttle &lt;bytes/s&gt;</td><td>--execute</td><td>Caps the copy rate for the moving replicas, so client traffic keeps its bandwidth</td></tr>
+        <tr><td>--additional</td><td>--execute</td><td>Changes the throttle of a running reassignment, or adds partitions to it</td></tr>
+        <tr><td>--verify</td><td>the same plan.json</td><td>Reports progress and removes the throttle once every partition is done</td></tr>
+        <tr><td>--cancel</td><td>the same plan.json</td><td>Stops the moves still in progress and puts those partitions back on their original replicas</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <aside class="notes">Kafka never moves a replica in place: it adds the new replica, waits until it is in sync, and only then removes the old one. While that happens the partition has more replicas than its replication factor, so the copy costs disk and network on both brokers. Without --throttle, a large move can saturate the leaders and slow every producer on them. Ask: if latency climbs during a big move with no throttle, which option do you reach for?</aside>
+</section>
+
+<!-- ===================== 6. REMOVE A BROKER ===================== -->
+<section class="slide" data-title="Remove a broker">
+  <div class="kicker">Topic 1 · Adding and removing brokers</div>
+  <h2>Remove a broker by <span class="hl">draining it first</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 236" role="img" aria-label="Broker 14 is drained: a reassignment moves its replicas of partitions 1, 3 and 5 back to broker 11. Once it holds nothing, it is stopped and then unregistered from the cluster.">
+      <g id="drain"></g>
+    </svg>
+    <div class="callout warn" style="margin-top:14px">
+      <div class="big">!</div>
+      <div><b>Common trap:</b> stopping the broker first. Every partition that had a replica there becomes under-replicated, one more failure takes those partitions below <code>min.insync.replicas</code>, and any RF 1 topic goes offline. In KRaft, a stopped broker stays registered and fenced until you run <code>kafka-cluster.sh unregister</code>.</div>
+    </div>
+  </div>
+  <aside class="notes">Draining is the add-a-broker workflow in reverse: generate a plan with a broker list that leaves 14 out, execute it, and verify until nothing is left on 14. Only then stop the process and unregister its ID, so tools and dashboards stop showing a dead broker. Because 14 shares rack a with 11, its replicas can only go back to 11 without breaking rack awareness. Ask: how do you prove broker-14 holds nothing before you stop it?</aside>
+</section>
+
+<!-- ===================== 7. ISR ===================== -->
+<section class="slide" data-title="ISR">
+  <div class="kicker">Topic 2 · ISR (in-sync replicas)</div>
+  <h2>In sync means <span class="hl">caught up recently</span>, not identical</h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 214" role="img" aria-label="The leader on broker 12 holds offsets 0 to 11. Follower 14 fetches offsets 10 and 11 and the high watermark moves to 12. Follower 13 stopped at offset 6, has not caught up for more than 30 seconds, and has been removed from the ISR.">
+      <g id="isr"></g>
+    </svg>
+    <table class="cmp tight" style="margin-top:12px">
+      <thead><tr><th>ISR size (RF 3, min ISR 2)</th><th>acks=all writes</th><th>Reads</th><th>Find these partitions with kafka-topics.sh --describe</th></tr></thead>
+      <tbody>
+        <tr><td>3 · healthy</td><td class="k">accepted</td><td>yes</td><td>—</td></tr>
+        <tr><td>2 · at min ISR</td><td class="k">accepted, no spare</td><td>yes</td><td><code>--under-replicated-partitions</code>, <code>--at-min-isr-partitions</code></td></tr>
+        <tr><td>1 · under min ISR</td><td>rejected: <code>NOT_ENOUGH_REPLICAS</code></td><td>yes</td><td><code>--under-min-isr-partitions</code></td></tr>
+        <tr><td>no leader</td><td>rejected</td><td>no</td><td><code>--unavailable-partitions</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <aside class="notes">Followers pull from the leader exactly like consumers do. A follower stays in the ISR as long as it has caught up to the leader's log end within replica.lag.time.max.ms, 30 seconds by default. The high watermark is the highest offset every ISR member has, and consumers only see records below it, which is why acks=all and min.insync.replicas from Module 3 work together. Ask: with RF 3 and min ISR 2, how many brokers can you lose before billing's producer starts failing?</aside>
+</section>
+
+<!-- ===================== 8. LEADER ELECTION ===================== -->
+<section class="slide" data-title="Leader election">
+  <div class="kicker">Topic 2 · Leader election</div>
+  <h2>When a leader dies, the controller <span class="hl">promotes an in-sync follower</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 258" role="img" aria-label="All four brokers send heartbeats to the active controller and the producer writes partition 1 to its leader, broker 12. Broker 12 crashes and its heartbeats stop, so the controller fences it after the session timeout. The controller elects broker 14 from the ISR, publishes the new metadata, and the producer retries against broker 14.">
+      <g id="elect"></g>
+    </svg>
+    <div class="rules2" style="margin-top:12px">
+      <div class="card" style="border-left-color:var(--ok)"><h3>Only the ISR can lead</h3><p><code>unclean.leader.election.enable=false</code> is the default. With no ISR member left, the partition goes offline instead of losing acknowledged writes.</p></div>
+      <div class="card"><h3>A clean stop hands over first</h3><p>A broker stopped with SIGTERM does a controlled shutdown: its leaderships move before it exits. <code>kill -9</code> leaves them to the session timeout.</p></div>
+      <div class="card" style="border-left-color:var(--p3)"><h3>Leadership drifts back</h3><p>The first replica in the list is the preferred leader. With <code>auto.leader.rebalance.enable=true</code>, the controller returns leadership to it within <code>leader.imbalance.check.interval.seconds</code> (300 s).</p></div>
+      <div class="card" style="border-left-color:var(--p0)"><h3>Clients ride through</h3><p>Producers get the retriable <code>NOT_LEADER_OR_FOLLOWER</code>, refresh their metadata and retry inside <code>delivery.timeout.ms</code> (Module 4).</p></div>
+    </div>
+  </div>
+  <aside class="notes">In KRaft, brokers heartbeat to the active controller every 2 seconds, and a broker that misses heartbeats for broker.session.timeout.ms, 9 seconds by default, is fenced. The controller then picks the next live replica that is in the ISR and pushes the new leader to every broker through the metadata log. Turning on unclean leader election trades lost CDRs for availability, and for billing data that is almost never the right trade. Ask: why does a planned stop with systemctl cause a shorter blip than a crashed instance?</aside>
+</section>
+
+<!-- ===================== 9. BROKER FAILURE TRIAGE ===================== -->
+<section class="slide" data-title="Broker failure">
+  <div class="kicker">Topic 2 · Handling broker failures</div>
+  <h2>Triage a broker failure: <span class="hl">quorum first, then partitions</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 198" role="img" aria-label="Under-replicated partitions over time. Broker 12 stops and the count jumps. About 9 seconds later its leaderships have moved. When broker 12 restarts, it catches up from the leaders, the count falls back to zero, and preferred leaders are restored within 300 seconds.">
+      <g id="urp"></g>
+    </svg>
+    <div class="term sm" style="margin-top:12px"><div class="bar"><i></i><i></i><i></i></div><span class="c"># 1. Is the controller quorum healthy? (leader, high watermark, voters)</span>
+<span class="p">$</span> kafka-metadata-quorum.sh --bootstrap-server <span class="y">$APACHE</span> --command-config <span class="y">$CFG</span> describe --status
+<span class="c"># 2. Which partitions are hurt, and how badly?</span>
+<span class="p">$</span> kafka-topics.sh --bootstrap-server <span class="y">$APACHE</span> --command-config <span class="y">$CFG</span> --describe <span class="a">--under-replicated-partitions</span>
+<span class="p">$</span> kafka-topics.sh <span class="c">…</span> --describe <span class="a">--under-min-isr-partitions</span>     <span class="c"># acks=all writes are failing here</span>
+<span class="p">$</span> kafka-topics.sh <span class="c">…</span> --describe <span class="a">--unavailable-partitions</span>       <span class="c"># no leader at all: reads fail too</span>
+<span class="c"># 3. Bring the broker back, wait for URP = 0, then restore balance if needed (trainer)</span>
+<span class="p">$</span> kafka-leader-election.sh --bootstrap-server <span class="y">$APACHE</span> <span class="c">…</span> --election-type <span class="y">PREFERRED</span> --all-topic-partitions</div>
+  </div>
+  <aside class="notes">Check the controllers first: if the quorum has no leader, no partition can change leader and nothing else you do will help. Then sort the damage, because under-replicated means less safety, under min ISR means producers are failing, and unavailable means an outage. A restarted broker truncates to the high watermark and fetches from the leaders until it is back in the ISR. Ask: the broker's disk is gone for good, so what do you do with its replicas?</aside>
+</section>
+
+<!-- ===================== 10. ROLLING RESTART ===================== -->
+<section class="slide" data-title="Rolling restart">
+  <div class="kicker">Topic 3 · Rolling restarts</div>
+  <h2>One broker at a time, and <span class="hl">wait for URP = 0</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 214" role="img" aria-label="A rolling restart walks across brokers 11 to 14. Each broker is stopped cleanly so its leaders move away, then restarted. It catches up, and the next broker only restarts once under-replicated partitions are back at zero.">
+      <g id="roll"></g>
+    </svg>
+    <div class="cards4">
+      <div class="card"><p><b>Why one at a time.</b> With RF 3 and min ISR 2, every partition can lose exactly one replica and keep accepting writes.</p></div>
+      <div class="card"><p><b>The gate.</b> Wait for <code>--under-replicated-partitions</code> to return nothing before you touch the next broker.</p></div>
+      <div class="card"><p><b>Stop cleanly.</b> Use <code>systemctl stop kafka</code> (SIGTERM) so leaderships move first. Never <code>kill -9</code> during maintenance.</p></div>
+      <div class="card"><p><b>Controllers too.</b> Three voters survive one down. Restart them one at a time and check <code>describe --status</code> in between.</p></div>
+    </div>
+  </div>
+  <aside class="notes">A rolling restart is how you apply a static config change, patch the OS or upgrade Kafka without an outage. The gate is the whole discipline: if you restart broker-12 while broker-11 is still catching up, some partitions have two replicas down and drop below min ISR. Keep your Module 4 producer running during the drill and watch it ride through with retries but no errors. Ask: what happens if you restart two controllers out of three at once?</aside>
+</section>
+
+<!-- ===================== 11. UPGRADES ===================== -->
+<section class="slide" data-title="Upgrades">
+  <div class="kicker">Topic 3 · Upgrade considerations</div>
+  <h2>Upgrade in two steps: <span class="hl">binaries, then metadata.version</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 196" role="img" aria-label="Phase one rolls the new binaries through the three controllers and four brokers one node at a time, while the cluster keeps its old metadata version so the binaries can still be rolled back. Phase two runs kafka-features upgrade, which raises the metadata version and is one-way.">
+      <g id="upgrade"></g>
+    </svg>
+    <table class="cmp tight" style="margin-top:12px">
+      <thead><tr><th>Check before you start</th><th>Why it matters for Kafka 4.x</th></tr></thead>
+      <tbody>
+        <tr><td>ZooKeeper cluster?</td><td>4.x has no ZooKeeper. Migrate to KRaft on 3.9 first, then upgrade (Module 2).</td></tr>
+        <tr><td>KRaft 3.3 – 3.9</td><td>Can roll straight to 4.x. Read the upgrade notes for removed configs and flags.</td></tr>
+        <tr><td>Java runtime</td><td>Brokers and tools need Java 17 or later. Clients need Java 11 or later.</td></tr>
+        <tr><td>Very old clients</td><td>4.0 dropped old protocol versions, so clients older than 2.1 can no longer connect. Find them before upgrading.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <aside class="notes">Phase one is just a rolling restart with new binaries, so every rule from the previous slide applies, and until you finalize you can still roll back to the old version. Phase two raises metadata.version with kafka-features.sh, and only then do features that change the metadata format switch on; treat it as one-way and run it only after a soak period. Check kafka-features.sh describe before and after so you know which version is finalized. Ask: why does Kafka separate "new code running" from "new feature level enabled"?</aside>
+</section>
+
+<!-- ===================== 12. CAPACITY SIZING ===================== -->
+<section class="slide" data-title="Capacity sizing">
+  <div class="kicker">Topic 4 · Cluster capacity planning</div>
+  <h2>Size from the peak: <span class="hl">rate × size × RF × retention</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 200" role="img" aria-label="Worked example. 20,000 CDRs per second at 500 bytes is 10 megabytes per second in, and with replication factor 3 that is 30 megabytes per second written. Kept for 7 days, that is 6.05 terabytes per copy and 18.1 terabytes in total, which is 4.5 terabytes per broker across four brokers, or 6.5 terabytes of disk each at 70 percent full.">
+      <g id="sizing"></g>
+    </svg>
+    <table class="cmp tight" style="margin-top:12px">
+      <thead><tr><th>Resource</th><th>What drives it</th><th>This example</th></tr></thead>
+      <tbody>
+        <tr><td>Disk</td><td>Rate × size × retention × RF, plus headroom for growth and moves</td><td class="k">≈ 6.5 TB per broker</td></tr>
+        <tr><td>Network in</td><td>Producer traffic plus follower fetches for replication</td><td>10 + 20 MB/s cluster-wide</td></tr>
+        <tr><td>Network out</td><td>Every consumer group reads the full stream, plus replication</td><td>3 groups: 30 + 20 MB/s</td></tr>
+        <tr><td>Partitions</td><td>Peak consumer parallelism and the per-partition rate you measured in Module 4</td><td>Measure, don't guess</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <aside class="notes">Start from the business number, the peak CDR rate and its average size, not from a broker count. Multiply by replication factor for disk writes and by the number of consumer groups for network out, because each group, such as billing, fraud and the data lake, reads the full stream again. The 70% line leaves room for a reassignment, a retention change and growth. Ask: marketing wants 30-day retention instead of 7, so what does that do to the disk per broker?</aside>
+</section>
+
+<!-- ===================== 13. HEADROOM ===================== -->
+<section class="slide" data-title="Headroom">
+  <div class="kicker">Topic 4 · Cluster capacity planning · failure headroom</div>
+  <h2>Size for the day <span class="hl">a broker is missing</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 236" role="img" aria-label="Three scenarios on four brokers. All four up, each runs at 60 percent. With broker 12 down, the other three run at about 80 percent. With rack a down, which holds brokers 11 and 14, the remaining two run at about 120 percent and are overloaded.">
+      <g id="headroom"></g>
+    </svg>
+    <div class="cards4">
+      <div class="card"><p><b>Plan for N−1.</b> With 4 brokers, the survivors carry 4/3 of the load. Check that number, not the everyday one.</p></div>
+      <div class="card"><p><b>Balance the racks.</b> Rack a holds 11 and 14. Losing it keeps every partition writable, but halves the brokers.</p></div>
+      <div class="card"><p><b>Partitions are not free.</b> Each replica costs file handles, memory and recovery time after a restart.</p></div>
+      <div class="card"><p><b>Watch the trend.</b> Disk %, network and request latency per broker drive the next expansion (Module 8).</p></div>
+    </div>
+  </div>
+  <aside class="notes">Rack-aware placement guarantees that losing one rack removes at most one replica of each partition, so with min ISR 2 everything stays writable. Capacity is a different question: the remaining brokers take the leaderships, the client traffic and the catch-up work. On the shared cluster, rack a has two brokers and the other racks have one each, which is exactly the uneven layout to avoid in production. Ask: how would you change this cluster so that losing any one zone leaves at least two-thirds of the brokers?</aside>
+</section>
+
+<!-- ===================== 14. HANDS-ON ===================== -->
+<section class="slide" data-title="Hands-on">
+  <div class="kicker">Hands-on · Reassignment on the shared cluster, failure on your own</div>
+  <h2>Plan a move on AWS, <span class="hl">break a broker at home</span></h2>
+  <div class="body">
+    <div style="display:grid;grid-template-columns:520px 1fr;gap:20px">
+      <svg viewBox="0 0 520 300" role="img" aria-label="From your lab VM you plan a reassignment for your own topic on the shared four-broker Apache Kafka cluster, which the trainer executes. On your own three-node Docker cluster from Module 2 you stop and restart kafka-2.">
+        <g id="labenv"></g>
+      </svg>
+      <div class="term sm"><div class="bar"><i></i><i></i><i></i></div><span class="c"># Lab 01 · shared cluster, your own topic</span>
+<span class="p">$</span> echo '{"version":1,"topics":[{"topic":"'<span class="y">$ME</span>'.cdr.voice"}]}' &gt; topics.json
+<span class="p">$</span> kafka-reassign-partitions.sh --bootstrap-server <span class="y">$APACHE</span> \
+    --command-config <span class="y">$CFG</span> --topics-to-move-json-file topics.json \
+    --broker-list <span class="y">11,12,13,14</span> <span class="a">--generate</span>
+<span class="c"># Current → rollback.json, Proposed → plan.json, trainer executes</span>
+<span class="p">$</span> kafka-reassign-partitions.sh <span class="c">…</span> --reassignment-json-file plan.json <span class="a">--verify</span>
+<span class="c"># Lab 02 · your Module 2 Docker cluster (labs/module-02)</span>
+<span class="p">$</span> L=localhost:9092,localhost:9094,localhost:9096
+<span class="p">$</span> docker stop <span class="b">kafka-2</span>
+<span class="p">$</span> kafka-topics.sh --bootstrap-server <span class="y">$L</span> --describe --under-replicated-partitions
+<span class="p">$</span> docker start <span class="h">kafka-2</span>
+<span class="p">$</span> kafka-leader-election.sh --bootstrap-server <span class="y">$L</span> \
+    --election-type <span class="y">PREFERRED</span> --all-topic-partitions</div>
+    </div>
+    <div class="labs" style="grid-template-columns:1fr 1fr">
+      <div class="card"><span class="n">01</span><div><h3>Partition reassignment exercise</h3><p>Generate a plan for <code>$ME.cdr.voice</code> across brokers 11–14, keep <code>rollback.json</code>, hand <code>plan.json</code> to the trainer, then <code>--verify</code>.</p></div></div>
+      <div class="card"><span class="n">02</span><div><h3>Simulate broker failure and recovery</h3><p>Stop <code>kafka-2</code> while a producer runs, watch Leader and Isr change, restart it and restore preferred leaders.</p></div></div>
+    </div>
+  </div>
+  <aside class="notes">labs/module-05 is not in the repo yet, so these commands are the runtime companion for the deck; they follow the shared-cluster rules in infra/LAB-SETUP.md. You can only plan and verify on the shared cluster, and the trainer executes the plans and stops one shared broker live at an announced time. On your own Docker cluster every node is both broker and controller, so stopping kafka-2 also takes out one of three voters, and the quorum survives. Ask: before you stop kafka-2, which partitions will lose their leader?</aside>
+</section>
+
+<!-- ===================== 15. RECAP ===================== -->
+<section class="slide" data-title="Recap">
+  <div class="kicker">Wrap-up</div>
+  <h2>Key takeaways, and a quick self-check</h2>
+  <div class="body recap">
+    <div class="take">
+      <div class="card"><h3><i>01</i>New brokers start empty</h3><p>Only new partitions land on them. Move existing ones with a reassignment.</p></div>
+      <div class="card"><h3><i>02</i>Generate, execute, verify</h3><p>Keep <code>rollback.json</code>, throttle the copy, and let <code>--verify</code> clear the throttle.</p></div>
+      <div class="card"><h3><i>03</i>Drain before you remove</h3><p>Reassign the replicas off, stop the broker, then unregister its ID.</p></div>
+      <div class="card"><h3><i>04</i>The ISR is the safety net</h3><p><code>acks=all</code> with min ISR 2, and unclean election stays off.</p></div>
+      <div class="card"><h3><i>05</i>One node at a time</h3><p>Gate every restart on URP = 0. Roll the binaries before you raise <code>metadata.version</code>.</p></div>
+      <div class="card"><h3><i>06</i>Size for N−1</h3><p>Rate × size × RF × retention, with headroom for a lost broker or rack.</p></div>
+    </div>
+    <div>
+      <div class="quiz">
+        <div class="q"><span class="hint">click to reveal</span>Broker-14 joined a week ago but holds only new topics. Why?<div class="a">Existing replicas never move by themselves. Run kafka-reassign-partitions.sh to move them.</div></div>
+        <div class="q"><span class="hint">click to reveal</span>RF 3, min ISR 2, and two of P3's brokers are down. What does an <code>acks=all</code> producer see?<div class="a">NOT_ENOUGH_REPLICAS, retried until delivery.timeout.ms. Consumers can still read.</div></div>
+        <div class="q"><span class="hint">click to reveal</span>Why wait for URP = 0 before restarting the next broker?<div class="a">Otherwise some partition has two replicas down, falls below min ISR, and rejects writes.</div></div>
+        <div class="q"><span class="hint">click to reveal</span>After the failure drill every broker is up, but broker-12 leads nothing. What fixes it?<div class="a">A preferred leader election: automatic within 300 s, or kafka-leader-election.sh --election-type PREFERRED.</div></div>
+      </div>
+      <div class="next"><div><div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;opacity:.85">Next up</div><b>Module 6: Introducing Confluent Kafka: platform, architecture &amp; administration basics</b></div><span style="font-size:26px">→</span></div>
+    </div>
+  </div>
+  <aside class="notes">Run the self-check as a poll before you reveal each answer, then start Lab 01 on the shared cluster while the trainer collects the plans. This closes the Apache Kafka administration part of the course. Module 6 moves to Confluent, where Control Center and Self-Balancing Clusters take on some of today's manual work, so notice which steps you would like a tool to do for you.</aside>
+</section>
+</div></div>
+
+<div class="notes-panel" id="notesPanel"><h4>Speaker notes</h4><div id="notesText"></div></div>
+<div class="controls">
+  <button id="prev" aria-label="Previous slide">←</button>
+  <button id="counter" aria-label="Slide number" disabled style="cursor:default"></button>
+  <button id="next" aria-label="Next slide">→</button>
+  <button id="notesBtn" title="Speaker notes (N)">Notes</button>
+  <button id="themeBtn" title="Toggle theme (T)">Theme</button>
+  <button id="fsBtn" title="Fullscreen (F)">⛶</button>
+</div>
+
+<script>
+(function () {
+  const NS = "http://www.w3.org/2000/svg";
+  const el = (tag, attrs = {}, parent, text) => {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (text != null) n.textContent = text;
+    if (parent) parent.appendChild(n);
+    return n;
+  };
+  const txt = (parent, x, y, s, cls, lh = 14) => {
+    const lines = String(s).split("\n");
+    const t = el("text", { x, y: y - ((lines.length - 1) * lh) / 2, class: cls }, parent);
+    lines.forEach((l, i) => el("tspan", { x, dy: i ? lh : 0 }, t, l));
+    return t;
+  };
+  const dot = (parent, cls, path, dur, begin = 0, r = 7) => {
+    const c = el("circle", { r, class: cls }, parent);
+    el("animateMotion", { dur: dur + "s", begin: begin + "s", repeatCount: "indefinite", path }, c);
+    return c;
+  };
+  // A dot that travels a path only between fractions t0..t1 of a shared cycle
+  const seqDot = (parent, cls, path, dur, t0, t1, r = 7) => {
+    const c = el("circle", { r, class: cls, opacity: 0 }, parent);
+    el("animateMotion", { dur: dur + "s", repeatCount: "indefinite", keyPoints: "0;0;1;1", keyTimes: `0;${t0};${t1};1`, calcMode: "linear", path }, c);
+    el("animate", { attributeName: "opacity", values: "0;1;0", keyTimes: `0;${t0};${t1}`, dur: dur + "s", calcMode: "discrete", repeatCount: "indefinite" }, c);
+    return c;
+  };
+  // Show a node from fraction t of the cycle until near the end
+  const appear = (node, t, dur = 8, until = 0.94) =>
+    el("animate", { attributeName: "opacity", values: "0;1;0", keyTimes: `0;${t};${until}`, dur: dur + "s", calcMode: "discrete", repeatCount: "indefinite" }, node);
+  // Show a node only during one phase of a multi-phase cycle
+  const phase = (node, i, n, dur) => {
+    const vals = Array.from({ length: n }, (_, k) => (k === i ? 1 : 0)).join(";");
+    const kt = Array.from({ length: n }, (_, k) => (k / n).toFixed(4)).join(";");
+    el("animate", { attributeName: "opacity", values: vals, keyTimes: kt, dur: dur + "s", calcMode: "discrete", repeatCount: "indefinite" }, node);
+  };
+
+  const beat = (node, i, n, dur) => {
+    const vals = Array.from({ length: n + 1 }, (_, k) => (k === i || (k === n && i === n - 1) ? 1 : 0)).join(";");
+    const kt = Array.from({ length: n + 1 }, (_, k) => (k / n).toFixed(4)).join(";");
+    el("animate", { attributeName: "opacity", values: vals, keyTimes: kt, dur: dur + "s", calcMode: "discrete", repeatCount: "indefinite" }, node);
+  };
+  const R = (p, x, y, w, h, cls) => el("rect", { x, y, width: w, height: h, rx: 10, class: cls }, p);
+  const T = (p, x, y, s, cls) => el("text", { x, y, class: cls || "t" }, p, s);
+
+  // One replica of partition `part`: filled when it is the leader, outlined when it is a follower
+  const tile = (p, x, y, part, lead, w = 52, h = 30) => {
+    const g = el("g", {}, p);
+    const r = R(g, x, y, w, h, "k" + (part % 6));
+    r.setAttribute("rx", 6);
+    if (!lead) r.setAttribute("style", "fill:var(--surface)");
+    T(g, x + w / 2, y + h / 2 + 4.5, "P" + part, "cell-t");
+    return g;
+  };
+  // Show a node only between fractions a..b of the cycle
+  const win = (node, a, b, dur) => appear(node, a, dur, b);
+
+  // The shared cluster: rack a = brokers 11 and 14, rack b = 12, rack c = 13.
+  // Partitions 1, 3 and 5 move between 11 and 14 (to 14 when adding, back to 11 when draining).
+  const COLX = { 11: 10, 14: 148, 12: 298, 13: 447 };
+  const HOME = {
+    11: [[0, 1], [1, 0], [2, 0], [3, 1], [4, 0], [5, 0]],
+    12: [[0, 0], [1, 1], [2, 0], [3, 0], [4, 1], [5, 0]],
+    13: [[0, 0], [1, 0], [2, 1], [3, 0], [4, 0], [5, 1]]
+  };
+  const cluster = (p, oy, drain, dur, t0) => {
+    [[2, 278, "rack a"], [290, 140, "rack b"], [440, 138, "rack c"]].forEach(([x, w, n]) => {
+      el("rect", { x, y: oy, width: w, height: 206, rx: 12, class: "frame-m" }, p);
+      T(p, x + 10, oy + 16, n, "m");
+    });
+    [11, 14, 12, 13].forEach(b => {
+      const x = COLX[b], fresh = b === 14 && !drain;
+      R(p, x, oy + 24, 124, 176, fresh ? "ghost" : "box");
+      T(p, x + 62, oy + 44, "broker-" + b, "t mid");
+      T(p, x + 62, oy + 61, fresh ? "new · node.id 14" : "node.id " + b, "m mid mono" + (fresh ? " acc" : ""));
+    });
+    [0, 1, 2].forEach(r => [COLX[11] + 66, COLX[14] + 6].forEach(x =>
+      el("rect", { x, y: oy + 72 + r * 36, width: 52, height: 30, rx: 6, class: "ghost" }, p)));
+    [11, 12, 13].forEach(b => HOME[b].forEach(([part, lead], k) => {
+      if (b === 11 && k % 2) return;
+      tile(p, COLX[b] + 6 + (k % 2) * 60, oy + 72 + Math.floor(k / 2) * 36, part, lead);
+    }));
+    [[1, 0], [3, 1], [5, 0]].forEach(([part, lead], r) => {
+      const g = tile(p, drain ? COLX[14] + 6 : COLX[11] + 66, oy + 72 + r * 36, part, lead);
+      const dx = drain ? -78 : 78, a = t0 + r * .09, b = a + .1;
+      el("animateTransform", { attributeName: "transform", type: "translate", values: `0 0;0 0;${dx} 0;${dx} 0;0 0`, keyTimes: `0;${a};${b};.96;1`, dur: dur + "s", repeatCount: "indefinite" }, g);
+    });
+  };
+
+  /* ---- Slide 1: a new broker takes replicas ---- */
+  const ta = document.getElementById("title-anim");
+  const TD = 9;
+  T(ta, 290, 16, "cdr.voice · 6 partitions · RF 3 · rack-aware", "m mid");
+  cluster(ta, 30, false, TD, .36);
+  R(ta, 10, 252, 560, 40, "box2");
+  [["$ … --generate   plan.json: P1, P3, P5 → broker-14", ""], ["$ … --execute    copying, throttled", "warn-t"], ["$ … --verify     reassignment completed", "ok-t"]]
+    .forEach(([s, c], i) => {
+      const t = T(ta, 26, 277, s, "m mono " + c);
+      t.setAttribute("style", "white-space:pre");
+      phase(t, i, 3, TD);
+    });
+  T(ta, 290, 322, "broker-14 shares rack a with broker-11,", "m mid");
+  T(ta, 290, 340, "so it can only take over replicas from 11", "m mid");
+  T(ta, 290, 370, "filled tile = leader · outlined tile = follower", "m mid");
+
+  /* ---- Slide 2: agenda stops ---- */
+  const stops = [
+    ["Add a broker", "it joins empty"], ["Reassign", "generate · execute · verify"], ["Drain", "before you remove"],
+    ["ISR", "who is in sync"], ["Failover", "leader election"], ["Rolling restart", "and upgrades"],
+    ["Capacity", "size for N−1"], ["Hands-on", "reassign and break"]
+  ];
+  const sg = document.getElementById("stops");
+  const step = 1038 / (stops.length - 1);
+  stops.forEach(([a, b], i) => {
+    const x = 60 + i * step, up = i % 2 === 0, last = i === stops.length - 1;
+    el("circle", { cx: x, cy: 125, r: 18, style: `fill:${last ? "var(--p2)" : "var(--slide)"};stroke:${last ? "var(--p2)" : "var(--accent)"};stroke-width:4` }, sg);
+    T(sg, x, 131, last ? "▶" : String(i + 1), "t mid");
+    sg.lastChild.setAttribute("style", `fill:${last ? "#fff" : "var(--accent)"};font-size:15px`);
+    T(sg, x, up ? 68 : 182, a, "t mid");
+    T(sg, x, up ? 86 : 200, b, "m mid");
+  });
+
+  /* ---- Slide 3: adding a broker ---- */
+  const ad = document.getElementById("add");
+  const AD = 9;
+  R(ad, 440, 0, 280, 54, "hub");
+  T(ad, 580, 23, "KRaft controller quorum", "t mid");
+  T(ad, 580, 42, "ctl-1 · ctl-2 · ctl-3 · node.id 1–3", "m mid");
+  const SMS = { 11: [[0, 1], [2, 0]], 12: [[0, 0], [1, 0], [2, 1], [3, 0]], 13: [[0, 0], [1, 0], [2, 0], [3, 1]], 14: [[1, 1], [3, 0]] };
+  [[11, 0, "a"], [12, 200, "b"], [13, 400, "c"], [14, 600, "a"]].forEach(([b, x, rack]) => {
+    const fresh = b === 14, cx = x + 90;
+    R(ad, x, 96, 180, 154, fresh ? "ghost" : "box");
+    if (fresh) appear(R(ad, x, 96, 180, 154, "box"), .3, AD, .97);
+    T(ad, cx, 117, "broker-" + b, "t mid");
+    T(ad, cx, 134, fresh ? "rack a · new" : "rack " + rack, "m mid" + (fresh ? " acc" : ""));
+    if (fresh) T(ad, cx, 172, "no cdr.voice replicas", "m mid");
+    else HOME[b].forEach(([part, lead], k) => tile(ad, x + 10 + (k % 3) * 55, 146 + Math.floor(k / 3) * 28, part, lead, 50, 24));
+    const sms = el("g", {}, ad);
+    SMS[b].forEach(([part, lead], k) => {
+      const r = R(sms, x + 8 + k * 42, 214, 38, 24, "k4");
+      r.setAttribute("rx", 5);
+      if (!lead) r.setAttribute("style", "fill:var(--surface)");
+      T(sms, x + 27 + k * 42, 230.5, "S" + part, "cell-t");
+    });
+    appear(sms, .55, AD, .97);
+    const hb = el("g", {}, ad), hp = `M${cx},94 C ${cx},70 580,80 580,57`;
+    el("path", { d: hp, class: "ln-soft" }, hb);
+    dot(hb, "d3", hp, 2, -(x / 400), 4);
+    if (fresh) appear(hb, .3, AD, .97);
+  });
+  [["1", "kafka-storage.sh format -t <id>", .03, " mono"], ["2", "start: registers with the quorum", .3, ""],
+   ["3", "new topic cdr.sms (S) uses all four", .55, ""], ["4", "cdr.voice (P) stays on 11, 12, 13", .78, ""]]
+    .forEach(([n, s, t, mono], i) => {
+      const g = el("g", {}, ad), y = 116 + i * 36;
+      el("circle", { cx: 826, cy: y - 5, r: 12, style: "fill:var(--accent)" }, g);
+      T(g, 826, y, n, "t mid").setAttribute("style", "fill:#fff;font-size:13px");
+      T(g, 848, y, s, (mono ? "m" : "t") + mono).setAttribute("style", mono ? "font-size:12.5px;fill:var(--text)" : "font-size:14px");
+      appear(g, t, AD, .97);
+    });
+
+  /* ---- Slide 4: generate, execute, verify ---- */
+  const fl = document.getElementById("flow");
+  const FD = 7;
+  [[0, 40, 170, "k0", "topics.json", "+ --broker-list"], [210, 40, 150, "box", "① --generate", "reads, changes nothing"],
+   [400, 0, 160, "box2", "rollback.json", "Current · keep it"], [400, 90, 160, "k3", "plan.json", "Proposed"],
+   [600, 40, 170, "k1", "② --execute", "needs Alter on cluster"], [810, 40, 150, "hub", "controller", "copies replicas"],
+   [1000, 40, 160, "cons", "③ --verify", "completed ✓"]].forEach(([x, y, w, cls, a, b]) => {
+    R(fl, x, y, w, y === 40 ? 60 : 50, cls);
+    T(fl, x + w / 2, y + (y === 40 ? 26 : 22), a, "cell-t mono");
+    T(fl, x + w / 2, y + (y === 40 ? 45 : 40), b, "m mid");
+  });
+  const fp = ["M170,70 L208,70", "M360,60 C 380,60 380,25 398,25", "M360,80 C 380,80 380,115 398,115",
+              "M560,115 C 580,115 580,70 598,70", "M770,70 L808,70", "M960,70 L998,70"];
+  fp.forEach(d => el("path", { d, class: "ln arrow" }, fl));
+  seqDot(fl, "d0", fp[0], FD, .02, .12, 5);
+  seqDot(fl, "d5", fp[1], FD, .14, .26, 5);
+  seqDot(fl, "d3", fp[2], FD, .14, .26, 5);
+  seqDot(fl, "d3", fp[3], FD, .3, .42, 5);
+  seqDot(fl, "d1", fp[4], FD, .46, .56, 5);
+  seqDot(fl, "d2", fp[5], FD, .62, .74, 5);
+  T(fl, 285, 160, "learner", "m mid");
+  T(fl, 685, 160, "trainer", "m mid acc");
+  T(fl, 1080, 160, "learner", "m mid");
+
+  /* ---- Slide 5: a move, stage by stage ---- */
+  const mv = document.getElementById("move");
+  const MD = 8;
+  [["① Before", "replicas 12, 11, 13", ["F", "L", "F", ""], "ISR 12, 11, 13", "RF 3"],
+   ["② Add broker-14", "replicas 12, 14, 13, 11 · adding 14", ["F", "L", "F", "C"], "ISR 12, 11, 13", "RF 4 for now · throttled copy"],
+   ["③ 14 is in sync", "replicas 12, 14, 13, 11 · removing 11", ["F", "L", "F", "F"], "ISR 12, 11, 13, 14", "four in-sync copies, briefly"],
+   ["④ Drop broker-11", "replicas 12, 14, 13", ["X", "L", "F", "F"], "ISR 12, 14, 13", "RF 3 again · 11 frees its disk"]]
+    .forEach(([title, reps, st, isr, cap], i) => {
+      const x0 = i * 296;
+      R(mv, x0, 0, 272, 206, "box");
+      const hl = el("rect", { x: x0 - 3, y: -3, width: 278, height: 212, rx: 12, class: "frame" }, mv);
+      phase(hl, i, 4, MD);
+      T(mv, x0 + 14, 24, title, "t");
+      T(mv, x0 + 14, 46, reps, "m");
+      [11, 12, 13, 14].forEach((b, k) => {
+        const cx = x0 + 14 + k * 62;
+        T(mv, cx + 27, 70, String(b), "m mid mono");
+        R(mv, cx, 78, 54, 60, "box2");
+        const s = st[k];
+        if (!s) return;
+        const cls = s === "C" ? "unrep" : s === "X" ? "gone" : "k1";
+        const r = R(mv, cx + 4, 86, 46, 44, cls);
+        r.setAttribute("rx", 6);
+        if (s === "F") r.setAttribute("style", "fill:var(--surface)");
+        T(mv, cx + 27, 113, s === "C" ? "copy" : s === "X" ? "gone" : s === "L" ? "lead" : "P1", "cell-t" + (s === "X" ? " bad-t" : ""));
+      });
+      T(mv, x0 + 14, 166, isr, "m mono");
+      T(mv, x0 + 14, 190, cap, "m");
+      if (i === 1) {
+        const cp = `M${x0 + 103},138 C ${x0 + 103},152 ${x0 + 227},152 ${x0 + 227},140`;
+        el("path", { d: cp, class: "ln-soft arrow", style: "stroke-dasharray:4 4" }, mv);
+        [0, 1, 2].forEach(k => dot(mv, "d1", cp, 3, -k, 4));
+      }
+      if (i < 3) el("path", { d: `M${x0 + 274},108 L${x0 + 294},108`, class: "ln arrow" }, mv);
+    });
+  T(mv, 580, 228, "--throttle caps this copy, so producers and consumers keep their bandwidth", "m mid");
+
+  /* ---- Slide 6: draining broker-14 ---- */
+  const dr = document.getElementById("drain");
+  const DD = 9;
+  cluster(dr, 4, true, DD, .08);
+  const off = el("g", {}, dr);
+  R(off, COLX[14], 28, 124, 176, "badbox");
+  T(off, COLX[14] + 62, 48, "broker-14", "t mid");
+  const stopT = T(off, COLX[14] + 62, 120, "stopped", "t mid bad-t");
+  const gone = T(off, COLX[14] + 62, 120, "unregistered", "t mid bad-t");
+  appear(off, .62, DD, .97);
+  win(stopT, .62, .82, DD);
+  appear(gone, .82, DD, .97);
+  [["Reassign it away", "--broker-list 11,12,13 → --execute", .02],
+   ["Prove it is empty", "--verify: every partition completed", .4],
+   ["Stop it cleanly", "systemctl stop kafka", .62],
+   ["Unregister its ID", "kafka-cluster.sh unregister … --id 14", .82]].forEach(([a, b, t], i) => {
+    const g = el("g", {}, dr), y = 30 + i * 54;
+    el("circle", { cx: 650, cy: y + 4, r: 14, style: "fill:var(--accent)" }, g);
+    T(g, 650, y + 9, String(i + 1), "t mid").setAttribute("style", "fill:#fff;font-size:14px");
+    T(g, 676, y + 4, a, "t");
+    T(g, 676, y + 24, b, "m mono");
+    appear(g, t, DD, .97);
+  });
+
+  /* ---- Slide 7: ISR and the high watermark ---- */
+  const is = document.getElementById("isr");
+  const SD = 8;
+  T(is, 0, 14, "cdr.voice-1 · RF 3 · min ISR 2", "m");
+  [[34, "broker-12", "leader"], [94, "broker-14", "follower"], [154, "broker-13", "follower"]].forEach(([y, a, b]) => {
+    T(is, 0, y + 17, a, "t");
+    T(is, 0, y + 35, b, "m");
+  });
+  for (let i = 0; i < 12; i++) {
+    const x = 190 + i * 62;
+    R(is, x, 34, 56, 40, i < 10 ? "cons" : "unrep");
+    if (i >= 10) appear(R(is, x, 34, 56, 40, "cons"), .58, SD, .97);
+    R(is, x, 94, 56, 40, i < 10 ? "cons" : "ghost");
+    if (i >= 10) {
+      appear(R(is, x, 94, 56, 40, "cons"), .32 + (i - 10) * .12, SD, .97);
+      seqDot(is, "d2", `M${x + 28},76 L${x + 28},92`, SD, .22 + (i - 10) * .12, .32 + (i - 10) * .12, 5);
+    }
+    R(is, x, 154, 56, 40, i < 7 ? "lag" : "ghost");
+    T(is, x + 28, 208, String(i), "off-t");
+  }
+  const hw = el("g", {}, is);
+  el("rect", { x: 805, y: 26, width: 4, height: 176, rx: 2, style: "fill:var(--p3)" }, hw);
+  T(hw, 807, 18, "high watermark", "m mid").setAttribute("style", "fill:var(--p3);font-weight:600");
+  el("animateTransform", { attributeName: "transform", type: "translate", values: "0 0;0 0;124 0;124 0", keyTimes: "0;.58;.64;1", dur: SD + "s", repeatCount: "indefinite" }, hw);
+  [[34, "log end offset 12", "in ISR", "ok-t"], [94, "fetching 10 and 11", "in ISR", "ok-t"], [154, "stuck at offset 7", "> 30 s behind: out of ISR", "bad-t"]]
+    .forEach(([y, a, b, c]) => {
+      T(is, 966, y + 17, a, "t");
+      T(is, 966, y + 35, b, "m " + c);
+    });
+
+  /* ---- Slide 8: leader election ---- */
+  const lc = document.getElementById("elect");
+  const LD = 9;
+  R(lc, 430, 0, 300, 56, "hub");
+  T(lc, 580, 24, "Active controller", "t mid");
+  T(lc, 580, 44, "KRaft quorum · ctl-1, ctl-2, ctl-3", "m mid");
+  R(lc, 0, 120, 110, 76, "k1");
+  T(lc, 55, 154, "Producer", "cell-t");
+  T(lc, 55, 174, "writes P1", "m mid");
+  [[11, 150, "not a P1 replica"], [12, 400, "leader P1"], [13, 650, "follower P1 · ISR"], [14, 900, "follower P1 · ISR"]].forEach(([b, x, role]) => {
+    const cx = x + 105;
+    R(lc, x, 120, 210, 76, b === 12 ? "k3" : "box");
+    T(lc, cx, 150, "broker-" + b, "t mid");
+    T(lc, cx, 172, role, "m mid");
+    const hp = `M${cx},118 C ${cx},90 580,92 580,58`;
+    el("path", { d: hp, class: "ln-soft" }, lc);
+    if (b === 12) {
+      const g = el("g", {}, lc);
+      dot(g, "d3", hp, 2, 0, 4);
+      phase(g, 0, 3, LD);
+    } else dot(lc, "d3", hp, 2, -(x / 500), 4);
+  });
+  const toOld = "M110,130 C 200,90 380,80 430,118", toNew = "M110,190 C 330,236 840,236 930,198";
+  const p0 = el("g", {}, lc);
+  el("path", { d: toOld, class: "ln arrow" }, p0);
+  dot(p0, "d1", toOld, 1.6, 0, 5);
+  T(p0, 580, 250, "Normal: broker-12 leads P1, and every broker sends heartbeats to the controller", "m mid");
+  phase(p0, 0, 3, LD);
+  const crash = el("g", {}, lc);
+  R(crash, 400, 120, 210, 76, "badbox");
+  T(crash, 505, 150, "broker-12", "t mid");
+  T(crash, 505, 172, "✕ crashed", "m mid bad-t");
+  appear(crash, 1 / 3, LD, .99);
+  const p1 = el("g", {}, lc);
+  el("path", { d: toOld, class: "ln-soft arrow", style: "stroke-dasharray:4 4" }, p1);
+  T(p1, 200, 92, "timing out…", "m warn-t");
+  T(p1, 580, 250, "No heartbeat for broker.session.timeout.ms (9 s): the controller fences broker-12", "m mid");
+  phase(p1, 1, 3, LD);
+  const p2 = el("g", {}, lc);
+  const meta = "M730,36 C 900,36 1005,70 1005,118";
+  el("path", { d: meta, class: "ln-acc arrow-acc" }, p2);
+  dot(p2, "d0", meta, 1.6, 0, 5);
+  T(p2, 760, 24, "metadata: P1 leader = 14", "m acc");
+  R(p2, 900, 120, 210, 76, "k2");
+  T(p2, 1005, 150, "broker-14", "t mid");
+  T(p2, 1005, 172, "new leader P1 ✓", "m mid ok-t");
+  el("path", { d: toNew, class: "ln arrow" }, p2);
+  dot(p2, "d1", toNew, 2.4, 0, 5);
+  T(p2, 580, 250, "Elected from the ISR. The producer gets NOT_LEADER_OR_FOLLOWER, refreshes metadata and retries", "m mid");
+  phase(p2, 2, 3, LD);
+
+  /* ---- Slide 9: under-replicated partitions over time ---- */
+  const ur = document.getElementById("urp");
+  T(ur, 70, 14, "Under-replicated partitions during one broker failure (shape only, not to scale)", "m");
+  el("path", { d: "M70,130 L1150,130", class: "ln-soft" }, ur);
+  T(ur, 60, 134, "0", "m end");
+  const curve = "M70,130 L230,130 L230,40 L620,40 C 680,40 700,130 780,130 L1150,130";
+  el("path", { d: curve + " Z", style: "fill:var(--warn-soft);stroke:none" }, ur);
+  el("path", { d: curve, style: "stroke:var(--warn);stroke-width:2.5;fill:none" }, ur);
+  T(ur, 425, 70, "every partition with a replica on broker-12", "m mid");
+  [[230, 156, "① broker-12 stops"], [300, 176, "② ~9 s later: leaders moved"], [620, 156, "③ broker-12 restarts"],
+   [700, 176, "④ catches up, rejoins ISR"], [780, 156, "⑤ URP back to 0"], [1000, 176, "⑥ within 300 s: preferred leaders back"]]
+    .forEach(([x, y, s]) => {
+      el("path", { d: `M${x},40 L${x},${y - 14}`, class: "ln-soft", style: "stroke-dasharray:3 4" }, ur);
+      T(ur, x, y, s, "m mid halo");
+    });
+  seqDot(ur, "d1", curve, 8, .02, .95, 6);
+
+  /* ---- Slide 10: rolling restart ---- */
+  const rl = document.getElementById("roll");
+  const RD = 10;
+  T(rl, 0, 14, "Restart order →  one node at a time, gated on under-replicated partitions = 0", "m");
+  el("path", { d: "M115,32 L1015,32", class: "ln-soft" }, rl);
+  [11, 12, 13, 14].forEach((b, i) => {
+    const x = i * 300, cx = x + 115;
+    R(rl, x, 50, 230, 90, "k3");
+    T(rl, cx, 88, "broker-" + b, "t mid");
+    T(rl, cx, 110, "serving", "m mid ok-t");
+    const g = el("g", {}, rl);
+    R(g, x, 50, 230, 90, "lag");
+    T(g, cx, 80, "broker-" + b, "t mid");
+    T(g, cx, 101, "restarting", "m mid warn-t");
+    T(g, cx, 120, "its leaders moved away", "m mid");
+    win(g, i / 4 + .01, i / 4 + .19, RD);
+    if (i < 3) {
+      const gx = x + 265;
+      el("circle", { cx: gx, cy: 95, r: 25, class: "kx" }, rl);
+      T(rl, gx, 99, "URP 0?", "m mid").setAttribute("style", "font-size:11px");
+      const ok = el("g", {}, rl);
+      el("circle", { cx: gx, cy: 95, r: 25, class: "cons" }, ok);
+      T(ok, gx, 100, "✓", "t mid ok-t");
+      win(ok, i / 4 + .19, (i + 1) / 4 + .01, RD);
+      seqDot(rl, "d3", `M${cx},32 L${cx + 300},32`, RD, i / 4 + .19, (i + 1) / 4, 6);
+    }
+  });
+  T(rl, 580, 176, "stop cleanly → leaders move away → restart → fetch and rejoin the ISR → URP = 0 → next broker", "m mid");
+  T(rl, 580, 204, "Then the controllers, the same way: ctl-1, ctl-2, ctl-3, checking kafka-metadata-quorum.sh describe --status", "m mid");
+
+  /* ---- Slide 11: two-phase upgrade ---- */
+  const up = document.getElementById("upgrade");
+  const UD = 9;
+  R(up, 0, 0, 720, 170, "box");
+  T(up, 16, 26, "Phase 1 · roll the new binaries, one node at a time", "t");
+  ["ctl-1", "ctl-2", "ctl-3", "broker-11", "broker-12", "broker-13", "broker-14"].forEach((n, i) => {
+    const x = 16 + i * 98;
+    R(up, x, 50, 88, 60, "k5");
+    T(up, x + 44, 75, n, "cell-t");
+    T(up, x + 44, 95, "4.2", "m mid mono");
+    const g = el("g", {}, up);
+    R(g, x, 50, 88, 60, "k2");
+    T(g, x + 44, 75, n, "cell-t");
+    T(g, x + 44, 95, "4.3", "m mid mono ok-t");
+    appear(g, .05 + i * .09, UD, .96);
+  });
+  T(up, 16, 140, "metadata.version stays at 4.2, so you can still roll the binaries back", "m");
+  T(up, 16, 158, "versions are an example: read the upgrade notes for your source and target", "m");
+  el("path", { d: "M720,85 L760,85", class: "ln arrow" }, up);
+  R(up, 762, 0, 398, 170, "box");
+  T(up, 778, 26, "Phase 2 · finalize after a soak", "t");
+  T(up, 778, 56, "kafka-features.sh … upgrade", "m mono");
+  T(up, 778, 76, "  --release-version 4.3", "m mono");
+  const fin = el("g", {}, up);
+  R(fin, 778, 98, 366, 56, "k3");
+  T(fin, 961, 122, "metadata.version → 4.3", "cell-t mono");
+  T(fin, 961, 142, "one-way: new features switch on", "m mid");
+  appear(fin, .74, UD, .96);
+
+  /* ---- Slide 12: sizing chain ---- */
+  const sz = document.getElementById("sizing");
+  const chain = (y, items, label) => {
+    T(sz, 0, y - 8, label, "m");
+    let x = 0;
+    items.forEach((it, i) => {
+      if (typeof it === "string") {
+        T(sz, x + 14, y + 34, it, "t mid").setAttribute("style", "font-size:20px;fill:var(--muted)");
+        x += 28;
+        return;
+      }
+      const [a, b, cls] = it;
+      R(sz, x, y, 100, 56, cls);
+      T(sz, x + 50, y + 24, a, "cell-t").setAttribute("style", "font-size:14px");
+      T(sz, x + 50, y + 43, b, "m mid").setAttribute("style", "font-size:11.5px");
+      x += 100;
+    });
+    const p = `M0,${y + 64} L${x},${y + 64}`;
+    el("path", { d: p, class: "ln-soft" }, sz);
+    dot(sz, "d0", p, 5, 0, 4);
+  };
+  chain(18, [["20,000/s", "peak CDRs", "k0"], "×", ["500 B", "avg CDR size", "k0"], "=", ["10 MB/s", "ingress", "k3"], "×",
+             ["RF 3", "replicas", "k0"], "=", ["30 MB/s", "disk writes", "k3"]], "Throughput");
+  chain(118, [["10 MB/s", "ingress", "k3"], "×", ["604,800 s", "7 days", "k0"], "=", ["6.05 TB", "one copy", "k3"], "×",
+              ["RF 3", "replicas", "k0"], "=", ["18.1 TB", "all copies", "k3"], "÷", ["4", "brokers", "k0"], "=",
+              ["4.5 TB", "per broker", "k3"], "÷", ["70%", "max disk fill", "k0"], "=", ["6.5 TB", "disk per broker", "cons"]], "Storage");
+
+  /* ---- Slide 13: headroom when brokers are missing ---- */
+  const hr = document.getElementById("headroom");
+  const HD = 9;
+  [["All four brokers up", [60, 60, 60, 60], 0], ["broker-12 down", [80, 0, 80, 80], .25], ["rack a down (11 and 14)", [0, 120, 120, 0], .55]]
+    .forEach(([title, load, t], i) => {
+      const x0 = i * 395, g = el("g", {}, hr);
+      R(g, x0, 0, 370, 230, "box");
+      T(g, x0 + 16, 24, title, "t");
+      el("path", { d: `M${x0 + 20},90 L${x0 + 350},90`, style: "stroke:var(--bad);stroke-width:1.4;stroke-dasharray:5 4;fill:none" }, g);
+      T(g, x0 + 350, 84, "100%", "m end bad-t");
+      el("path", { d: `M${x0 + 20},200 L${x0 + 350},200`, class: "ln-soft" }, g);
+      [["11", "a"], ["12", "b"], ["13", "c"], ["14", "a"]].forEach(([b, rack], k) => {
+        const x = x0 + 30 + k * 82, v = load[k];
+        T(g, x + 27, 218, b + " · " + rack, "m mid mono");
+        if (!v) {
+          R(g, x, 176, 54, 24, "gone");
+          T(g, x + 27, 193, "✕", "m mid bad-t");
+          return;
+        }
+        R(g, x, 200 - v * 1.1, 54, v * 1.1, v > 100 ? "badbox" : v > 70 ? "lag" : "cons").setAttribute("rx", 6);
+        T(g, x + 27, 194 - v * 1.1, "≈" + v + "%", "m mid" + (v > 100 ? " bad-t" : ""));
+      });
+      if (t) appear(g, t, HD, .97);
+    });
+
+  /* ---- Slide 14: lab environment ---- */
+  const lb = document.getElementById("labenv");
+  R(lb, 0, 0, 520, 60, "box2");
+  T(lb, 16, 26, "lab-lNN VM", "t");
+  T(lb, 16, 46, "Kafka 4.x CLI · Docker · ~/kafka/apache.properties", "m");
+  [130, 390].forEach((x, i) => {
+    el("path", { d: `M${x},60 L${x},94`, class: "ln-acc arrow-acc" }, lb);
+    dot(lb, "d0", `M${x},60 L${x},94`, 1.4, -i * .7, 5);
+  });
+  R(lb, 0, 98, 250, 202, "box");
+  T(lb, 14, 120, "Shared Apache Kafka", "t");
+  T(lb, 14, 138, "SASL/SCRAM · prefix ACLs", "m");
+  ["ctl-1", "ctl-2", "ctl-3"].forEach((n, k) => {
+    R(lb, 14 + k * 76, 150, 68, 26, "kx");
+    T(lb, 48 + k * 76, 168, n, "m mid mono");
+  });
+  [["broker-11 · a", 14, 186], ["broker-14 · a", 128, 186], ["broker-12 · b", 14, 222], ["broker-13 · c", 128, 222]].forEach(([n, x, y]) => {
+    R(lb, x, y, 108, 30, "k3");
+    T(lb, x + 54, y + 20, n, "cell-t");
+  });
+  T(lb, 14, 274, "you: --generate, --verify", "m");
+  T(lb, 14, 292, "trainer: --execute", "m acc");
+  R(lb, 270, 98, 250, 202, "box");
+  T(lb, 284, 120, "Your Docker cluster", "t");
+  T(lb, 284, 138, "Module 2 · broker + controller", "m");
+  ["kafka-1", "kafka-2", "kafka-3"].forEach((n, k) => {
+    const y = 152 + k * 38;
+    R(lb, 284, y, 222, 30, "k2");
+    T(lb, 395, y + 20, n + " · localhost:" + (9092 + k * 2), "cell-t mono");
+  });
+  const k2 = el("g", {}, lb);
+  R(k2, 284, 190, 222, 30, "badbox");
+  T(k2, 395, 210, "kafka-2 · stopped", "cell-t mono bad-t");
+  win(k2, .35, .75, 8);
+  T(lb, 284, 284, "quorum: 2 of 3 voters stay up", "m");
+
+  /* ---- Quiz ---- */
+  document.querySelectorAll(".q").forEach(q => q.addEventListener("click", () => q.classList.toggle("open")));
+
+  /* ---- Deck navigation ---- */
+  const deck = document.getElementById("deck");
+  const slides = [...document.querySelectorAll(".slide")];
+  const N = slides.length;
+  slides.forEach((s, i) => {
+    const f = document.createElement("div");
+    f.className = "foot";
+    f.innerHTML = `<span><b>Module 5</b> · Cluster Operations, Replication &amp; High Availability</span><span>${String(i + 1).padStart(2, "0")} / ${N}</span>`;
+    s.appendChild(f);
+  });
+  let cur = 0;
+  function fit() {
+    const s = Math.min(window.innerWidth / 1320, window.innerHeight / 750);
+    deck.style.transform = `scale(${s})`;
+  }
+  function motion() {
+    for (let k = 0; k < N; k++) {
+      const on = k === cur;
+      slides[k].querySelectorAll("svg").forEach(svg => {
+        if (!svg.pauseAnimations) return;
+        if (on) svg.unpauseAnimations();
+        else svg.pauseAnimations();
+      });
+    }
+  }
+  function go(i) {
+    cur = Math.max(0, Math.min(N - 1, i));
+    slides.forEach((s, k) => { s.classList.toggle("active", k === cur); s.classList.toggle("before", k < cur); });
+    document.getElementById("counter").textContent = `${cur + 1} / ${N}`;
+    document.getElementById("progress").style.width = ((cur + 1) / N * 100) + "%";
+    const n = slides[cur].querySelector("aside.notes");
+    document.getElementById("notesText").textContent = n ? n.textContent : "";
+    if (location.hash !== "#" + (cur + 1)) history.replaceState(null, "", "#" + (cur + 1));
+    motion();
+  }
+  function toggleTheme() {
+    const r = document.documentElement;
+    const dark = r.dataset.theme ? r.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    r.dataset.theme = dark ? "light" : "dark";
+    try { localStorage.setItem("m5-deck-theme", r.dataset.theme); } catch (e) {}
+  }
+  try { const t = localStorage.getItem("m5-deck-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  const toggleNotes = () => document.getElementById("notesPanel").classList.toggle("show");
+  const fullscreen = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.();
+
+  document.getElementById("prev").onclick = () => go(cur - 1);
+  document.getElementById("next").onclick = () => go(cur + 1);
+  document.getElementById("notesBtn").onclick = toggleNotes;
+  document.getElementById("themeBtn").onclick = toggleTheme;
+  document.getElementById("fsBtn").onclick = fullscreen;
+  document.addEventListener("keydown", e => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const k = e.key;
+    if (["ArrowRight", "ArrowDown", "PageDown", " ", "Enter"].includes(k)) { e.preventDefault(); go(cur + 1); }
+    else if (["ArrowLeft", "ArrowUp", "PageUp", "Backspace"].includes(k)) { e.preventDefault(); go(cur - 1); }
+    else if (k === "Home") go(0);
+    else if (k === "End") go(N - 1);
+    else if (k === "n" || k === "N") toggleNotes();
+    else if (k === "t" || k === "T") toggleTheme();
+    else if (k === "f" || k === "F") fullscreen();
+  });
+  let tx = null;
+  document.addEventListener("touchstart", e => { tx = e.touches[0].clientX; }, { passive: true });
+  document.addEventListener("touchend", e => {
+    if (tx == null) return; const dx = e.changedTouches[0].clientX - tx;
+    if (Math.abs(dx) > 50) go(cur + (dx < 0 ? 1 : -1)); tx = null;
+  });
+  window.addEventListener("resize", fit);
+  window.addEventListener("hashchange", () => go((parseInt(location.hash.slice(1), 10) || 1) - 1));
+  document.querySelectorAll(".slide svg").forEach(svg => { if (svg.pauseAnimations) svg.pauseAnimations(); });
+  fit();
+  go((parseInt(location.hash.slice(1), 10) || 1) - 1);
+  document.documentElement.classList.add("deck-ready");
+})();
+</script>
+</body>
+</html>

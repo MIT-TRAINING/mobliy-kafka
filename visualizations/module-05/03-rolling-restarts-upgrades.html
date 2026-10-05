@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rolling Restarts &amp; Upgrades</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 5 · Cluster Operations, Replication &amp; High Availability</a>
+    <div class="nav"><span>3 / 4</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 3</div>
+  <h1>Rolling restarts &amp; upgrade considerations</h1>
+  <p class="lede">A rolling restart takes one node down at a time, so the cluster never stops serving. It only works if each
+    broker is back in the ISR before you stop the next one. Roll the shared cluster's 4 brokers with the health check, then
+    with a fixed <code>sleep 30</code>, and compare how long partitions refuse <code>acks=all</code> writes. Then switch to
+    <b>Upgrade</b>, move every node from 4.2 to 4.3, and finalize the feature level.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Task</span>
+      <div class="seg" role="group" aria-label="Task" id="modeSeg">
+        <button data-v="restart" aria-pressed="true">Rolling restart (config change)</button>
+        <button data-v="upgrade" aria-pressed="false">Upgrade 4.2 → 4.3</button>
+      </div>
+      <span class="ctl-label">Between nodes</span>
+      <div class="seg" role="group" aria-label="Gate between nodes" id="gateSeg">
+        <button data-v="healthy" aria-pressed="true">wait until URP = 0</button>
+        <button data-v="sleep" aria-pressed="false">fixed sleep 30 s</button>
+      </div>
+      <span class="ctl-label">Stop with</span>
+      <div class="seg" role="group" aria-label="Stop method" id="stopSeg">
+        <button data-v="term" aria-pressed="true">systemctl stop (SIGTERM)</button>
+        <button data-v="kill" aria-pressed="false">kill -9</button>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="primary" id="roll">Start rolling restart</button>
+      <button id="elect">Preferred leader election</button>
+      <button id="final" hidden>kafka-features.sh upgrade --release-version 4.3</button>
+      <button id="reset">Reset</button>
+      <span class="pill" id="cstate">Healthy</span>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 270" role="img" aria-label="Three KRaft controllers and four brokers with their restart state"></svg></div>
+    <div class="pgrid" id="pgrid" aria-label="Health of the 12 partitions of cdr.voice"></div>
+    <div class="legend"><span><i style="background:var(--ok)"></i>3 in ISR</span><span><i style="background:var(--warn)"></i>under-replicated</span>
+      <span><i style="background:var(--bad-soft);border:1px solid var(--bad)"></i>under min ISR: acks=all refused</span><span><i style="background:var(--bad)"></i>no leader</span></div>
+    <div class="stats" id="stats"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Rolling restart checklist</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Step</th><th>Command / check</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>1 · Check health first</td><td><code>kafka-topics.sh --bootstrap-server $BS --describe --under-replicated-partitions</code> (and <code>--under-min-isr-partitions</code>) must print nothing</td><td>If a partition is already missing a replica, stopping one more broker can take it below <code>min.insync.replicas</code></td></tr>
+        <tr><td>2 · Check the quorum</td><td><code>kafka-metadata-quorum.sh --bootstrap-server $BS describe --status</code>: all voters present, and a low <code>MaxFollowerLag</code></td><td>You need a working controller quorum to move leaders and fence brokers</td></tr>
+        <tr><td>3 · Stop cleanly</td><td><code>sudo systemctl stop kafka</code> sends SIGTERM, which starts a controlled shutdown</td><td>Leadership moves to other brokers <i>before</i> the process exits, and the logs are flushed, so restart is fast</td></tr>
+        <tr><td>4 · Change and start</td><td>Edit <code>server.properties</code> or swap the binaries, then <code>sudo systemctl start kafka</code></td><td>Keep <code>node.id</code>, <code>log.dirs</code> and <code>meta.properties</code> the same</td></tr>
+        <tr><td>5 · Wait for catch-up</td><td>Repeat step 1 until it prints nothing</td><td>The broker is only back in the ISR once its replicas have caught up</td></tr>
+        <tr><td>6 · Afterwards</td><td><code>kafka-leader-election.sh --election-type preferred --all-topic-partitions</code></td><td>The last broker you restarted leads nothing until leaders are rebalanced</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Upgrading Kafka 4.x</h2>
+  <div class="grid grid-2">
+    <div class="card">
+      <h3>Two phases</h3>
+      <ol class="steps">
+        <li><span class="n">1</span><span><b>Roll the binaries</b> on every controller and broker, one at a time, with the checklist above. The cluster keeps running at the old <b>feature level</b> (<code>metadata.version</code>), so you can still roll back to the old binaries.</span></li>
+        <li><span class="n">2</span><span><b>Finalize</b> once every node runs the new version and you've watched it run normally: <code>kafka-features.sh --bootstrap-server $BS upgrade --release-version 4.3</code>. From then on, new metadata features are switched on and rolling back the binaries is no longer supported.</span></li>
+      </ol>
+    </div>
+    <div class="card">
+      <h3>Before you start</h3>
+      <dl class="terms">
+        <dt>From 3.x on ZooKeeper</dt><dd>4.x has no ZooKeeper mode. Migrate to KRaft on 3.9 first, then upgrade (Module 1, Topic 6).</dd>
+        <dt>Java</dt><dd>Kafka 4.x brokers and tools need Java 17 or later. Clients can still run on Java 11.</dd>
+        <dt>Release notes</dt><dd>Check for removed configs and changed defaults before you roll. A broker that won't start halfway through a roll leaves a partition under-replicated.</dd>
+        <dt>Current level</dt><dd><code>kafka-features.sh --bootstrap-server $BS describe</code> shows the finalized <code>metadata.version</code>.</dd>
+      </dl>
+    </div>
+  </div>
+  <div class="callout warn"><b>Admin gotcha:</b> a restart script with a fixed <code>sleep 30</code> works on a quiet test
+    cluster. It fails in production, where a broker that was down for 2 minutes has gigabytes of CDRs to catch up on. Make the
+    script wait until <code>--under-replicated-partitions</code> prints nothing, with a timeout that stops the roll.</div>
+  <div class="callout"><b>Admin takeaway:</b> <code>kill -9</code> skips the controlled shutdown. Partitions led by that
+    broker have no leader until the controller fences it (<code>broker.session.timeout.ms</code>, 9 s). When it restarts, it
+    first has to run log recovery. Use <code>kill -9</code> only for a broker that is already hung.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="02-isr-leader-election.html"><small>← Previous</small>ISR, leader election &amp; broker failure</a>
+    <a class="next" href="04-capacity-planning.html"><small>Next →</small>Cluster capacity planning</a>
+  </div>
+</div>
+
+<script>
+const CTRL = [1, 2, 3], BRK = [11, 12, 13, 14], TICK_S = 10;
+const SETS = [[11, 12, 13], [12, 13, 14], [13, 14, 11], [14, 11, 12]];
+const PARTS = Array.from({ length: 12 }, (_, p) => { const s = SETS[p % 4], r = Math.floor(p / 4); return s.slice(r).concat(s.slice(0, r)); });
+const svg = document.getElementById('svg'), log = document.getElementById('log');
+const scene = el('g', {}, svg);
+let S = null;
+
+function init() {
+  const keep = S ? { mode: S.mode, gate: S.gate, stop: S.stop } : { mode: 'restart', gate: 'healthy', stop: 'term' };
+  S = Object.assign(keep, { N: {}, lead: PARTS.map(r => r[0]), active: 1, auto: null, t: 0, badSec: 0, offSec: 0, finalized: false, quorumWarned: false });
+  CTRL.concat(BRK).forEach(id => S.N[id] = { state: 'up', left: 0, ver: '4.2', killed: false, fenced: true });
+  document.getElementById('final').hidden = S.mode !== 'upgrade';
+  document.getElementById('roll').disabled = false;
+  document.getElementById('roll').textContent = S.mode === 'upgrade' ? 'Start rolling upgrade' : 'Start rolling restart';
+  render();
+}
+
+const isCtrl = id => id < 10;
+const serving = id => ['up', 'stopping'].includes(S.N[id].state);
+const quorumUp = () => CTRL.filter(serving).length;
+const quorumOk = () => quorumUp() >= 2;
+const busy = () => CTRL.concat(BRK).some(id => S.N[id].state !== 'up');
+
+function health(p) {
+  const isr = PARTS[p].filter(b => S.N[b].state === 'up' || S.N[b].state === 'stopping').length;
+  const l = S.lead[p];
+  if (!l || !serving(l)) return 'off';
+  return isr < 2 ? 'bad' : isr < 3 ? 'warn' : 'ok';
+}
+const urp = () => PARTS.filter((_, p) => health(p) !== 'ok').length;
+
+function moveLeadersOff(b, why) {
+  if (!quorumOk()) return 0;
+  let n = 0;
+  PARTS.forEach((r, p) => {
+    if (S.lead[p] !== b) return;
+    const nl = r.find(x => x !== b && S.N[x].state === 'up');
+    S.lead[p] = nl || null; n++;
+  });
+  if (n) logLine(log, `${why}: the controller moved leadership of ${n} partitions off broker ${b}.`);
+  return n;
+}
+
+function restart(id) {
+  const n = S.N[id];
+  if (n.state !== 'up') return;
+  const kill = S.stop === 'kill';
+  const cmd = kill ? `sudo kill -9 $(pgrep -f kafka.Kafka)    # on ${isCtrl(id) ? 'ctl-' + id : 'broker-' + id}` : `sudo systemctl restart kafka    # on ${isCtrl(id) ? 'ctl-' + id : 'broker-' + id}`;
+  logLine(log, `<code>${cmd}</code>`, true);
+  n.killed = kill;
+  if (kill) { n.state = 'down'; n.left = 2; n.fenced = false; n.fenceIn = 2; }
+  else {
+    n.state = 'stopping'; n.left = 1; n.fenced = true;
+    if (!isCtrl(id)) {
+      if (!quorumOk()) logLine(log, `No controller quorum, so the controlled shutdown of broker ${id} can't move its leaders.`, true);
+      moveLeadersOff(id, 'Controlled shutdown');
+    }
+  }
+  if (isCtrl(id) && id === S.active) electController();
+  render();
+}
+
+function electController() {
+  const c = CTRL.find(x => x !== S.active && S.N[x].state === 'up');
+  if (quorumUp() - (serving(S.active) ? 1 : 0) >= 2 && c) { logLine(log, `Controller ${S.active} leaves; the remaining voters elect <b>controller ${c}</b> as active controller.`); S.active = c; }
+}
+
+function step(id) {
+  const n = S.N[id];
+  if (n.state === 'up') return;
+  if (n.state === 'down' && n.killed && !n.fenced && --n.fenceIn <= 0) {
+    if (quorumOk()) { n.fenced = true; if (!isCtrl(id)) moveLeadersOff(id, `Broker ${id} fenced after missing heartbeats`); }
+  }
+  if (--n.left > 0) return;
+  if (n.state === 'stopping') { n.state = 'down'; n.left = 2; }
+  else if (n.state === 'down') {
+    if (S.mode === 'upgrade') n.ver = '4.3';
+    n.state = 'starting'; n.left = n.killed ? 3 : 1;
+    logLine(log, `${isCtrl(id) ? 'Controller' : 'Broker'} ${id} starting${S.mode === 'upgrade' ? ' on 4.3' : ''}${n.killed ? ': unclean shutdown, so it runs <b>log recovery</b> first' : ''}.`);
+  } else if (n.state === 'starting') {
+    if (isCtrl(id)) { n.state = 'up'; n.killed = false; logLine(log, `Controller ${id} rejoined the quorum (${quorumUp()}/3 voters).`); }
+    else { n.state = 'catchup'; n.left = n.killed ? 4 : 3; logLine(log, `Broker ${id} is registered and catching up its replicas. It is not in the ISR yet.`); }
+  } else if (n.state === 'catchup') { n.state = 'up'; n.killed = false; n.fenced = true; logLine(log, `Broker ${id}'s replicas caught up, and it is back in every ISR.`, true); }
+}
+
+function tick() {
+  const anyBusy = busy();
+  if (!anyBusy && !S.auto) return;
+  S.t += TICK_S;
+  CTRL.concat(BRK).forEach(step);
+  if (!serving(S.active)) electController();
+  if (!quorumOk() && !S.quorumWarned) { S.quorumWarned = true; logLine(log, `<b>Controller quorum lost</b> (${quorumUp()}/3 voters). No leader elections or fencing until a majority is back. Brokers keep serving with the metadata they already have.`, true); }
+  if (quorumOk()) S.quorumWarned = false;
+  if (quorumOk()) PARTS.forEach((r, p) => {
+    const l = S.lead[p];
+    if (l && serving(l)) return;
+    if (l && S.N[l].killed && !S.N[l].fenced) return;
+    const nl = r.find(x => S.N[x].state === 'up');
+    if (nl && nl !== l) S.lead[p] = nl;
+  });
+  PARTS.forEach((_, p) => { const h = health(p); if (h === 'bad') S.badSec += TICK_S; if (h === 'off') S.offSec += TICK_S; });
+  autoStep();
+  render();
+}
+
+function autoStep() {
+  const a = S.auto;
+  if (!a) return;
+  if (a.wait > 0) { a.wait--; return; }
+  if (!a.queue.length) {
+    if (busy()) return;
+    S.auto = null;
+    logLine(log, `Roll finished in ${fmt(S.t)}. Partitions refused acks=all writes for ${S.badSec} partition-seconds and had no leader for ${S.offSec} partition-seconds. Leaders per broker: ${BRK.map(b => b + ':' + S.lead.filter(x => x === b).length).join(' ')}.`, true);
+    document.getElementById('roll').disabled = false;
+    return;
+  }
+  if (S.gate === 'healthy') {
+    if (busy() || urp() || quorumUp() < 3) return;
+    logLine(log, '<code>kafka-topics.sh --describe --under-replicated-partitions</code> → (no output). Safe to continue.');
+  }
+  restart(a.queue.shift());
+  if (S.gate === 'sleep') a.wait = 3;
+}
+
+const fmt = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+
+function drawNode(id, x, y, w, h) {
+  const n = S.N[id], st = n.state;
+  const label = { up: 'running', stopping: 'controlled shutdown…', down: n.killed && !n.fenced ? 'killed · not yet fenced' : 'stopped', starting: n.killed ? 'log recovery…' : 'starting…', catchup: 'catching up · not in ISR' }[st];
+  const g = el('g', {}, scene);
+  el('rect', { x, y, width: w, height: h, rx: 10,
+    fill: st === 'up' ? 'var(--surface)' : st === 'down' ? 'var(--bad-soft)' : 'var(--warn-soft)',
+    stroke: st === 'up' ? (isCtrl(id) && id === S.active ? 'var(--warn)' : 'var(--border)') : st === 'down' ? 'var(--bad)' : 'var(--warn)', 'stroke-width': 1.5 }, g);
+  el('text', { x: x + 12, y: y + 22, 'font-weight': 700, text: isCtrl(id) ? `controller-${id}` : `broker-${id}` }, g);
+  if (S.mode === 'upgrade') el('text', { x: x + w - 12, y: y + 22, 'text-anchor': 'end', 'font-size': 12, class: 'mono', fill: n.ver === '4.3' ? 'var(--ok)' : 'var(--muted)', text: 'v' + n.ver }, g);
+  el('text', { x: x + 12, y: y + 42, 'font-size': 12, fill: st === 'up' ? 'var(--ok)' : st === 'down' ? 'var(--bad)' : 'var(--warn)',
+    text: label + (isCtrl(id) && id === S.active && st === 'up' ? ' · active' : '') }, g);
+  if (!isCtrl(id)) el('text', { x: x + 12, y: y + 62, 'font-size': 12, class: 'muted', text: `leads ${S.lead.filter(l => l === id).length} · replicas 9` }, g);
+  svgButton(g, `Restart ${isCtrl(id) ? 'controller' : 'broker'} ${id}`, () => {
+    if (S.auto) { logLine(log, 'A roll is in progress. Wait for it to finish.'); return; }
+    restart(id);
+  });
+}
+
+function render() {
+  scene.innerHTML = '';
+  el('text', { x: 20, y: 22, 'font-size': 12, class: 'muted', text: `KRaft controller quorum · ${quorumUp()}/3 voters${quorumOk() ? '' : ' · NO QUORUM'}` }, scene);
+  CTRL.forEach((id, i) => drawNode(id, 150 + i * 210, 34, 180, 52));
+  BRK.forEach((id, i) => { const x = 20 + i * 222; el('line', { x1: x + 100, y1: 150, x2: 240 + Math.min(i, 2) * 210, y2: 86, stroke: 'var(--border)', 'stroke-dasharray': '3 4' }, scene); });
+  BRK.forEach((id, i) => drawNode(id, 20 + i * 222, 150, 200, 76));
+  el('text', { x: 20, y: 255, 'font-size': 12, class: 'muted',
+    text: S.mode === 'upgrade' ? `finalized release (metadata.version): ${S.finalized ? '4.3' : '4.2'}${S.finalized ? ' · binary rollback no longer supported' : ' · rollback to 4.2 binaries still possible'}` : 'cdr.voice · 12 partitions · RF 3 · min.insync.replicas=2 · click a node to restart it' }, scene);
+
+  document.getElementById('pgrid').innerHTML = PARTS.map((r, p) => {
+    const h = health(p);
+    return `<span class="pcell ${h === 'ok' ? '' : h}" title="replicas ${r}">p${p} L:${S.lead[p] && serving(S.lead[p]) ? S.lead[p] : '—'}</span>`;
+  }).join('');
+  const u = urp(), bad = PARTS.filter((_, p) => ['bad', 'off'].includes(health(p))).length;
+  const cs = document.getElementById('cstate');
+  cs.textContent = bad ? `${bad} partitions refusing acks=all` : u ? `${u} under-replicated` : busy() ? 'Rolling…' : 'Healthy';
+  cs.className = 'pill ' + (bad ? 'bad' : u || busy() ? 'warn' : 'ok');
+  document.getElementById('stats').innerHTML = [
+    [fmt(S.t), 'elapsed (sim)'], [u, 'under-replicated now'],
+    [`<span style="color:var(${S.badSec ? '--bad' : '--ok'})">${S.badSec} s</span>`, 'acks=all refused (partition·s)'],
+    [`<span style="color:var(${S.offSec ? '--bad' : '--ok'})">${S.offSec} s</span>`, 'no leader (partition·s)'],
+    [BRK.map(b => `${b}:${S.lead.filter(x => x === b).length}`).join(' '), 'leaders per broker']
+  ].map(([v, k]) => `<div class="stat"><b>${v}</b><span>${k}</span></div>`).join('');
+}
+
+wireSeg('modeSeg', v => { S.mode = v; init(); logLine(log, v === 'upgrade' ? 'Every node runs 4.2. Roll each one onto the 4.3 binaries, then finalize.' : 'Rolling restart to apply a broker config change.', true); });
+wireSeg('gateSeg', v => { S.gate = v; logLine(log, v === 'healthy' ? 'Between nodes: wait until no partition is under-replicated.' : 'Between nodes: <code>sleep 30</code>, no health check.'); });
+wireSeg('stopSeg', v => { S.stop = v; logLine(log, v === 'term' ? 'SIGTERM: controlled shutdown, so leaders move away first.' : '<code>kill -9</code>: no controlled shutdown.'); });
+document.getElementById('roll').onclick = () => {
+  if (S.auto || busy()) { logLine(log, 'Wait for the current node to finish first.'); return; }
+  S.t = 0; S.badSec = 0; S.offSec = 0;
+  S.auto = { queue: (S.mode === 'upgrade' ? CTRL.filter(c => S.N[c].ver === '4.2').concat(BRK.filter(b => S.N[b].ver === '4.2')) : BRK.slice()), wait: 0 };
+  if (!S.auto.queue.length) { S.auto = null; logLine(log, 'Every node is already on 4.3.'); return; }
+  document.getElementById('roll').disabled = true;
+  logLine(log, `Rolling ${S.auto.queue.join(', ')} one at a time (${S.gate === 'healthy' ? 'waiting for URP = 0' : 'fixed 30 s sleep'}).`, true);
+  render();
+};
+document.getElementById('elect').onclick = () => {
+  if (!quorumOk()) { logLine(log, 'No controller quorum, so no election is possible.', true); return; }
+  let n = 0;
+  PARTS.forEach((r, p) => { if (S.N[r[0]].state === 'up' && S.lead[p] !== r[0]) { S.lead[p] = r[0]; n++; } });
+  logLine(log, `<code>kafka-leader-election.sh --bootstrap-server $BS --election-type preferred --all-topic-partitions</code> → ${n} leaders moved back to their preferred replica.`, true);
+  render();
+};
+document.getElementById('final').onclick = () => {
+  logLine(log, '<code>kafka-features.sh --bootstrap-server $BS upgrade --release-version 4.3</code>', true);
+  const old = CTRL.concat(BRK).filter(id => S.N[id].ver !== '4.3' || S.N[id].state !== 'up');
+  if (old.length) { logLine(log, `Refused: nodes ${old.join(', ')} are not yet running 4.3. Every node must support a feature level before you can finalize it.`, true); return; }
+  if (S.finalized) { logLine(log, 'Already finalized at 4.3.'); return; }
+  S.finalized = true;
+  logLine(log, 'metadata.version is now at the 4.3 level, and new features are switched on. Rolling the binaries back to 4.2 is no longer supported.', true);
+  render();
+};
+document.getElementById('reset').onclick = () => { init(); logLine(log, 'Reset.'); };
+setInterval(tick, 600);
+init();
+logLine(log, 'All 7 nodes are healthy. Start a rolling restart, or click a node to restart just that one.', true);
+
+renderQuiz('quiz', [
+  { q: 'Why must <code>--under-replicated-partitions</code> print nothing before you stop the next broker?',
+    options: ['Kafka refuses to stop a broker while partitions are under-replicated',
+      'Otherwise the controller can\'t elect a new active controller',
+      'The previous broker may still be catching up. Stopping another broker that shares partitions with it leaves those partitions with one in-sync replica, below <code>min.insync.replicas=2</code>.',
+      'It is only a cosmetic check for the monitoring dashboards'],
+    answer: 2,
+    explain: 'A restarted broker is only back in the ISR once its replicas have caught up. Try the fixed <code>sleep 30</code> gate: partitions shared by the catching-up broker and the next broker drop to one ISR member, and <code>acks=all</code> producers get <code>NotEnoughReplicasException</code>.' },
+  { q: 'What does stopping with SIGTERM (<code>systemctl stop</code>) give you that <code>kill -9</code> doesn\'t?',
+    options: ['A controlled shutdown: leadership moves to other brokers before the process exits, and logs are flushed, so there is no leaderless gap and no long log recovery on restart',
+      'It removes the broker from the cluster metadata so it can be replaced',
+      'It reassigns the broker\'s partitions to the other brokers permanently',
+      'Nothing. Both are equivalent in KRaft mode.'],
+    answer: 0,
+    explain: 'With <code>kill -9</code>, partitions the broker led have no leader until the controller fences it (about 9 s). On restart, the broker has to recover its logs. A controlled shutdown asks the controller to move leadership away first, so clients barely notice.' },
+  { q: 'After a perfect rolling restart, broker 14 (restarted last) leads 0 partitions. Why, and what do you do?',
+    options: ['Broker 14 is damaged and should be replaced',
+      'Its partitions were reassigned to other brokers. Run <code>kafka-reassign-partitions.sh --execute</code> to move them back.',
+      'Leaders move to it only after clients reconnect',
+      'Each controlled shutdown moved leadership away, and it doesn\'t come back by itself straight away. Run a preferred leader election, or let <code>auto.leader.rebalance.enable</code> do it.'],
+    answer: 3,
+    explain: 'Broker 14 still holds all its replicas; only leadership moved. The first replica in each list is the preferred leader. <code>kafka-leader-election.sh --election-type preferred</code> moves leadership back straight away. The automatic rebalancer does it on its next check.' },
+  { q: 'You are upgrading from 4.2 to 4.3. When do you run <code>kafka-features.sh upgrade --release-version 4.3</code>?',
+    options: ['First, so that the 4.3 binaries can start',
+      'After every controller and broker runs 4.3 and the cluster has run normally for a while. It is the point after which rolling back the binaries is no longer supported.',
+      'Halfway through, once a majority of nodes run 4.3',
+      'Never. The feature level upgrades itself automatically once the last node restarts.'],
+    answer: 1,
+    explain: 'A 4.3 node runs fine at the 4.2 feature level, which keeps rolling back possible. Finalizing turns on the new metadata features. The controller refuses it while any node can\'t support the new level, as the simulation shows if you finalize too early.' },
+  { q: 'Your script restarts controller-1 and controller-2 at the same time (3 controllers in the quorum). What happens?',
+    options: ['The quorum loses its majority. No elections, fencing or metadata changes happen until one returns. Brokers keep serving with the metadata they already have, but a broker failure now can\'t be handled.',
+      'Nothing. Controller-3 takes over as the only controller.',
+      'All brokers shut down immediately',
+      'The brokers elect a temporary controller among themselves'],
+    answer: 0,
+    explain: 'The KRaft quorum needs a majority: 2 of 3 voters. With one voter left, nothing can be committed to the metadata log. Existing leaders keep working, but if a broker fails now, its partitions stay leaderless. Restart controllers one at a time and check <code>kafka-metadata-quorum.sh describe --status</code> between them.' }
+]);
+</script>
+</body>
+</html>

@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZooKeeper &amp; KRaft Walkthrough</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .viz-split { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(240px, 1fr); gap: 14px; align-items: start; }
+  @media (max-width: 760px) { .viz-split { grid-template-columns: 1fr; } }
+  .state { font-family: var(--mono); font-size: 12px; background: var(--surface-2); border-radius: 10px; padding: 10px 12px;
+    max-height: 420px; overflow: auto; }
+  .state h4 { margin: 0 0 8px; font-family: system-ui, sans-serif; font-size: 13px; color: var(--muted); }
+  .state .row { padding: 4px 6px; border-bottom: 1px dashed var(--border); border-radius: 4px; overflow-wrap: anywhere; }
+  .state .row b { color: var(--text); }
+  .state .row .v { color: var(--muted); display: block; }
+  .state .row.hot { background: var(--accent-soft); }
+  .state .row.unc { color: var(--warn); }
+  .state .tag { font-size: 10px; padding: 0 5px; border-radius: 4px; margin-left: 6px; background: var(--warn-soft); color: var(--warn); }
+  .state .hw { color: var(--ok); text-align: center; font-size: 11px; padding: 3px 0; }
+  .state .empty { color: var(--muted); font-style: italic; }
+  .now { margin-top: 12px; padding: 12px 14px; border-radius: 10px; border-left: 4px solid var(--accent); background: var(--accent-soft); font-size: 15px; min-height: 48px; }
+  .now .k { font-family: var(--mono); font-size: 12px; color: var(--accent); display: block; margin-bottom: 2px; }
+  .ctl-label { font-size: 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 1 · Messaging &amp; Kafka Fundamentals</a>
+    <div class="nav"><span>Topic 6 · deep dive</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 6 · Deep dive</div>
+  <h1>How a ZooKeeper cluster and a KRaft cluster actually work</h1>
+  <p class="lede">Both kinds of cluster have to do the same four jobs: start up, create topics, notice a dead broker, and
+    replace a dead controller. A ZooKeeper cluster stores its metadata in a <b>separate system</b> and the controller
+    <b>pushes</b> changes to brokers. A KRaft cluster keeps metadata in its own <b>replicated log</b>, and brokers <b>pull</b>
+    from it. Pick a scenario and step through it in one mode. Then switch modes and compare the steps, the messages, and the
+    state on the right.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Mode</span>
+      <div class="seg" role="group" aria-label="Metadata mode" id="modeSeg">
+        <button data-v="zk" aria-pressed="true">ZooKeeper (Kafka ≤ 3.9)</button>
+        <button data-v="kraft" aria-pressed="false">KRaft (only mode in 4.x)</button>
+      </div>
+    </div>
+    <div class="controls">
+      <span class="ctl-label">Scenario</span>
+      <div class="seg" role="group" aria-label="Scenario" id="scSeg">
+        <button data-v="startup" aria-pressed="true">1 · Cluster start-up</button>
+        <button data-v="create" aria-pressed="false">2 · Create topic</button>
+        <button data-v="bfail" aria-pressed="false">3 · Broker fails</button>
+        <button data-v="cfail" aria-pressed="false">4 · Controller fails</button>
+      </div>
+    </div>
+    <div class="controls">
+      <button id="back">◀ Back</button>
+      <button class="primary" id="next">Next step ▶</button>
+      <button id="play">Play all</button>
+      <button id="reset">Restart scenario</button>
+      <span class="pill" id="stepPill">Step 0 / 0</span>
+    </div>
+    <div class="viz-split">
+      <div class="stage"><svg id="svg" viewBox="0 0 640 400" role="img" aria-label="Cluster nodes and the messages exchanged in the current step"></svg></div>
+      <div class="state" id="state" aria-label="Metadata store contents"></div>
+    </div>
+    <div class="now" id="now"></div>
+    <div class="stats" id="stats"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>The same job, two designs</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Job</th><th>ZooKeeper mode</th><th>KRaft mode</th></tr></thead>
+      <tbody>
+        <tr><td>Where metadata lives</td><td>Znodes in a ZooKeeper ensemble: a second distributed system with its own config, JVMs, security and monitoring</td><td>The <code>__cluster_metadata</code> log, replicated by Raft across the controller quorum</td></tr>
+        <tr><td>Broker registration</td><td>Ephemeral znode <code>/brokers/ids/&lt;broker.id&gt;</code></td><td><code>BrokerRegistration</code> RPC → <code>RegisterBrokerRecord</code></td></tr>
+        <tr><td>Is the broker alive?</td><td>ZooKeeper session; it ends after <code>zookeeper.session.timeout.ms</code> (18 s) and the ephemeral znode is deleted</td><td><code>BrokerHeartbeat</code>; after <code>broker.session.timeout.ms</code> (9 s) without one, the broker is <b>fenced</b></td></tr>
+        <tr><td>Choosing the controller</td><td>Brokers race to create the ephemeral <code>/controller</code> znode; <code>/controller_epoch</code> rejects stale controllers</td><td>Raft vote among the controllers; the leader epoch rejects stale leaders</td></tr>
+        <tr><td>Telling brokers about changes</td><td>The controller <b>pushes</b> <code>LeaderAndIsr</code> and <code>UpdateMetadata</code> RPCs</td><td>Brokers <b>pull</b> new records with <code>Fetch</code>, like a consumer of the metadata log</td></tr>
+        <tr><td>Controller failover</td><td>The new controller reloads <b>all</b> metadata from ZooKeeper. This takes longer the more partitions you have.</td><td>Standby controllers already have the log in memory. The new leader takes over in seconds.</td></tr>
+        <tr><td>Key settings</td><td><code>zookeeper.connect</code>, <code>broker.id</code></td><td><code>process.roles</code>, <code>node.id</code>, <code>controller.quorum.bootstrap.servers</code>, <code>controller.listener.names</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Admin takeaway:</b> run 3 controllers (survives 1 failure) or 5 (survives 2). Always use an odd
+    number, because a quorum needs a strict majority. Check its health with
+    <code>kafka-metadata-quorum.sh --bootstrap-server $BS describe --status</code>, which shows the leader, the epoch, the high
+    watermark and how far each follower lags.</div>
+  <div class="callout warn"><b>Upgrade gotcha:</b> Kafka 4.x has no <code>zookeeper.connect</code> setting at all. If you
+    inherit a ZooKeeper-based 3.x cluster, migrate it to KRaft on 3.9 (the last release with ZooKeeper support) before you
+    upgrade to 4.x. Confluent Platform 8.x is KRaft-only for the same reason.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="06-zookeeper-vs-kraft.html"><small>← Topic 6</small>ZooKeeper vs. KRaft</a>
+    <a class="next" href="index.html"><small>Done →</small>Back to Module 1 overview</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), log = document.getElementById('log');
+const scene = el('g', {}, svg), fx = el('g', {}, svg);
+const POS = { z1: [210, 70], z2: [360, 70], z3: [510, 70], c1: [210, 70], c2: [360, 70], c3: [510, 70],
+  b11: [210, 312], b12: [360, 312], b13: [510, 312], adm: [62, 192] };
+const BR = [11, 12, 13];
+const TOPIC_JSON = '{"version":…,"partitions":{"0":[11,12,13],"1":[12,13,11],"2":[13,11,12]}}';
+const pstate = (l, isr, ce) => `{"controller_epoch":${ce},"leader":${l},"leader_epoch":…,"isr":[${isr}]}`;
+
+/* ---------- state helpers ---------- */
+function base0(mode) {
+  return { mode, up: { z1: 1, z2: 1, z3: 1, c1: 1, c2: 1, c3: 1, b11: 0, b12: 0, b13: 0 },
+    zkLeader: null, controller: null, epoch: 0, formatted: false, fenced: { 11: 1, 12: 1, 13: 1 },
+    started: {}, znodes: [], mlog: [], hw: 0, mark: 0, end: { c1: 0, c2: 0, c3: 0 },
+    bOff: { 11: 0, 12: 0, 13: 0 }, bVer: { 11: 0, 12: 0, 13: 0 }, leaders: null,
+    n: { msgs: 0, writes: 0, push: 0, records: 0, pull: 0 } };
+}
+function zset(s, p, v, eph) {
+  const e = s.znodes.find(z => z.p === p);
+  if (e) Object.assign(e, { v, eph, hot: true }); else s.znodes.push({ p, v, eph, hot: true });
+  s.n.writes++;
+}
+const zdel = (s, p) => { s.znodes = s.znodes.filter(z => z.p !== p); };
+function app(s, t, d) { s.mlog.push({ t, d }); s.end[s.controller] = s.mlog.length; }
+function commit(s, voters) {
+  voters.forEach(v => s.end[v] = s.mlog.length);
+  s.n.records += s.mlog.length - s.hw; s.hw = s.mlog.length;
+}
+function pull(s, ids) { ids.forEach(b => { s.bOff[b] = s.hw; s.n.pull++; }); }
+function push(s, ids) { ids.forEach(b => { s.bVer[b]++; s.n.push++; }); }
+
+/* ---------- scenarios ---------- */
+const SC = { zk: {}, kraft: {} };
+SC.zk.startup = { pre: [], steps: [
+  { t: 'Start the ZooKeeper ensemble first. The servers vote (ZAB protocol) and elect a leader. At least 2 of the 3 must be up for ZooKeeper to accept writes, and Kafka can\'t start without it.',
+    m: [['z2', 'z1', 'vote'], ['z3', 'z1', 'vote']], a: s => { s.zkLeader = 'z1'; } },
+  { t: 'Start the brokers. Each opens a ZooKeeper session (<code>zookeeper.connect</code>) and creates an <b>ephemeral</b> znode <code>/brokers/ids/&lt;broker.id&gt;</code>. "Ephemeral" means ZooKeeper deletes it when the session ends.',
+    m: [['b11', 'z1', 'create /brokers/ids/11'], ['b12', 'z2', 'create /brokers/ids/12'], ['b13', 'z3', 'create /brokers/ids/13']],
+    a: s => { BR.forEach(b => { s.up['b' + b] = 1; s.started[b] = 1; zset(s, `/brokers/ids/${b}`, `{"host":"broker-${b}","port":9092,…}`, true); }); } },
+  { t: 'Every broker tries to create the ephemeral <code>/controller</code> znode. Broker 11 gets there first and becomes <b>the controller</b>. The others put a <b>watch</b> on <code>/controller</code>, so ZooKeeper tells them if it disappears.',
+    m: [['b11', 'z1', 'create /controller ✓'], ['b12', 'z1', 'create /controller ✗'], ['b13', 'z1', 'create /controller ✗']],
+    a: s => { s.controller = 11; s.epoch = 1; zset(s, '/controller', '{"version":1,"brokerid":11,…}', true); zset(s, '/controller_epoch', '1'); } },
+  { t: 'The new controller <b>reads the whole cluster state</b> from ZooKeeper: every broker, topic and partition. On a cluster with 100,000+ partitions, this load alone can take minutes.',
+    m: [['z1', 'b11', 'read /brokers/**']], a: () => {} },
+  { t: 'The controller <b>pushes</b> what it knows to every broker with <code>UpdateMetadata</code> RPCs. Brokers never read topic metadata from ZooKeeper themselves. They wait for the controller.',
+    m: [['b11', 'b12', 'UpdateMetadata'], ['b11', 'b13', 'UpdateMetadata']], a: s => push(s, BR) }
+] };
+SC.zk.create = { pre: ['startup'], steps: [
+  { t: '<code>kafka-topics.sh --create --topic orders --partitions 3 --replication-factor 3</code> sends a <code>CreateTopics</code> request to the controller, broker 11.',
+    m: [['adm', 'b11', 'CreateTopics orders']], a: () => {} },
+  { t: 'The controller picks which brokers hold each replica and writes the assignment to <code>/brokers/topics/orders</code>. Topic configs go in <code>/config/topics/orders</code>.',
+    m: [['b11', 'z1', 'create /brokers/topics/orders']],
+    a: s => { zset(s, '/brokers/topics/orders', TOPIC_JSON); zset(s, '/config/topics/orders', '{"config":{}}'); } },
+  { t: 'Then it makes <b>one ZooKeeper write per partition</b> to record the leader and ISR. That\'s 3 writes here, and 3,000 for a 1,000-partition topic.',
+    m: [['b11', 'z1', 'create …/partitions/{0,1,2}/state']],
+    a: s => { [[11, '11,12,13'], [12, '12,13,11'], [13, '13,11,12']].forEach(([l, isr], p) => zset(s, `/brokers/topics/orders/partitions/${p}/state`, pstate(l, isr, 1))); } },
+  { t: 'The controller sends <code>LeaderAndIsr</code> to each replica\'s broker. Those brokers create the partition logs and start leading or following. It also sends <code>UpdateMetadata</code> to all brokers.',
+    m: [['b11', 'b12', 'LeaderAndIsr + UpdateMetadata'], ['b11', 'b13', 'LeaderAndIsr + UpdateMetadata']],
+    a: s => { push(s, BR); s.n.push += 2; s.leaders = { 0: 11, 1: 12, 2: 13 }; } },
+  { t: 'The controller replies to the admin client. The topic exists, and the metadata is now in two places: ZooKeeper and each broker\'s cache.',
+    m: [['b11', 'adm', 'CreateTopics: OK']], a: () => {} }
+] };
+SC.zk.bfail = { pre: ['startup', 'create'], steps: [
+  { t: 'Broker 13 crashes. <b>Nothing happens yet.</b> ZooKeeper keeps its session, and its ephemeral znode, until <code>zookeeper.session.timeout.ms</code> (18 s) passes with no heartbeat.',
+    m: [], a: s => { s.up.b13 = 0; } },
+  { t: 'The session expires. ZooKeeper deletes <code>/brokers/ids/13</code> and fires the controller\'s <b>watch</b> on <code>/brokers/ids</code>.',
+    m: [['z1', 'b11', 'watch: /brokers/ids changed']], a: s => zdel(s, '/brokers/ids/13') },
+  { t: 'Broker 13 led p2. The controller picks a new leader from the ISR (broker 11) and removes 13 from every ISR. That\'s <b>one ZooKeeper write per affected partition</b>.',
+    m: [['b11', 'z1', 'set …/partitions/{0,1,2}/state']],
+    a: s => { zset(s, '/brokers/topics/orders/partitions/0/state', pstate(11, '11,12', 1)); zset(s, '/brokers/topics/orders/partitions/1/state', pstate(12, '12,11', 1));
+      zset(s, '/brokers/topics/orders/partitions/2/state', pstate(11, '11,12', 1)); s.leaders = { 0: 11, 1: 12, 2: 11 }; } },
+  { t: 'The controller pushes the change to the surviving broker with <code>LeaderAndIsr</code> and <code>UpdateMetadata</code>. Broker 12 now follows broker 11 for p2.',
+    m: [['b11', 'b12', 'LeaderAndIsr + UpdateMetadata']], a: s => { push(s, [11, 12]); s.n.push++; } }
+] };
+SC.zk.cfail = { pre: ['startup', 'create'], steps: [
+  { t: 'Broker 11 crashes. It is the controller, and it is also an ordinary broker that leads p0. In ZooKeeper mode, the controller runs inside one of the brokers.',
+    m: [], a: s => { s.up.b11 = 0; } },
+  { t: 'After the session timeout, ZooKeeper deletes the ephemeral <code>/controller</code> and <code>/brokers/ids/11</code> znodes. The watches fire on brokers 12 and 13.',
+    m: [['z1', 'b12', 'watch: /controller deleted'], ['z1', 'b13', 'watch: /controller deleted']],
+    a: s => { zdel(s, '/controller'); zdel(s, '/brokers/ids/11'); s.controller = null; } },
+  { t: 'Brokers 12 and 13 race again. Broker 12 wins and raises <code>/controller_epoch</code> to 2. Brokers now ignore any late requests from the old controller.',
+    m: [['b12', 'z1', 'create /controller ✓'], ['b13', 'z1', 'create /controller ✗']],
+    a: s => { s.controller = 12; s.epoch = 2; zset(s, '/controller', '{"version":1,"brokerid":12,…}', true); zset(s, '/controller_epoch', '2'); } },
+  { t: 'The new controller has no metadata in memory. It has to <b>read everything back from ZooKeeper</b> before it can act. On large clusters, this is the slow part of a ZooKeeper failover.',
+    m: [['z1', 'b12', 'read /brokers/** (all partitions)']], a: () => {} },
+  { t: 'Only now does it handle broker 11\'s own failure. p0 gets a new leader (broker 12), the ISRs shrink, and the change is written to ZooKeeper and pushed to broker 13.',
+    m: [['b12', 'z1', 'set …/partitions/{0,1,2}/state'], ['b12', 'b13', 'LeaderAndIsr + UpdateMetadata']],
+    a: s => { zset(s, '/brokers/topics/orders/partitions/0/state', pstate(12, '12,13', 2)); zset(s, '/brokers/topics/orders/partitions/1/state', pstate(12, '12,13', 2));
+      zset(s, '/brokers/topics/orders/partitions/2/state', pstate(13, '13,12', 2)); s.leaders = { 0: 12, 1: 12, 2: 13 }; push(s, [12, 13]); s.n.push++; } }
+] };
+
+SC.kraft.startup = { pre: [], steps: [
+  { t: 'Before the first start, format every node\'s storage with the <b>same cluster ID</b>: <code>kafka-storage.sh format -t &lt;cluster-id&gt; -c server.properties</code>. This writes <code>meta.properties</code>. There is no separate ensemble to start first.',
+    m: [], a: s => { s.formatted = true; } },
+  { t: 'The controllers start. None of them hears from a leader, so when its election timeout runs out, controller 1 becomes a <b>candidate</b> and asks the others for their votes (Raft).',
+    m: [['c1', 'c2', 'Vote (epoch 1)'], ['c1', 'c3', 'Vote (epoch 1)']], a: () => {} },
+  { t: 'With 2 of 3 votes, controller 1 becomes the <b>active controller</b> for epoch 1 and writes a <code>LeaderChangeMessage</code> to the metadata log.',
+    m: [['c2', 'c1', 'vote granted'], ['c3', 'c1', 'vote granted']],
+    a: s => { s.controller = 'c1'; s.epoch = 1; app(s, 'LeaderChangeMessage', 'leader=1 epoch=1'); } },
+  { t: 'The brokers start and register with the active controller, which appends a <code>RegisterBrokerRecord</code> for each one. The other controllers fetch the log like followers. A record is <b>committed</b> once a majority has it.',
+    m: [['b11', 'c1', 'BrokerRegistration'], ['b12', 'c1', 'BrokerRegistration'], ['b13', 'c1', 'BrokerRegistration'], ['c2', 'c1', 'Fetch'], ['c3', 'c1', 'Fetch']],
+    a: s => { BR.forEach(b => { s.up['b' + b] = 1; s.started[b] = 1; app(s, 'RegisterBrokerRecord', `broker=${b} fenced=true`); }); commit(s, ['c2', 'c3']); } },
+  { t: 'Each broker <b>fetches</b> <code>__cluster_metadata</code> from the active controller and builds its metadata cache from it. Brokers pull. The controller doesn\'t push.',
+    m: [['b11', 'c1', 'Fetch metadata'], ['b12', 'c1', 'Fetch metadata'], ['b13', 'c1', 'Fetch metadata']], a: s => pull(s, BR) },
+  { t: 'Once a broker has caught up, its heartbeat says so, and the controller <b>unfences</b> it (<code>UnfenceBrokerRecord</code>). Only unfenced brokers can lead partitions.',
+    m: [['b11', 'c1', 'BrokerHeartbeat'], ['b12', 'c1', 'BrokerHeartbeat'], ['b13', 'c1', 'BrokerHeartbeat']],
+    a: s => { BR.forEach(b => { app(s, 'UnfenceBrokerRecord', `broker=${b}`); s.fenced[b] = 0; }); commit(s, ['c2', 'c3']); BR.forEach(b => s.bOff[b] = s.hw); } }
+] };
+SC.kraft.create = { pre: ['startup'], steps: [
+  { t: '<code>kafka-topics.sh --create --topic orders …</code> can go to <b>any broker</b>. Broker 13 forwards the request to the active controller.',
+    m: [['adm', 'b13', 'CreateTopics orders'], ['b13', 'c1', 'forward CreateTopics']], a: () => {} },
+  { t: 'The controller decides where the replicas go and appends a <code>TopicRecord</code> and one <code>PartitionRecord</code> per partition to its log. They are <b>not committed yet</b>.',
+    m: [], a: s => { app(s, 'TopicRecord', 'name=orders'); [[11, '11,12,13'], [12, '12,13,11'], [13, '13,11,12']].forEach(([l, r], p) => app(s, 'PartitionRecord', `orders-${p} leader=${l} isr=[${r}]`)); } },
+  { t: 'The other controllers fetch the new records. Once one of them has them, 2 of 3 voters do, and the high watermark moves past the records, so they are <b>committed</b>.',
+    m: [['c1', 'c2', 'records 7–10'], ['c1', 'c3', 'records 7–10']], a: s => commit(s, ['c2', 'c3']) },
+  { t: 'The controller replies, and broker 13 passes the answer back to the admin client.',
+    m: [['c1', 'b13', 'CreateTopics: OK'], ['b13', 'adm', 'CreateTopics: OK']], a: () => {} },
+  { t: 'Brokers pick up the records on their next metadata <b>fetch</b>. Replica brokers create the partition logs, and the leaders start serving. The metadata exists in one place only: the log.',
+    m: [['c1', 'b11', 'Topic+PartitionRecords'], ['c1', 'b12', 'Topic+PartitionRecords'], ['c1', 'b13', 'Topic+PartitionRecords']],
+    a: s => { pull(s, BR); s.leaders = { 0: 11, 1: 12, 2: 13 }; } }
+] };
+SC.kraft.bfail = { pre: ['startup', 'create'], steps: [
+  { t: 'Broker 13 crashes and stops sending <code>BrokerHeartbeat</code>.', m: [], a: s => { s.up.b13 = 0; } },
+  { t: 'After <code>broker.session.timeout.ms</code> (9 s) with no heartbeat, the controller <b>fences</b> broker 13. It appends a <code>BrokerRegistrationChangeRecord</code>, plus a <code>PartitionChangeRecord</code> for each partition affected: p2 gets leader 11, and 13 leaves every ISR.',
+    m: [], a: s => { s.fenced[13] = 1; app(s, 'BrokerRegistrationChangeRecord', 'broker=13 fenced=true');
+      app(s, 'PartitionChangeRecord', 'orders-0 isr=[11,12]'); app(s, 'PartitionChangeRecord', 'orders-1 isr=[12,11]'); app(s, 'PartitionChangeRecord', 'orders-2 leader=11 isr=[11,12]'); } },
+  { t: 'The other controllers replicate the records, and they are committed.',
+    m: [['c1', 'c2', 'records'], ['c1', 'c3', 'records']], a: s => commit(s, ['c2', 'c3']) },
+  { t: 'Brokers 11 and 12 fetch the change. Broker 11 starts leading p2. The controller sent no RPC to any broker.',
+    m: [['c1', 'b11', 'PartitionChangeRecords'], ['c1', 'b12', 'PartitionChangeRecords']], a: s => { pull(s, [11, 12]); s.leaders = { 0: 11, 1: 12, 2: 11 }; } }
+] };
+SC.kraft.cfail = { pre: ['startup', 'create'], steps: [
+  { t: 'The active controller, controller 1, crashes. <b>Brokers keep serving reads and writes.</b> Partition leaders don\'t need the controller to be up. In KRaft, controllers are separate nodes, not brokers.',
+    m: [], a: s => { s.up.c1 = 0; } },
+  { t: 'Controller 2 has heard nothing from the leader for <code>controller.quorum.fetch.timeout.ms</code> (2 s). It becomes a candidate for <b>epoch 2</b> and asks controller 3 for its vote.',
+    m: [['c2', 'c3', 'Vote (epoch 2)']], a: () => {} },
+  { t: 'Controller 3 grants the vote, because controller 2\'s log is at least as complete as its own. With 2 of 3 voters, controller 2 becomes active for epoch 2. <b>It already has the whole metadata log in memory</b>, so there is nothing to reload.',
+    m: [['c3', 'c2', 'vote granted']], a: s => { s.controller = 'c2'; s.epoch = 2; app(s, 'LeaderChangeMessage', 'leader=2 epoch=2'); } },
+  { t: 'Brokers and controller 3 find the new leader and carry on fetching from where they were. The whole failover takes seconds, however many partitions the cluster has.',
+    m: [['b11', 'c2', 'Fetch'], ['b12', 'c2', 'Fetch'], ['b13', 'c2', 'Fetch'], ['c3', 'c2', 'Fetch']], a: s => { commit(s, ['c3']); pull(s, BR); } }
+] };
+
+/* ---------- replay + render ---------- */
+let mode = 'zk', scen = 'startup', k = 0, S, playing = false;
+const steps = () => SC[mode][scen].steps;
+
+function applyStep(s, st) {
+  s.znodes.forEach(z => z.hot = false);
+  s.mark = s.mlog.length;
+  st.a(s); s.n.msgs += st.m.length;
+}
+function build() {
+  const s = base0(mode);
+  SC[mode][scen].pre.forEach(p => SC[mode][p].steps.forEach(st => applyStep(s, st)));
+  s.n = { msgs: 0, writes: 0, push: 0, records: 0, pull: 0 };
+  s.znodes.forEach(z => z.hot = false); s.mark = s.mlog.length;
+  for (let i = 0; i < k; i++) applyStep(s, steps()[i]);
+  return s;
+}
+
+function node(id, label, role, sub, opts) {
+  const [cx, cy] = POS[id], w = id === 'adm' ? 100 : 136, h = 62, x = cx - w / 2, y = cy - h / 2;
+  el('rect', { x, y, width: w, height: h, rx: 10, fill: opts.dead ? 'var(--surface-2)' : opts.fill || 'var(--surface)',
+    stroke: opts.dead ? 'var(--bad)' : opts.stroke || 'var(--border)', 'stroke-width': opts.strong ? 2.5 : 1.5,
+    'stroke-dasharray': opts.dead ? '5 4' : 'none', opacity: opts.dim ? .5 : 1 }, scene);
+  el('text', { x: x + 10, y: y + 19, 'font-weight': 700, 'font-size': 13, text: label }, scene);
+  el('text', { x: x + 10, y: y + 36, 'font-size': 11, fill: opts.dead ? 'var(--bad)' : opts.roleColor || 'var(--text)', text: opts.dead ? 'down' : role }, scene);
+  el('text', { x: x + 10, y: y + 52, 'font-size': 10, class: 'muted', text: sub }, scene);
+}
+
+function render() {
+  S = build();
+  scene.innerHTML = '';
+  const zk = mode === 'zk';
+  el('rect', { x: 128, y: 22, width: 464, height: 100, rx: 14, fill: 'none', stroke: zk ? 'var(--warn)' : 'var(--accent)', 'stroke-dasharray': '6 5' }, scene);
+  el('text', { x: 140, y: 16, 'font-size': 11, 'font-weight': 700, fill: zk ? 'var(--warn)' : 'var(--accent)',
+    text: zk ? 'ZOOKEEPER ENSEMBLE · separate system (zoo.cfg, its own JVMs)' : 'KRAFT CONTROLLER QUORUM · process.roles=controller' }, scene);
+  el('rect', { x: 128, y: 264, width: 464, height: 100, rx: 14, fill: 'none', stroke: 'var(--border)', 'stroke-dasharray': '6 5' }, scene);
+  el('text', { x: 140, y: 384, 'font-size': 11, 'font-weight': 700, class: 'muted', text: 'BROKERS · process.roles=broker' + (zk ? ' (one also acts as controller)' : '') }, scene);
+  // connection lines: ZK sessions from every broker, or KRaft fetches to the active controller
+  BR.forEach(b => {
+    if (!S.up['b' + b]) return;
+    const [bx, by] = POS['b' + b];
+    const tgt = zk ? POS['z' + (BR.indexOf(b) + 1)] : S.controller && S.up[S.controller] ? POS[S.controller] : null;
+    if (tgt) el('line', { x1: bx, y1: by - 31, x2: tgt[0], y2: tgt[1] + 31, stroke: 'var(--border)', 'stroke-dasharray': '3 4' }, scene);
+  });
+  node('adm', 'admin client', 'kafka-topics.sh', '', {});
+  if (zk) ['z1', 'z2', 'z3'].forEach((id, i) => node(id, `zk-${i + 1}`, S.zkLeader ? (S.zkLeader === id ? 'ZK leader' : 'ZK follower') : 'electing…',
+    `${S.znodes.length} znodes`, { stroke: S.zkLeader === id ? 'var(--warn)' : null, roleColor: 'var(--warn)' }));
+  else ['c1', 'c2', 'c3'].forEach((id, i) => node(id, `controller-${i + 1}`,
+    !S.formatted ? 'not formatted' : S.controller === id ? `ACTIVE · epoch ${S.epoch}` : S.controller ? 'follower (standby)' : 'waiting for leader',
+    `log end ${S.end[id]} · HW ${Math.min(S.hw, S.end[id])}`, { dead: !S.up[id], stroke: S.controller === id ? 'var(--accent)' : null,
+      strong: S.controller === id, roleColor: S.controller === id ? 'var(--accent)' : null }));
+  BR.forEach(b => {
+    const id = 'b' + b, ctl = zk && S.controller === b;
+    const leads = S.leaders ? Object.keys(S.leaders).filter(p => S.leaders[p] === b).map(p => 'p' + p).join(',') : '';
+    const role = !S.started[b] ? 'not started' : ctl ? 'CONTROLLER + broker' : zk ? 'broker' : S.fenced[b] ? 'fenced' : 'unfenced';
+    const sub = (zk ? `metadata pushes: ${S.bVer[b]}` : `metadata offset ${S.bOff[b]}`) + (leads ? ` · leads ${leads}` : '');
+    node(id, `broker-${b}`, role, sub, { dead: S.started[b] && !S.up[id],
+      dim: role === 'not started', stroke: ctl ? 'var(--warn)' : null, strong: ctl, roleColor: ctl ? 'var(--warn)' : !zk && S.fenced[b] ? 'var(--warn)' : 'var(--ok)' });
+  });
+  renderState(); renderStats();
+  const st = steps()[k - 1];
+  document.getElementById('now').innerHTML = k ? `<span class="k">${mode === 'zk' ? 'ZooKeeper' : 'KRaft'} · step ${k}</span>${st.t}`
+    : `<span class="k">${mode === 'zk' ? 'ZooKeeper' : 'KRaft'} · ready</span>Press <b>Next step</b> to begin.`;
+  document.getElementById('stepPill').textContent = `Step ${k} / ${steps().length}`;
+  document.getElementById('back').disabled = k === 0;
+  document.getElementById('next').disabled = k === steps().length;
+}
+
+const esc = t => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+function renderState() {
+  const box = document.getElementById('state');
+  if (mode === 'zk') {
+    box.innerHTML = '<h4>ZooKeeper data tree (znodes)</h4>' + (S.znodes.length ? [...S.znodes].sort((a, b) => a.p.localeCompare(b.p)).map(z =>
+      `<div class="row${z.hot ? ' hot' : ''}"><b>${esc(z.p)}</b>${z.eph ? '<span class="tag">ephemeral</span>' : ''}<span class="v">${esc(z.v)}</span></div>`).join('')
+      : '<div class="empty">(empty, no broker has connected yet)</div>');
+  } else {
+    let html = '<h4>__cluster_metadata log (offset · record)</h4>';
+    if (!S.mlog.length) html += `<div class="empty">${S.formatted ? '(empty: formatted, waiting for a leader)' : '(storage not formatted)'}</div>`;
+    S.mlog.forEach((r, i) => {
+      if (i === S.hw && S.hw < S.mlog.length) html += '<div class="hw">── high watermark: records below are not committed ──</div>';
+      html += `<div class="row${i >= S.mark ? ' hot' : ''}${i >= S.hw ? ' unc' : ''}"><b>${i} · ${r.t}</b>${i >= S.hw ? '<span class="tag">uncommitted</span>' : ''}<span class="v">${esc(r.d)}</span></div>`;
+    });
+    box.innerHTML = html;
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+function renderStats() {
+  const zk = mode === 'zk';
+  document.getElementById('stats').innerHTML = [
+    [S.n.msgs, 'messages this scenario'],
+    zk ? [S.n.writes, 'ZooKeeper writes'] : [S.n.records, 'records committed'],
+    zk ? [S.n.push, 'RPCs pushed to brokers'] : [S.n.pull, 'metadata fetches by brokers'],
+    [zk ? '2' : '1', 'systems to operate']
+  ].map(([v, l]) => `<div class="stat"><b>${v}</b><span>${l}</span></div>`).join('');
+}
+
+async function animate(st) {
+  await Promise.all(st.m.map(async ([a, b, label], i) => {
+    await sleep(i * 140);
+    const g = el('g', {}, fx), w = Math.max(48, label.length * 6.1 + 14);
+    el('rect', { x: -w / 2, y: -11, width: w, height: 22, rx: 11, fill: mode === 'zk' ? 'var(--warn)' : 'var(--accent)' }, g);
+    el('text', { x: 0, y: 4, 'text-anchor': 'middle', 'font-size': 11, fill: '#fff', 'font-weight': 600, text: label }, g);
+    await tween(g, POS[a][0], POS[a][1], POS[b][0], POS[b][1], 1000);
+    await sleep(reducedMotion ? 0 : 250);
+    g.remove();
+  }));
+}
+
+async function next() {
+  if (k >= steps().length) return;
+  const st = steps()[k];
+  k++;
+  fx.innerHTML = '';
+  render();
+  logLine(log, `<b>${mode === 'zk' ? 'ZK' : 'KRaft'} · ${k}.</b> ${st.t}`, k === steps().length);
+  await animate(st);
+}
+function back() { if (k > 0) { k--; fx.innerHTML = ''; render(); } }
+function restart() { k = 0; fx.innerHTML = ''; render(); }
+
+async function play() {
+  if (playing) { playing = false; return; }
+  playing = true; document.getElementById('play').textContent = 'Stop';
+  if (k === steps().length) restart();
+  while (playing && k < steps().length) { await next(); await sleep(reducedMotion ? 600 : 900); }
+  playing = false; document.getElementById('play').textContent = 'Play all';
+}
+
+function seg(id, fn) {
+  const g = document.getElementById(id);
+  g.querySelectorAll('button').forEach(b => b.onclick = () => {
+    g.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b));
+    playing = false; fn(b.dataset.v);
+  });
+}
+seg('modeSeg', v => { mode = v; restart(); logLine(log, `Switched to <b>${v === 'zk' ? 'ZooKeeper' : 'KRaft'}</b> mode. Same scenario, different design.`, true); });
+seg('scSeg', v => { scen = v; restart(); });
+document.getElementById('next').onclick = next;
+document.getElementById('back').onclick = back;
+document.getElementById('reset').onclick = restart;
+document.getElementById('play').onclick = play;
+render();
+logLine(log, 'Start with <b>Cluster start-up</b> in ZooKeeper mode, then switch to KRaft and run it again.', true);
+
+renderQuiz('quiz', [
+  { q: 'In ZooKeeper mode, how does a broker find out that a new topic exists?',
+    options: ['It reads <code>/brokers/topics</code> from ZooKeeper every few seconds',
+      'The admin client sends the topic metadata to every broker',
+      'The controller pushes it with <code>LeaderAndIsr</code> and <code>UpdateMetadata</code> RPCs',
+      'It fetches records from <code>__cluster_metadata</code>'],
+    answer: 2,
+    explain: 'In ZooKeeper mode only the controller reads and writes cluster metadata in ZooKeeper. Other brokers learn about changes when the controller pushes RPCs to them. Fetching <code>__cluster_metadata</code> is how KRaft works.' },
+  { q: 'Why does a controller failover in ZooKeeper mode get slower as the cluster gets bigger?',
+    options: ['The new controller has to read all metadata back from ZooKeeper before it can act, and that takes longer the more partitions there are',
+      'ZooKeeper has to elect a new leader of its own first',
+      'Every broker has to restart',
+      'The <code>/controller</code> znode can only be recreated once a minute'],
+    answer: 0,
+    explain: 'Step 4 of the ZooKeeper "controller fails" scenario: the winning broker starts with nothing in memory and reloads every topic and partition state. KRaft standby controllers already hold the log, so the new leader starts immediately.' },
+  { q: 'In KRaft mode, how do brokers learn about a <code>PartitionChangeRecord</code>?',
+    options: ['The controller sends them a <code>LeaderAndIsr</code> RPC',
+      'They watch a znode',
+      'The producer tells them',
+      'They fetch new records from the <code>__cluster_metadata</code> log on the active controller, as a consumer would'],
+    answer: 3,
+    explain: 'KRaft turns metadata into an event log. Brokers pull it with <code>Fetch</code> and apply each record to their metadata cache, so a broker that has been away only needs the records it missed.' },
+  { q: 'With 3 controllers, when is a metadata record such as a <code>TopicRecord</code> committed?',
+    options: ['As soon as the active controller writes it',
+      'Once a majority of voters (2 of 3, counting the leader) have it',
+      'Once every broker has fetched it',
+      'Once all 3 controllers have it'],
+    answer: 1,
+    explain: 'Raft commits a record once a majority of voters have it, and the high watermark then moves past it. That is why 3 controllers survive 1 failure and 5 survive 2. You can see the uncommitted marker in the log panel during the "Create topic" scenario.' },
+  { q: 'How does each mode decide that a broker is dead?',
+    options: ['ZooKeeper: its session times out and its ephemeral <code>/brokers/ids</code> znode is deleted. KRaft: it misses heartbeats for <code>broker.session.timeout.ms</code> and the controller fences it.',
+      'Both modes ping the broker\'s client port every second',
+      'Both modes wait for a producer to report an error',
+      'ZooKeeper: missed heartbeats to the controller. KRaft: a deleted znode.'],
+    answer: 0,
+    explain: 'ZooKeeper detects liveness through sessions and ephemeral znodes, and watches tell the controller. KRaft brokers send <code>BrokerHeartbeat</code> to the active controller, and fencing is just another record in the metadata log.' }
+]);
+</script>
+</body>
+</html>

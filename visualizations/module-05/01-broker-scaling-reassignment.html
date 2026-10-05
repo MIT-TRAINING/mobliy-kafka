@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adding Brokers &amp; Partition Reassignment</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .term { max-height: 260px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 5 · Cluster Operations, Replication &amp; High Availability</a>
+    <div class="nav"><span>1 / 4</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 1</div>
+  <h1>Adding &amp; removing brokers with <code>kafka-reassign-partitions.sh</code></h1>
+  <p class="lede">A new broker joins the cluster <b>empty</b>. Kafka never moves existing partitions for you. To use the new
+    broker, or to empty an old one before removing it, you plan a move with <code>--generate</code>, start it with
+    <code>--execute</code>, and confirm it with <code>--verify</code>. Run the three steps for <code>l07.cdr.voice</code> on the
+    shared cluster. Then try it without rack awareness and without a throttle, and see what each one costs you.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Scenario</span>
+      <div class="seg" role="group" aria-label="Scenario" id="scSeg">
+        <button data-v="expand" aria-pressed="true">Add broker 14</button>
+        <button data-v="decom" aria-pressed="false">Decommission broker 13</button>
+      </div>
+      <span class="ctl-label">Placement</span>
+      <div class="seg" role="group" aria-label="Rack awareness" id="rackSeg">
+        <button data-v="on" aria-pressed="true">rack-aware (default)</button>
+        <button data-v="off" aria-pressed="false">--disable-rack-aware</button>
+      </div>
+      <span class="ctl-label">--throttle</span>
+      <div class="seg" role="group" aria-label="Replication throttle" id="thSeg">
+        <button data-v="0" aria-pressed="false">none</button>
+        <button data-v="100" aria-pressed="false">100 MB/s</button>
+        <button data-v="25" aria-pressed="true">25 MB/s</button>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="primary" id="gen">1 · --generate</button>
+      <button class="primary" id="exe">2 · --execute</button>
+      <button class="primary" id="ver">3 · --verify</button>
+      <button id="elect">Preferred leader election</button>
+      <button class="danger" id="stop13" hidden>Stop &amp; unregister broker 13</button>
+      <button id="reset">Reset</button>
+      <span class="pill" id="phase">Idle</span>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 360" role="img" aria-label="Replica placement of six partitions of l07.cdr.voice across brokers 11 to 14"></svg></div>
+    <div class="stats" id="stats"></div>
+    <div class="term" id="term" aria-label="Terminal"><div class="term-empty">BS=apache-kafka.lab.internal:9092 · commands you run appear here.</div></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>The reassignment workflow</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Step</th><th>Option</th><th>What it does</th><th>On the shared cluster</th></tr></thead>
+      <tbody>
+        <tr><td>1 · Plan</td><td><code>--topics-to-move-json-file topics.json --broker-list "11,12,13,14" --generate</code></td><td>Prints the current assignment and a proposed one. It only prints. Nothing moves yet.</td><td>You can run it for your own <code>lNN.*</code> topics</td></tr>
+        <tr><td>2 · Move</td><td><code>--reassignment-json-file reassign.json --execute --throttle &lt;B/s&gt;</code></td><td>The controller adds the new replicas. They copy the data and join the ISR, and then the old replicas are removed.</td><td>The trainer runs this (it needs <code>Alter</code> on the cluster)</td></tr>
+        <tr><td>3 · Confirm</td><td><code>--reassignment-json-file reassign.json --verify</code></td><td>Shows each partition as completed or still in progress. Once all are complete, it <b>removes the throttle</b>.</td><td>You can check progress; the trainer runs the final verify</td></tr>
+        <tr><td>Change throttle</td><td><code>--execute --additional --throttle &lt;B/s&gt;</code></td><td>Changes the throttle of a reassignment that is already running</td><td>Trainer</td></tr>
+        <tr><td>Abort</td><td><code>--cancel</code> / <code>--list</code></td><td><code>--cancel</code> stops the move and puts the old replicas back. <code>--list</code> shows moves in progress.</td><td>Trainer / anyone</td></tr>
+        <tr><td>Rebalance leaders</td><td><code>kafka-leader-election.sh --election-type preferred --all-topic-partitions</code></td><td>Makes the first replica in each list the leader again</td><td>Trainer</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Adding vs removing a broker</h2>
+  <div class="grid grid-2">
+    <div class="card">
+      <h3>Scale out</h3>
+      <ol class="steps">
+        <li><span class="n">1</span><span>Start the new broker with a new <code>node.id</code> and its <code>broker.rack</code>. It registers with the KRaft controllers and gets no partitions.</span></li>
+        <li><span class="n">2</span><span>Generate a plan that includes the new broker in <code>--broker-list</code>. Execute it <b>with a throttle</b>.</span></li>
+        <li><span class="n">3</span><span>Verify until every partition is complete, then run a preferred leader election so the new broker also takes some leader traffic.</span></li>
+      </ol>
+    </div>
+    <div class="card">
+      <h3>Scale in</h3>
+      <ol class="steps">
+        <li><span class="n">1</span><span>Generate a plan whose <code>--broker-list</code> leaves the old broker out, and execute it.</span></li>
+        <li><span class="n">2</span><span>Verify, then check that <code>kafka-topics.sh --describe</code> no longer shows the broker in any replica list. Check internal topics like <code>__consumer_offsets</code> too.</span></li>
+        <li><span class="n">3</span><span>Stop it, then remove its registration: <code>kafka-cluster.sh unregister --bootstrap-server $BS --id 13</code>.</span></li>
+      </ol>
+    </div>
+  </div>
+  <div class="callout"><b>Admin gotcha:</b> brokers 11 and 14 share rack <code>ap-south-1a</code>, so the rack-aware plan can't
+    balance the load. With RF 3 and three racks, every partition needs one replica in each rack, and racks 1b and 1c have one
+    broker each. Brokers 12 and 13 therefore end up with every partition. To balance, add brokers in matching numbers per AZ.</div>
+  <div class="callout warn"><b>Production trap:</b> <code>--generate</code> starts from a random broker and doesn't try to
+    move as little data as possible. On a large cluster it can move far more than it needs to. Check the plan, or edit it by
+    hand, before you execute. Always pass <code>--throttle</code>, and always finish with <code>--verify</code>. Otherwise the
+    throttle stays set and will slow down the next broker that has to catch up after a restart.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="index.html"><small>← Back</small>Module overview</a>
+    <a class="next" href="02-isr-leader-election.html"><small>Next →</small>ISR, leader election &amp; broker failure</a>
+  </div>
+</div>
+
+<script>
+const T = 'l07.cdr.voice', GB = 4, DISK = 50, TICK_S = 10;
+const BROKERS = [{ id: 11, rack: 'ap-south-1a' }, { id: 12, rack: 'ap-south-1b' }, { id: 13, rack: 'ap-south-1c' }, { id: 14, rack: 'ap-south-1a' }];
+const RACK = { 11: '1a', 12: '1b', 13: '1c', 14: '1a' };
+const START = {
+  expand: [[11, 12, 13], [12, 13, 11], [13, 11, 12], [11, 12, 13], [12, 13, 11], [13, 11, 12]],
+  decom:  [[11, 12, 13], [12, 13, 14], [13, 11, 12], [14, 12, 13], [11, 13, 12], [12, 14, 13]]
+};
+const PLAN = {
+  expand: { on:  [[11, 12, 13], [12, 13, 14], [13, 11, 12], [14, 12, 13], [11, 13, 12], [12, 14, 13]],
+            off: [[11, 12, 13], [12, 13, 14], [13, 14, 11], [14, 11, 12], [11, 12, 13], [12, 13, 14]] },
+  decom:  { on:  [[11, 12, 14], [12, 14, 11], [14, 11, 12], [14, 12, 11], [11, 14, 12], [12, 14, 11]] }
+};
+PLAN.decom.off = PLAN.decom.on;
+const CMD = 'kafka-reassign-partitions.sh --bootstrap-server $BS --command-config ~/kafka/apache.properties';
+const svg = document.getElementById('svg'), log = document.getElementById('log'), term = document.getElementById('term');
+const X0 = 100, CW = 198, Y0 = 70, RH = 38;
+const scene = el('g', {}, svg), fx = el('g', {}, svg);
+let S = null;
+
+function init(scenario) {
+  S = { scenario, rack: S ? S.rack : 'on', throttle: S ? S.throttle : 25,
+    cur: START[scenario].map(r => r.slice()), leader: START[scenario].map(r => r[0]),
+    plan: null, moves: [], phase: 'idle', t: 0, movedGB: 0, throttleSet: false, stopped13: false };
+  document.getElementById('stop13').hidden = scenario !== 'decom';
+  render();
+}
+
+const json = a => '{"version":1,"partitions":[' + a.map((r, p) =>
+  `{"topic":"${T}","partition":${p},"replicas":[${r}],"log_dirs":[${r.map(() => '"any"')}]}`).join(',') + ']}';
+const part = p => `${T}-${p}`;
+const active = () => S.moves.filter(m => !m.done);
+const sameRack = r => new Set(r.map(b => RACK[b])).size < r.length;
+
+function generate() {
+  if (S.phase === 'running') { logLine(log, 'A reassignment is already running. Wait for it, or <code>--cancel</code> it first.', true); return; }
+  const list = S.scenario === 'expand' ? [11, 12, 13, 14] : [11, 12, 14];
+  S.plan = PLAN[S.scenario][S.rack].map(r => r.slice());
+  S.phase = 'generated';
+  termRun(term, `${CMD} --topics-to-move-json-file topics.json --broker-list "${list}" --generate${S.rack === 'off' ? ' --disable-rack-aware' : ''}`,
+    ['Current partition replica assignment', json(S.cur), '', 'Proposed partition reassignment configuration', json(S.plan)]);
+  const n = S.plan.reduce((a, r, p) => a + r.filter(b => !S.cur[p].includes(b)).length, 0);
+  logLine(log, `Plan: <b>${n}</b> replica copies (${n * GB} GB). Save the proposed JSON as <code>reassign.json</code>. Dashed tiles show where data will go.`, true);
+  const bad = S.plan.filter(sameRack).length;
+  if (bad) logLine(log, S.scenario === 'decom'
+    ? 'Without broker 13, only racks 1a and 1b are left, so every partition will have two replicas in <code>ap-south-1a</code>. If that AZ fails, every partition drops below <code>min.insync.replicas=2</code>.'
+    : `<b>${bad}</b> partitions would have two replicas in <code>ap-south-1a</code>. If that AZ fails, they drop below <code>min.insync.replicas=2</code>.`, true);
+  render();
+}
+
+function execute() {
+  if (S.phase !== 'generated') { logLine(log, S.phase === 'running' ? 'Already running. Use <code>--verify</code> to check progress.' : 'Run <code>--generate</code> first, and save the proposed plan.', true); return; }
+  const before = json(S.cur);
+  S.moves = [];
+  S.plan.forEach((r, p) => {
+    const add = r.filter(b => !S.cur[p].includes(b)), remove = S.cur[p].filter(b => !r.includes(b));
+    if (add.length) S.moves.push({ p, add, remove, target: r.slice(), progress: 0 });
+    else S.cur[p] = r.slice();                      // order-only change: no data to copy
+  });
+  S.throttleSet = S.throttle > 0;
+  S.phase = 'running';
+  termRun(term, `${CMD} --reassignment-json-file reassign.json --execute${S.throttle ? ' --throttle ' + S.throttle * 1e6 : ''}`,
+    ['Current partition replica assignment', '', before, '', 'Save this to use as the --reassignment-json-file option during rollback']
+      .concat(S.throttle ? ['Warning: You must run --verify periodically, until the reassignment completes, to ensure the throttle is removed.',
+        `The inter-broker throttle limit was set to ${S.throttle * 1e6} B/s`] : [])
+      .concat([`Successfully started partition reassignments for ${S.plan.map((_, p) => part(p)).join(',')}`]));
+  logLine(log, `The controller adds ${S.moves.length} new replicas. They copy data from the leaders${S.throttle ? ` at up to ${S.throttle} MB/s per broker` : ' <b>as fast as the network allows</b>'}.`, true);
+  S.moves.forEach(m => fly(m));
+  render();
+}
+
+function fly(m) {
+  const from = BROKERS.findIndex(b => b.id === m.remove[0]), to = BROKERS.findIndex(b => b.id === m.add[0]);
+  const g = el('g', {}, fx);
+  el('rect', { width: 40, height: 18, rx: 5, fill: PCOLORS[m.p] }, g);
+  el('text', { x: 20, y: 13, 'text-anchor': 'middle', 'font-size': 11, fill: '#fff', text: 'p' + m.p }, g);
+  const y = Y0 + m.p * RH + 9;
+  tween(g, X0 + from * CW + 70, y, X0 + to * CW + 70, y, 700).then(() => g.remove());
+}
+
+function tick() {
+  if (S.phase !== 'running') return;
+  S.t += TICK_S;
+  const rate = S.throttle || 250, load = {};
+  active().forEach(m => m.add.forEach(b => load[b] = (load[b] || 0) + 1));
+  active().forEach(m => {
+    const mb = Math.min(Math.min(...m.add.map(b => rate / load[b])) * TICK_S, (1 - m.progress) * GB * 1000);
+    m.progress = Math.min(1, m.progress + mb / (GB * 1000));
+    S.movedGB += mb / 1000;
+    if (m.progress >= 0.999) complete(m);
+  });
+  if (!active().length) {
+    S.phase = 'done';
+    logLine(log, 'Every new replica has caught up. Run <code>--verify</code> to confirm' + (S.throttleSet ? ' and remove the throttle.' : '.'), true);
+  }
+  render();
+}
+
+function complete(m) {
+  m.done = true; m.progress = 1;
+  S.cur[m.p] = m.target.slice();
+  let msg = `${part(m.p)}: replica on ${m.add.join(',')} joined the ISR; ${m.remove.join(',')} removed and its log deleted.`;
+  if (!S.cur[m.p].includes(S.leader[m.p])) { S.leader[m.p] = m.target[0]; msg += ` Leader moved to ${m.target[0]}.`; }
+  logLine(log, msg);
+}
+
+function verify() {
+  if (S.phase === 'idle' || S.phase === 'generated') { logLine(log, 'Nothing has been executed yet, so there is nothing to verify.', true); return; }
+  const lines = ['Status of partition reassignment:'].concat(S.plan.map((_, p) => {
+    const m = S.moves.find(x => x.p === p && !x.done);
+    return `Reassignment of partition ${part(p)} is ${m ? 'still in progress' : 'completed'}.`;
+  }));
+  if (!active().length && S.throttleSet) {
+    lines.push('', `Clearing broker-level throttles on brokers ${BROKERS.filter(b => !(S.stopped13 && b.id === 13)).map(b => b.id)}`, `Clearing topic-level throttles on topic ${T}`);
+    S.throttleSet = false;
+  }
+  termRun(term, `${CMD} --reassignment-json-file reassign.json --verify`, lines);
+  if (!active().length) { S.phase = 'verified'; logLine(log, 'Reassignment verified.' + (S.scenario === 'decom' ? ' Broker 13 holds no replicas, so it is now safe to stop it.' : ` Check the leader counts: broker 14 leads ${S.leader.filter(b => b === 14).length} of 6 partitions.`), true); }
+  else logLine(log, `${active().length} partitions still copying. Run <code>--verify</code> again later.`);
+  render();
+}
+
+function elect() {
+  const done = [], noop = [];
+  S.cur.forEach((r, p) => {
+    const pref = r[0];
+    if (S.stopped13 && pref === 13) return;
+    if (S.leader[p] !== pref) { S.leader[p] = pref; done.push(part(p)); } else noop.push(part(p));
+  });
+  termRun(term, 'kafka-leader-election.sh --bootstrap-server $BS --command-config ~/kafka/apache.properties --election-type preferred --all-topic-partitions',
+    [done.length ? `Successfully completed leader election (PREFERRED) for partitions ${done.join(', ')}` : null,
+     noop.length ? `Valid replica already elected for partitions ${noop.join(', ')}` : null].filter(Boolean));
+  logLine(log, done.length ? `${done.length} leaders moved back to their preferred replica (the first broker in each list).` : 'Every partition is already led by its preferred replica.', true);
+  render();
+}
+
+function stop13() {
+  if (S.stopped13) return;
+  const held = S.cur.filter(r => r.includes(13)).length;
+  S.stopped13 = true;
+  termRun(term, 'sudo systemctl stop kafka    # on broker-13.lab.internal', []);
+  S.cur.forEach((r, p) => { if (S.leader[p] === 13) S.leader[p] = r.find(b => b !== 13); });
+  if (held) {
+    logLine(log, `Broker 13 still held <b>${held}</b> replicas. Those partitions are now <b>under-replicated</b> (2 of 3 in the ISR). If one more broker fails, they drop below <code>min.insync.replicas=2</code>. Reset, then reassign first.`, true);
+  } else {
+    termRun(term, 'kafka-cluster.sh unregister --bootstrap-server $BS --command-config ~/kafka/apache.properties --id 13',
+      ['# the controllers remove broker 13 from the cluster metadata']);
+    logLine(log, 'Broker 13 was empty, so stopping it affected no partition, and its registration is now removed.', true);
+  }
+  render();
+}
+
+function render() {
+  scene.innerHTML = '';
+  const disk = {}, reps = {}, leads = {};
+  BROKERS.forEach(b => { disk[b.id] = 0; reps[b.id] = 0; leads[b.id] = 0; });
+  BROKERS.forEach((b, i) => {
+    const x = X0 + i * CW, down = S.stopped13 && b.id === 13;
+    const empty = S.cur.every(r => !r.includes(b.id)) && !active().some(m => m.add.includes(b.id));
+    el('rect', { x: x + 4, y: 8, width: CW - 12, height: 50, rx: 9, fill: down ? 'var(--surface-2)' : 'var(--surface)',
+      stroke: down ? 'var(--bad)' : empty ? 'var(--warn)' : 'var(--border)', 'stroke-width': 1.5 }, scene);
+    el('text', { x: x + 16, y: 30, 'font-weight': 700, text: `broker-${b.id}` }, scene);
+    el('text', { x: x + 16, y: 48, class: 'muted', 'font-size': 12,
+      text: b.rack + (down ? ' · stopped' : empty ? ' · empty' : '') }, scene);
+  });
+  for (let p = 0; p < 6; p++) {
+    const y = Y0 + p * RH + 3, h = RH - 8, mv = S.moves.find(m => m.p === p && !m.done);
+    el('text', { x: 20, y: y + h / 2 + 5, class: 'mono', 'font-size': 13, text: `p${p}` }, scene);
+    if (sameRack(S.cur[p])) el('text', { x: 46, y: y + h / 2 + 5, 'font-size': 11, fill: 'var(--warn)', text: '2×1a' }, scene);
+    BROKERS.forEach((b, i) => {
+      const x = X0 + i * CW + 10, w = CW - 28, id = b.id, down = S.stopped13 && id === 13;
+      const inCur = S.cur[p].includes(id), adding = mv && mv.add.includes(id), leaving = mv && mv.remove.includes(id);
+      const pAdd = S.phase === 'generated' && S.plan[p].includes(id) && !inCur;
+      const pDel = S.phase === 'generated' && inCur && !S.plan[p].includes(id);
+      if (inCur) {
+        const lead = S.leader[p] === id && !down;
+        disk[id] += GB; reps[id]++; if (lead) leads[id]++;
+        el('rect', { x, y, width: w, height: h, rx: 6, fill: lead ? PCOLORS[p] : 'var(--surface)', stroke: down ? 'var(--bad)' : PCOLORS[p],
+          'stroke-width': 2, 'stroke-dasharray': leaving || pDel || down ? '5 4' : 'none', opacity: down ? .45 : 1 }, scene);
+        el('text', { x: x + 10, y: y + h / 2 + 5, 'font-size': 12, fill: lead ? '#fff' : 'var(--text)',
+          text: `p${p} ${down ? 'offline' : lead ? 'leader' : 'follower'}${leaving ? ' · leaving' : pDel ? ' · will leave' : ''}` }, scene);
+      } else if (adding) {
+        disk[id] += GB * mv.progress;
+        el('rect', { x, y, width: w, height: h, rx: 6, fill: 'var(--surface)', stroke: PCOLORS[p], 'stroke-width': 2, 'stroke-dasharray': '5 4' }, scene);
+        el('rect', { x: x + 2, y: y + 2, width: (w - 4) * mv.progress, height: h - 4, rx: 4, fill: PCOLORS[p], opacity: .35 }, scene);
+        el('text', { x: x + 10, y: y + h / 2 + 5, 'font-size': 12, text: `p${p} copying ${Math.round(mv.progress * 100)}%` }, scene);
+      } else {
+        el('rect', { x, y, width: w, height: h, rx: 6, fill: 'none', stroke: pAdd ? PCOLORS[p] : 'var(--border)', 'stroke-dasharray': '3 4' }, scene);
+        if (pAdd) el('text', { x: x + 10, y: y + h / 2 + 5, 'font-size': 12, class: 'muted', text: `+ p${p} planned` }, scene);
+      }
+    });
+  }
+  const by = Y0 + 6 * RH + 14;
+  BROKERS.forEach((b, i) => {
+    const x = X0 + i * CW + 10, w = CW - 28, frac = disk[b.id] / DISK;
+    el('rect', { x, y: by, width: w, height: 10, rx: 5, fill: 'var(--surface-2)' }, scene);
+    el('rect', { x, y: by, width: w * frac, height: 10, rx: 5, fill: frac > .6 ? 'var(--warn)' : 'var(--accent)' }, scene);
+    el('text', { x, y: by + 28, 'font-size': 12, class: 'muted', text: `${disk[b.id].toFixed(1)} / ${DISK} GB · leads ${leads[b.id]}` }, scene);
+  });
+  el('text', { x: 20, y: by + 9, 'font-size': 11, class: 'muted', text: 'disk' }, scene);
+
+  const lat = S.phase === 'running' ? (S.throttle === 0 ? 420 : S.throttle === 100 ? 70 : 24) : 18;
+  const fmt = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  document.getElementById('stats').innerHTML = [
+    [BROKERS.map(b => `${b.id}:${reps[b.id]}`).join(' '), 'replicas per broker'],
+    [BROKERS.map(b => `${b.id}:${leads[b.id]}`).join(' '), 'leaders per broker'],
+    [`${S.movedGB.toFixed(1)} GB`, 'data copied'],
+    [fmt(S.t), 'reassignment time (sim)'],
+    [`<span style="color:var(${lat > 100 ? '--bad' : '--ok'})">${lat} ms</span>`, 'producer p99 (sim)'],
+    [S.throttleSet ? '<span style="color:var(--warn)">set</span>' : 'none', 'throttle in force']
+  ].map(([v, k]) => `<div class="stat"><b>${v}</b><span>${k}</span></div>`).join('');
+  const ph = document.getElementById('phase');
+  const names = { idle: 'Idle', generated: 'Plan ready', running: 'Reassigning…', done: 'Copied · not verified', verified: 'Verified' };
+  ph.textContent = names[S.phase];
+  ph.className = 'pill' + (S.phase === 'verified' ? ' ok' : S.phase === 'running' || S.phase === 'done' ? ' warn' : '');
+}
+
+wireSeg('scSeg', v => { init(v); logLine(log, v === 'expand'
+  ? 'Broker 14 (rack 1a) has just joined. It has no replicas until you reassign some to it.'
+  : 'Broker 13 is being retired. Move its replicas off before you stop it.', true); });
+wireSeg('rackSeg', v => { S.rack = v; logLine(log, v === 'on' ? 'Rack-aware: each partition gets one replica per rack where possible.' : '<code>--disable-rack-aware</code>: replicas are spread round-robin and racks are ignored.'); });
+wireSeg('thSeg', v => {
+  S.throttle = +v;
+  if (S.phase === 'running') {
+    S.throttleSet = S.throttle > 0;
+    termRun(term, `${CMD} --reassignment-json-file reassign.json --execute --additional${S.throttle ? ' --throttle ' + S.throttle * 1e6 : ''}`,
+      S.throttle ? [`The inter-broker throttle limit was set to ${S.throttle * 1e6} B/s`] : []);
+  }
+  logLine(log, S.throttle ? `Throttle: ${S.throttle} MB/s per broker for replica copies.` : 'No throttle: copies compete with production traffic for disk and network.');
+  render();
+});
+document.getElementById('gen').onclick = generate;
+document.getElementById('exe').onclick = execute;
+document.getElementById('ver').onclick = verify;
+document.getElementById('elect').onclick = elect;
+document.getElementById('stop13').onclick = stop13;
+document.getElementById('reset').onclick = () => { init(S.scenario); logLine(log, 'Reset.'); };
+setInterval(tick, 250);
+init('expand');
+logLine(log, 'Broker 14 (rack 1a) has just joined. It has no replicas until you reassign some to it.', true);
+
+renderQuiz('quiz', [
+  { q: 'You start broker 14 and it registers with the controllers. What happens to the partitions that already exist?',
+    options: ['The controller moves about a quarter of them to broker 14 straight away',
+      'Followers move to broker 14, but leaders stay where they are',
+      'Nothing. Broker 14 only gets partitions created after it joined, or ones you reassign to it.',
+      'Producers start writing to broker 14 as soon as their metadata refreshes'],
+    answer: 2,
+    explain: 'Apache Kafka never moves existing replicas by itself. Until you run <code>kafka-reassign-partitions.sh</code> (or use a balancer such as Cruise Control or Confluent Self-Balancing Clusters), the new broker holds nothing and serves no traffic for existing topics.' },
+  { q: 'With rack awareness on, brokers 12 and 13 end up with all 6 partitions while 11 and 14 get 3 each. Why?',
+    options: ['RF 3 across three racks means each partition needs one replica per rack, and racks 1b and 1c each have only one broker',
+      '<code>--generate</code> always favours the brokers with the lowest IDs',
+      'Brokers 11 and 14 are on smaller instance types',
+      'It\'s a bug, and <code>--disable-rack-aware</code> is the fix'],
+    answer: 0,
+    explain: 'Rack-aware placement puts each replica in a different rack. Racks 1b and 1c have one broker each, so those brokers get a replica of every partition, and rack 1a splits its share between 11 and 14. Turning rack awareness off balances the counts but puts two replicas in one AZ. The fix is to have the same number of brokers in each AZ.' },
+  { q: 'The trainer ran <code>--execute --throttle 25000000</code>. The copy finished, but nobody ran <code>--verify</code>. What is the lasting effect?',
+    options: ['Nothing. The throttle expires when the copy finishes.',
+      'The old replicas stay in place, so the topic now has RF 4',
+      'Producers stay limited to 25 MB/s',
+      'The throttle settings stay in place, so the next follower that has to catch up (for example after a restart) is held to 25 MB/s'],
+    answer: 3,
+    explain: '<code>--execute --throttle</code> sets the broker throttle rates and the topic throttled-replica lists. Only <code>--verify</code>, run after the move is complete, removes them. If you forget, the next catch-up is quietly slowed: an ISR that should recover in seconds takes much longer.' },
+  { q: 'You are retiring broker 13. Which order is safe?',
+    options: ['Stop broker 13 first. The controller then moves its replicas elsewhere.',
+      'Reassign everything off 13, <code>--verify</code> until complete, stop it, then <code>kafka-cluster.sh unregister --id 13</code>',
+      'Run <code>kafka-cluster.sh unregister --id 13</code> while it is still running, then stop it',
+      'Lower each topic\'s replication factor to 2, then stop broker 13'],
+    answer: 1,
+    explain: 'Stopping a broker that still holds replicas leaves those partitions under-replicated (try it in the simulation), and nothing re-creates them for you. Empty the broker first, confirm with <code>--verify</code> and <code>--describe</code>, then stop it and remove its registration.' },
+  { q: 'After scaling out, broker 14 holds replicas but leads only one partition. What fixes the leader balance?',
+    options: ['Restart every client so it reconnects to broker 14',
+      'Run <code>--generate</code> again with the same broker list',
+      'Run a preferred leader election (<code>kafka-leader-election.sh --election-type preferred</code>), or wait for <code>auto.leader.rebalance.enable</code> to do it',
+      'Raise <code>num.partitions</code> on broker 14'],
+    answer: 2,
+    explain: 'When a reassignment finishes, a leader only moves if it is no longer in the replica list. The first replica in each list is the <b>preferred leader</b>. A preferred election moves leadership back to it. The automatic rebalancer (on by default) does the same thing on a timer once leadership imbalance goes past a threshold.' }
+]);
+</script>
+</body>
+</html>
