@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Topic Management: CLI &amp; Control Center</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .cli-form label.chk { flex-direction: row; align-items: center; gap: 6px; font-size: 13px; color: var(--text); }
+  .cli-form label.chk input { width: auto; accent-color: var(--accent); }
+  .ui-path { font-size: 13px; background: var(--surface-2); border-radius: 8px; padding: 10px 12px; margin-top: 8px; }
+  .ui-path b { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 6 · Introducing Confluent Kafka</a>
+    <div class="nav"><span>6 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 6</div>
+  <h1>Topic management via Confluent CLI &amp; Control Center</h1>
+  <p class="lede">The CLI and the web UI change the same cluster. Every click in Control Center has a
+    <code>confluent kafka topic</code> command behind it. Create, describe, update and delete topics with either one, and
+    the page shows the matching steps in the other. Switch the target to see the differences: on <b>Confluent Cloud</b> you
+    can't choose the replication factor, and on the shared <b>Platform</b> cluster RBAC only lets you work with
+    <code>l07.*</code> topics.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Target</span>
+      <div class="seg" role="group" aria-label="Target cluster" id="tgtSeg">
+        <button data-v="cloud" aria-pressed="true">Confluent Cloud (lkc-9p3kd)</button>
+        <button data-v="cp" aria-pressed="false">Confluent Platform (cp-lab)</button>
+      </div>
+      <span class="ctl-label">Use</span>
+      <div class="seg" role="group" aria-label="Interface" id="ifSeg">
+        <button data-v="cli" aria-pressed="true">CLI</button>
+        <button data-v="ui" aria-pressed="false" id="uiBtn">Cloud Console</button>
+      </div>
+    </div>
+    <div class="cli-form">
+      <label>Action
+        <select id="action">
+          <option value="create">create</option>
+          <option value="list">list</option>
+          <option value="describe">describe</option>
+          <option value="update">update</option>
+          <option value="delete">delete</option>
+        </select>
+      </label>
+      <label id="f-name">Topic <input type="text" id="name" value="l07.cdr.roaming" style="width:170px"></label>
+      <label id="f-parts">Partitions <input type="number" id="parts" min="1" max="60" value="6"></label>
+      <label id="f-rf">Replication factor <input type="number" id="rf" min="1" max="3" value="3"></label>
+      <label id="f-config">Config
+        <select id="config">
+          <option value="">(none)</option>
+          <option>retention.ms=259200000</option>
+          <option>cleanup.policy=compact</option>
+          <option>max.message.bytes=2097152</option>
+          <option>unclean.leader.election.enable=true</option>
+        </select>
+      </label>
+      <label class="chk" id="f-ine"><input type="checkbox" id="ine"> --if-not-exists</label>
+      <label class="chk" id="f-force"><input type="checkbox" id="force"> --force</label>
+      <button class="primary" id="run">▶ Run</button>
+    </div>
+    <div class="cli-preview" id="preview"></div>
+    <div class="ui-path" id="uipath"></div>
+    <div class="stage" style="margin-top:10px"><svg id="svg" viewBox="0 0 900 260" role="img" aria-label="Topics on the target cluster, updated by CLI or UI actions"></svg></div>
+    <div class="term" id="term"><div class="term-empty">Run an action to see the CLI output here.</div></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Same task, three tools</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Task</th><th>Confluent CLI</th><th>Control Center / Cloud Console</th><th>Apache Kafka (Module 2)</th></tr></thead>
+      <tbody>
+        <tr><td>Create</td><td><code>confluent kafka topic create l07.cdr.roaming --partitions 6</code></td><td>Topics → <b>+ Add topic</b> → name, partitions → <b>Create with defaults</b> or <b>Customize settings</b></td><td><code>kafka-topics.sh --create</code></td></tr>
+        <tr><td>List</td><td><code>confluent kafka topic list</code></td><td>Topics</td><td><code>kafka-topics.sh --list</code></td></tr>
+        <tr><td>Describe</td><td><code>confluent kafka topic describe l07.cdr.roaming</code></td><td>Topics → <i>topic</i> → Overview / Configuration</td><td><code>kafka-topics.sh --describe</code> + <code>kafka-configs.sh --describe</code></td></tr>
+        <tr><td>Change config</td><td><code>confluent kafka topic update … --config retention.ms=259200000</code></td><td>Configuration → <b>Edit settings</b> → Save changes</td><td><code>kafka-configs.sh --alter --add-config</code></td></tr>
+        <tr><td>Delete</td><td><code>confluent kafka topic delete …</code> (asks you to type the name; <code>--force</code> skips that)</td><td>Configuration → <b>Delete topic</b> → type the name</td><td><code>kafka-topics.sh --delete</code> (no prompt)</td></tr>
+        <tr><td>On Platform</td><td>add <code>--url https://…:8090/kafka</code> or set <code>CONFLUENT_REST_URL</code></td><td>Control Center on <code>:9021</code></td><td>—</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Admin takeaway:</b> use the UI to explore, and the CLI for anything you will repeat. A script of
+    <code>confluent kafka topic create … --if-not-exists</code> commands can be reviewed in git, re-run safely, and replayed on
+    a new environment. That is what capstone phase B5 asks for. A topic created by clicking leaves no record of its settings.</div>
+  <div class="callout warn"><b>Admin gotcha:</b> <code>--force</code> and a wrong context are a dangerous combination. On
+    Apache Kafka, <code>kafka-topics.sh --delete</code> never asked you to confirm. The Confluent CLI does, unless you pass
+    <code>--force</code>. Keep that prompt in interactive use, and in scripts check <code>confluent context list</code> before
+    any delete.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="05-control-center.html"><small>← Previous</small>Confluent Control Center walkthrough</a>
+    <a class="next" href="index.html"><small>Done →</small>Back to Module 6 overview</a>
+  </div>
+</div>
+
+<script>
+const REST = 'https://cp-broker-1.lab.internal:8090/kafka';
+const CLOUD_LOCKED = ['unclean.leader.election.enable'];
+const $ = id => document.getElementById(id);
+const svg = $('svg'), log = $('log'), term = $('term');
+const scene = el('g', {}, svg), fx = el('g', {}, svg);
+let S;
+function seed() {
+  return {
+    cloud: [{ name: 'l07.cdr.voice', parts: 6, rf: 3, cfg: {} }, { name: 'l07.cdr.sms', parts: 3, rf: 3, cfg: {} }],
+    cp: [{ name: 'l07.cdr.voice', parts: 6, rf: 3, cfg: {} }]
+  };
+}
+S = { tgt: 'cloud', via: 'cli', topics: seed(), hl: null, busy: false };
+const topics = () => S.topics[S.tgt];
+const uiName = () => S.tgt === 'cloud' ? 'Cloud Console' : 'Control Center';
+
+function fields() {
+  const a = $('action').value;
+  $('f-name').style.display = a === 'list' ? 'none' : '';
+  $('f-parts').style.display = a === 'create' ? '' : 'none';
+  $('f-rf').style.display = a === 'create' && S.tgt === 'cp' ? '' : 'none';
+  $('f-config').style.display = ['create', 'update'].includes(a) ? '' : 'none';
+  $('f-ine').style.display = a === 'create' && S.via === 'cli' ? '' : 'none';
+  $('f-force').style.display = a === 'delete' && S.via === 'cli' ? '' : 'none';
+  $('preview').style.display = S.via === 'cli' ? '' : 'none';
+  $('term').style.display = S.via === 'cli' ? '' : 'none';
+  $('uiBtn').textContent = uiName();
+  $('preview').textContent = cmd();
+  $('uipath').innerHTML = `<b>${S.via === 'cli' ? 'Same thing in ' + uiName() : uiName()}:</b> ${uiPath()}`;
+}
+
+function cmd() {
+  const a = $('action').value, n = $('name').value.trim(), c = $('config').value;
+  let s = `confluent kafka topic ${a}`;
+  if (a !== 'list') s += ` ${n}`;
+  if (a === 'create') s += ` --partitions ${$('parts').value}`;
+  if (a === 'create' && S.tgt === 'cp') s += ` --replication-factor ${$('rf').value}`;
+  if (['create', 'update'].includes(a) && c) s += ` --config ${c}`;
+  if (a === 'update' && !c) s += ' --config <key=value>';
+  if (a === 'create' && S.via === 'cli' && $('ine').checked) s += ' --if-not-exists';
+  if (a === 'delete' && S.via === 'cli' && $('force').checked) s += ' --force';
+  if (S.tgt === 'cp') s += ` --url ${REST}`;
+  return s;
+}
+
+function uiPath() {
+  const a = $('action').value, n = $('name').value.trim() || '…', c = $('config').value;
+  return {
+    create: `Topics → + Add topic → name <code>${n}</code>, ${$('parts').value} partitions → ${c ? `Customize settings → <code>${c}</code> → Save &amp; create` : 'Create with defaults'}`,
+    list: 'Topics',
+    describe: `Topics → <code>${n}</code> → Overview, then the Configuration tab`,
+    update: `Topics → <code>${n}</code> → Configuration → Edit settings → ${c ? `<code>${c}</code>` : 'change a value'} → Save changes`,
+    delete: `Topics → <code>${n}</code> → Configuration → Delete topic → type <code>${n}</code> to confirm`
+  }[a];
+}
+
+function render() {
+  scene.innerHTML = '';
+  svg.setAttribute('viewBox', `0 0 900 ${Math.max(220, 80 + topics().length * 34)}`);
+  const isCli = S.via === 'cli';
+  el('rect', { x: 14, y: 90, width: 150, height: 70, rx: 10, fill: isCli ? '#0b0f14' : 'var(--accent-soft)', stroke: 'var(--accent)' }, scene);
+  el('text', { x: 89, y: 122, 'text-anchor': 'middle', 'font-weight': 700, fill: isCli ? '#6ee7b7' : 'var(--accent)', text: isCli ? '$ confluent' : uiName() }, scene);
+  el('text', { x: 89, y: 142, 'text-anchor': 'middle', 'font-size': 11, fill: isCli ? '#9aa5b5' : 'var(--muted)', text: isCli ? (S.tgt === 'cp' ? 'REST :8090/kafka' : 'REST API · login token') : 'web UI · same REST calls' }, scene);
+  el('text', { x: 230, y: 24, 'font-weight': 700, text: S.tgt === 'cloud' ? 'lkc-9p3kd · env-l07 (Confluent Cloud, Basic)' : 'cp-lab · topics visible to l07 (RBAC)' }, scene);
+  ['Topic', 'Partitions', 'RF', 'Config overrides'].forEach((h, i) => el('text', { x: [240, 500, 600, 660][i], y: 48, 'font-size': 12, class: 'muted', 'font-weight': 600, text: h }, scene));
+  topics().forEach((t, i) => {
+    const y = 58 + i * 34, hl = S.hl === t.name;
+    el('rect', { x: 230, y, width: 656, height: 30, rx: 6, fill: hl ? 'var(--ok-soft)' : 'var(--surface)', stroke: hl ? 'var(--ok)' : 'var(--border)' }, scene);
+    el('text', { x: 240, y: y + 20, 'font-size': 13, 'font-weight': 600, class: 'mono', text: t.name }, scene);
+    el('text', { x: 500, y: y + 20, 'font-size': 13, text: t.parts }, scene);
+    el('text', { x: 600, y: y + 20, 'font-size': 13, text: t.rf }, scene);
+    el('text', { x: 660, y: y + 20, 'font-size': 12, class: 'mono muted', text: Object.entries(t.cfg).map(([k, v]) => `${k}=${v}`).join(', ') || '—' }, scene);
+  });
+  if (!topics().length) el('text', { x: 240, y: 80, class: 'muted', text: 'No topics.' }, scene);
+  fields();
+}
+
+async function fly(rowIdx, ok) {
+  const t = el('g', {}, fx);
+  el('circle', { r: 9, fill: ok ? 'var(--ok)' : 'var(--bad)' }, t);
+  await tween(t, 164, 125, 240, 73 + Math.max(0, rowIdx) * 34, 500);
+  t.remove();
+}
+
+function out(lines, bad) { if (S.via === 'cli') termRun(term, cmd().replace(/</g, '&lt;'), lines, bad); }
+
+async function run() {
+  if (S.busy) return;
+  const a = $('action').value, n = $('name').value.trim(), c = $('config').value, list = topics();
+  const t = list.find(x => x.name === n), idx = list.indexOf(t);
+  const fail = async (lines, why) => { out(lines, true); logLine(log, `<b style="color:var(--bad)">✗</b> ${why}`, true); S.busy = true; await fly(idx, false); S.busy = false; };
+  const how = S.via === 'cli' ? `In ${uiName()}: ${uiPath()}` : `CLI equivalent: <code>${cmd()}</code>`;
+
+  if (a !== 'list' && !/^[a-zA-Z0-9._-]{1,249}$/.test(n)) return fail(['Error: invalid topic name'], 'Topic names may only use letters, digits, <code>.</code>, <code>_</code> and <code>-</code>, up to 249 characters.');
+  if (S.tgt === 'cp' && a !== 'list' && !n.startsWith('l07.')) return fail([`Error: Not authorized to access topics: [${n}]`], `RBAC: <code>l07</code> has a role on <code>Topic:l07.*</code> only. ${S.via === 'ui' ? 'Control Center applies the same check.' : ''}`);
+
+  if (a === 'list') {
+    out(list.length ? ['      Name      | Internal | Replication Factor | Partition Count', '----------------+----------+--------------------+------------------',
+      ...list.map(x => `  ${x.name.padEnd(14)} | false    |                  ${x.rf} |               ${x.parts}`)] : ['(no topics)']);
+    logLine(log, `<b style="color:var(--ok)">✓</b> Listed ${list.length} topics. ${how}`);
+  } else if (a === 'create') {
+    if (t) {
+      if (S.via === 'cli' && $('ine').checked) { out([]); logLine(log, `<code>--if-not-exists</code>: <code>${n}</code> already exists, so the command exits successfully without changing anything. That makes scripts safe to re-run.`); S.hl = n; render(); return; }
+      return fail([`Error: topic "${n}" already exists`], `<code>${n}</code> already exists. In scripts, add <code>--if-not-exists</code>.`);
+    }
+    if (c && S.tgt === 'cloud' && CLOUD_LOCKED.includes(c.split('=')[0])) return fail([`Error: config "${c.split('=')[0]}" is not editable on Confluent Cloud`], 'Confluent Cloud lets you set only a documented subset of topic configs. Unclean leader election is never allowed there.');
+    const rf = S.tgt === 'cp' ? +$('rf').value : 3;
+    const cfg = c ? { [c.split('=')[0]]: c.split('=')[1] } : {};
+    list.push({ name: n, parts: +$('parts').value, rf, cfg });
+    out([`Created topic "${n}".`]);
+    logLine(log, `<b style="color:var(--ok)">✓</b> Created <code>${n}</code>${S.tgt === 'cloud' ? ' with RF 3, which Confluent Cloud always uses' : ` with RF ${rf}`}. ${how}`, true);
+  } else {
+    if (!t) return fail([`Error: topic "${n}" does not exist`], `There is no topic <code>${n}</code> on this cluster. Run list first.`);
+    if (a === 'describe') {
+      const base = { 'cleanup.policy': 'delete', 'retention.ms': '604800000', 'max.message.bytes': S.tgt === 'cloud' ? '2097164' : '1048588', 'min.insync.replicas': '2' };
+      const all = Object.assign(base, t.cfg);
+      out(['        Name         |   Value', '---------------------+------------', ...Object.entries(all).map(([k, v]) => `  ${k.padEnd(19)}| ${v}${t.cfg[k] ? '   (override)' : ''}`),
+        `  partitions: ${t.parts} · replication factor: ${t.rf}`]);
+      logLine(log, `<b style="color:var(--ok)">✓</b> Described <code>${n}</code>. Values without "(override)" come from the cluster defaults. ${how}`);
+    } else if (a === 'update') {
+      if (!c) return fail(['Error: required flag(s) "config" not set'], 'Choose a config to change.');
+      const [k, v] = c.split('=');
+      if (S.tgt === 'cloud' && CLOUD_LOCKED.includes(k)) return fail([`Error: config "${k}" is not editable on Confluent Cloud`], 'This setting is fixed by Confluent on Cloud clusters.');
+      t.cfg[k] = v;
+      out([`Updated the following configuration values for topic "${n}":`, '      Name     |   Value', '---------------+------------', `  ${k} | ${v}`]);
+      logLine(log, `<b style="color:var(--ok)">✓</b> <code>${k}</code> is now <code>${v}</code> on <code>${n}</code>, applied at once with no restart. ${how}`, true);
+    } else if (a === 'delete') {
+      const lines = S.via === 'cli' && !$('force').checked ? [`Are you sure you want to delete topic "${n}"? To confirm, type "${n}". To cancel, press Ctrl-C: ${n}`, `Deleted topic "${n}".`] : [`Deleted topic "${n}".`];
+      S.busy = true; await fly(idx, true); S.busy = false;
+      list.splice(idx, 1);
+      out(lines);
+      logLine(log, `<b style="color:var(--bad)">Deleted</b> <code>${n}</code> and all its data. ${how}`, true);
+      S.hl = null; render(); return;
+    }
+  }
+  S.hl = a === 'list' ? null : n;
+  render();
+  S.busy = true; await fly(topics().findIndex(x => x.name === n), true); S.busy = false;
+}
+
+wireSeg('tgtSeg', v => { S.tgt = v; S.hl = null; logLine(log, v === 'cloud' ? 'Target: Confluent Cloud, cluster lkc-9p3kd. Replication factor is fixed at 3.' : `Target: Confluent Platform cp-lab, through <code>${REST}</code>. RBAC limits you to <code>l07.*</code>.`, true); render(); });
+wireSeg('ifSeg', v => { S.via = v; logLine(log, v === 'cli' ? 'Using the Confluent CLI.' : `Using ${uiName()}. The same actions are clicks in the UI.`, true); render(); });
+['action', 'name', 'parts', 'rf', 'config', 'ine', 'force'].forEach(id => $(id).addEventListener('input', fields));
+$('action').addEventListener('change', fields);
+$('run').onclick = run;
+render();
+logLine(log, 'Create <code>l07.cdr.roaming</code>, then describe, update and delete it. Try once with the CLI and once in the UI.', true);
+
+renderQuiz('quiz', [
+  { q: 'You create a topic in Control Center by clicking. Which CLI command makes the same change?',
+    options: ['<code>kafka-topics.sh --create</code> only. The Confluent CLI can\'t create topics.',
+      '<code>confluent kafka topic create &lt;name&gt; --partitions N</code>. Both tools call the same cluster APIs, so the result is the same topic.',
+      '<code>confluent topic new &lt;name&gt;</code>',
+      'There is none. Topics created in the UI are UI-only.'],
+    answer: 1,
+    explain: 'Control Center and the CLI are two ways to reach the same cluster. A topic created in one is visible to the other straight away, as the shared topic table in the simulation shows.' },
+  { q: 'Why can\'t you set the replication factor when you create a topic on Confluent Cloud?',
+    options: ['Confluent Cloud sets the replication factor to 3 for every topic. The <code>--replication-factor</code> flag only exists for Confluent Platform.',
+      'Cloud topics are not replicated',
+      'You set it later with <code>topic update</code>',
+      'It is only available in the Cloud Console'],
+    answer: 0,
+    explain: 'Durability on Cloud is part of the service, so the replication factor is fixed at 3. On self-managed Platform you choose it, as with <code>kafka-topics.sh</code> in Module 2.' },
+  { q: 'Your topic-creation script fails on its second run because the topics already exist. What is the cleanest fix?',
+    options: ['Delete every topic at the start of the script',
+      'Ignore errors with <code>|| true</code>',
+      'Add <code>--if-not-exists</code>, so existing topics are skipped and the script can be re-run safely',
+      'Create the topics in Control Center instead'],
+    answer: 2,
+    explain: 'With <code>--if-not-exists</code>, the command exits successfully when the topic is already there. <code>|| true</code> would also hide real errors, such as an authorization failure. Deleting first destroys data.' },
+  { q: 'You change <code>retention.ms</code> on <code>l07.cdr.voice</code> with <code>confluent kafka topic update</code>. When does the new value apply?',
+    options: ['After a rolling restart of all brokers',
+      'Only to topics created afterwards',
+      'After you also save it in Control Center',
+      'Straight away. It is a dynamic topic config, and Control Center\'s Configuration tab shows the new value at once.'],
+    answer: 3,
+    explain: 'Topic configs are dynamic overrides stored in the cluster metadata, the same as <code>kafka-configs.sh --alter</code> in Module 3. No restart is needed, and every tool reads the same value.' },
+  { q: 'What is different about deleting a topic with the Confluent CLI compared with <code>kafka-topics.sh --delete</code>?',
+    options: ['The Confluent CLI asks you to type the topic name to confirm, unless you pass <code>--force</code>. <code>kafka-topics.sh</code> deletes without asking.',
+      'The Confluent CLI moves the topic to a recycle bin for 7 days',
+      'Nothing. Both prompt.',
+      'The Confluent CLI can only delete empty topics'],
+    answer: 0,
+    explain: 'The prompt protects you against a mistyped name or a wrong context. There is no undo or recycle bin on either tool: once a topic is deleted, its data is gone. Keep the prompt for interactive work, and use <code>--force</code> only in reviewed scripts.' }
+]);
+</script>
+</body>
+</html>

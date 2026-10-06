@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Confluent vs Apache Kafka</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 6 · Introducing Confluent Kafka</a>
+    <div class="nav"><span>2 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 2</div>
+  <h1>Confluent vs Apache Kafka: features &amp; licensing</h1>
+  <p class="lede">"Confluent" is not one licence. Its features fall into three tiers: <b>Apache 2.0</b> (Kafka itself),
+    the <b>Confluent Community License</b> (free to use, with one restriction) and the <b>Confluent Enterprise</b> licence
+    (paid). Click the features your platform needs, or load a preset. The verdict shows the licence you need and the Apache
+    alternative for each paid feature. Then tick <b>We will sell Kafka as a hosted service</b> and see what changes.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Presets</span>
+      <button data-p="bus">Minimal event bus</button>
+      <button data-p="billing">CDR billing pipeline</button>
+      <button data-p="regulated">Regulated ops team</button>
+      <button id="clear">Clear</button>
+    </div>
+    <div class="controls checks" style="align-items:flex-start">
+      <label><input type="checkbox" id="saas"> We will sell Kafka as a hosted service to other companies</label>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 400" role="img" aria-label="Features grouped by licence tier; selected features are highlighted"></svg></div>
+    <div class="verdict" id="verdict" aria-live="polite"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>The three licences</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Licence</th><th>Covers</th><th>You may</th><th>Restriction / cost</th></tr></thead>
+      <tbody>
+        <tr><td><span class="lic apache">Apache 2.0</span></td><td>Apache Kafka: brokers, KRaft, clients, Connect framework, Kafka Streams, MirrorMaker 2. Shipped as <code>cp-kafka</code> in CP</td><td>Use, modify, redistribute and sell, including as a hosted service</td><td>None. Free.</td></tr>
+        <tr><td><span class="lic community">Confluent Community</span></td><td>Schema Registry, ksqlDB, REST Proxy, many connectors (JDBC, Elasticsearch, HDFS…)</td><td>Use in production for free, read and modify the source code</td><td>You may not offer the software itself as a competing SaaS (the licence's "excluded purpose")</td></tr>
+        <tr><td><span class="lic enterprise">Confluent Enterprise</span></td><td>Confluent Server features (RBAC/MDS, Cluster Linking, Self-Balancing Clusters, Tiered Storage, audit logs, schema validation), Control Center, Replicator, commercial connectors</td><td>Use under a paid subscription that includes support</td><td>Paid. A 30-day trial starts at install, and a free developer licence covers a single-broker cluster</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Admin takeaway:</b> run <code>cp-server</code> only if you plan to license it. On a cluster without a
+    licence, use <code>cp-kafka</code> (plain Apache Kafka) for the brokers and keep the Community components on top. Then no
+    feature silently stops working when the trial ends. On Confluent Cloud there is no licence file: you pay for usage, and
+    some features are available only on certain cluster types (Topic 3).</div>
+  <div class="callout warn"><b>Licensing trap:</b> the 30-day trial licence starts the first time Confluent Server runs
+    without a licence key. If you install the lab or a proof of concept long before go-live, the Enterprise features may stop
+    working right in the middle of it. Check <code>confluent.license</code> and the broker logs for licence warnings before
+    any demo.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="01-platform-architecture.html"><small>← Previous</small>Confluent Platform overview &amp; architecture</a>
+    <a class="next" href="03-cloud-vs-self-managed.html"><small>Next →</small>Confluent Cloud vs self-managed Platform</a>
+  </div>
+</div>
+
+<script>
+const TIERS = [
+  { id: 'apache', name: 'Apache 2.0', sub: 'Apache Kafka 4.x', color: 'var(--ok)', soft: 'var(--ok-soft)' },
+  { id: 'community', name: 'Confluent Community', sub: 'free · no competing SaaS', color: 'var(--accent)', soft: 'var(--accent-soft)' },
+  { id: 'enterprise', name: 'Confluent Enterprise', sub: 'paid subscription', color: 'var(--warn)', soft: 'var(--warn-soft)' }
+];
+const F = [
+  { id: 'kraft', t: 'apache', name: 'Brokers + KRaft', alt: '' },
+  { id: 'acl', t: 'apache', name: 'SASL, TLS, ACLs', alt: '' },
+  { id: 'connect', t: 'apache', name: 'Connect framework', alt: '' },
+  { id: 'streams', t: 'apache', name: 'Kafka Streams', alt: '' },
+  { id: 'mm2', t: 'apache', name: 'MirrorMaker 2', alt: '' },
+  { id: 'sr', t: 'community', name: 'Schema Registry', alt: 'Apicurio Registry, or no central schemas' },
+  { id: 'ksql', t: 'community', name: 'ksqlDB', alt: 'Kafka Streams application' },
+  { id: 'rest', t: 'community', name: 'REST Proxy', alt: 'Your own HTTP service' },
+  { id: 'jdbc', t: 'community', name: 'JDBC connector', alt: 'Another JDBC connector, or Debezium for CDC' },
+  { id: 'c3', t: 'enterprise', name: 'Control Center', alt: 'Kafka UI / AKHQ + Grafana' },
+  { id: 'rbac', t: 'enterprise', name: 'RBAC with LDAP (MDS)', alt: 'ACLs managed per principal (Module 7)' },
+  { id: 'audit', t: 'enterprise', name: 'Audit logs', alt: 'Authorizer logging + log shipping' },
+  { id: 'link', t: 'enterprise', name: 'Cluster Linking', alt: 'MirrorMaker 2 (offsets translated, not identical)' },
+  { id: 'repl', t: 'enterprise', name: 'Replicator', alt: 'MirrorMaker 2' },
+  { id: 'sbc', t: 'enterprise', name: 'Self-Balancing Clusters', alt: 'kafka-reassign-partitions.sh or Cruise Control' },
+  { id: 'tier', t: 'enterprise', name: 'Tiered Storage', alt: 'KIP-405 framework + a third-party remote storage plugin' },
+  { id: 'val', t: 'enterprise', name: 'Broker schema validation', alt: 'Validate in the producer' }
+];
+const PRESETS = {
+  bus: ['kraft', 'acl', 'connect'],
+  billing: ['kraft', 'acl', 'connect', 'sr', 'ksql', 'jdbc'],
+  regulated: ['kraft', 'acl', 'sr', 'c3', 'rbac', 'audit', 'link']
+};
+const svg = document.getElementById('svg'), log = document.getElementById('log'), verdict = document.getElementById('verdict');
+const scene = el('g', {}, svg);
+const sel = new Set();
+
+function render() {
+  scene.innerHTML = '';
+  TIERS.forEach((t, i) => {
+    const x = 12 + i * 296, n = F.filter(f => f.t === t.id).length;
+    const on = F.some(f => f.t === t.id && sel.has(f.id));
+    el('rect', { x, y: 10, width: 280, height: 380, rx: 12, fill: on ? t.soft : 'var(--surface)', stroke: t.color, 'stroke-width': on ? 2 : 1 }, scene);
+    el('text', { x: x + 14, y: 36, 'font-weight': 700, 'font-size': 16, fill: t.color, text: t.name }, scene);
+    el('text', { x: x + 14, y: 54, 'font-size': 12, class: 'muted', text: `${t.sub} · ${n} features` }, scene);
+  });
+  TIERS.forEach((t, i) => {
+    F.filter(f => f.t === t.id).forEach((f, j) => {
+      const x = 26 + i * 296, y = 70 + j * 39, on = sel.has(f.id);
+      const g = el('g', {}, scene);
+      el('rect', { x, y, width: 252, height: 32, rx: 8, fill: on ? t.color : 'var(--surface-2)', stroke: on ? t.color : 'var(--border)' }, g);
+      el('text', { x: x + 12, y: y + 21, 'font-size': 13, 'font-weight': on ? 700 : 500, fill: on ? '#fff' : 'var(--text)', text: (on ? '✓ ' : '+ ') + f.name }, g);
+      svgButton(g, `${on ? 'Remove' : 'Add'} ${f.name}`, () => toggle(f.id));
+    });
+  });
+  showVerdict();
+}
+
+function toggle(id) {
+  const f = F.find(x => x.id === id);
+  if (sel.has(id)) sel.delete(id); else sel.add(id);
+  logLine(log, `${sel.has(id) ? 'Added' : 'Removed'} <b>${f.name}</b> (${TIERS.find(t => t.id === f.t).name}).`);
+  render();
+}
+
+function showVerdict() {
+  const saas = document.getElementById('saas').checked;
+  const picked = F.filter(f => sel.has(f.id));
+  if (!picked.length) { verdict.innerHTML = '<span style="color:var(--muted)">Choose features above to see which licence you need.</span>'; verdict.style.borderColor = 'var(--border)'; return; }
+  const ent = picked.filter(f => f.t === 'enterprise'), com = picked.filter(f => f.t === 'community');
+  let tier = ent.length ? TIERS[2] : com.length ? TIERS[1] : TIERS[0];
+  let html = `<b style="color:${tier.color}">You need: ${tier.name}</b><br>`;
+  if (tier.id === 'apache') html += 'Everything here is Apache Kafka. It is free, and you may even resell it as a service. Use <code>cp-kafka</code> or the Apache tarball.';
+  if (tier.id === 'community') html += `Free to run in production. ${com.map(f => f.name).join(', ')} ${com.length > 1 ? 'are' : 'is'} under the Confluent Community License.`;
+  if (tier.id === 'enterprise') html += `Paid subscription for: ${ent.map(f => f.name).join(', ')}.<br><span style="color:var(--muted)">Apache alternatives: ${ent.map(f => `<b>${f.name}</b> → ${f.alt}`).join(' · ')}</span>`;
+  if (saas && com.length) html += `<br><b style="color:var(--bad)">Not allowed under the Community licence:</b> you can't offer ${com.map(f => f.name).join(', ')} to other companies as a hosted service. Use an Apache alternative: ${com.map(f => `${f.name} → ${f.alt}`).join(' · ')}.`;
+  else if (saas && ent.length) html += '<br><span style="color:var(--muted)">Reselling Enterprise features needs a separate agreement with Confluent.</span>';
+  verdict.innerHTML = html;
+  verdict.style.borderColor = saas && com.length ? 'var(--bad)' : tier.color;
+}
+
+document.querySelectorAll('[data-p]').forEach(b => b.onclick = () => {
+  sel.clear(); PRESETS[b.dataset.p].forEach(id => sel.add(id));
+  logLine(log, `Preset loaded: <b>${b.textContent}</b> (${sel.size} features).`, true);
+  render();
+});
+document.getElementById('clear').onclick = () => { sel.clear(); logLine(log, 'Cleared.'); render(); };
+document.getElementById('saas').onchange = e => {
+  logLine(log, e.target.checked ? 'Use case: you will host Kafka for other companies, as a SaaS provider would.' : 'Use case: you run Kafka for your own company.', true);
+  render();
+};
+render();
+logLine(log, 'Click a feature to add it, or load a preset.', true);
+
+renderQuiz('quiz', [
+  { q: 'Under which licence is Schema Registry released?',
+    options: ['Apache 2.0, like Kafka itself',
+      'Confluent Enterprise. You need a paid subscription.',
+      'Confluent Community License: free to use in production, but you may not offer it as a competing hosted service',
+      'It is closed source and only available on Confluent Cloud'],
+    answer: 2,
+    explain: 'Schema Registry, ksqlDB and REST Proxy are under the Confluent Community License. An operator like Mobily can run them in production for free. The restriction only applies if you sell the software itself as a SaaS.' },
+  { q: 'You need to copy <code>cdr.voice</code> to a DR cluster, but you have no Enterprise licence. What can you use?',
+    options: ['Nothing. Cross-cluster replication needs Confluent.',
+      'MirrorMaker 2, which is part of Apache Kafka',
+      'Cluster Linking. It is free when used for DR.',
+      'Schema Registry in replication mode'],
+    answer: 1,
+    explain: 'MirrorMaker 2 (Apache 2.0) runs on Kafka Connect and copies topics and translates consumer offsets. Replicator and Cluster Linking are the Enterprise options. Cluster Linking keeps offsets identical, so failover is simpler (Module 10).' },
+  { q: 'A start-up wants to sell "managed Kafka with ksqlDB" to its customers. What does licensing allow?',
+    options: ['It can sell managed Apache Kafka. Offering ksqlDB as part of a competing hosted service is the "excluded purpose" of the Community licence.',
+      'Anything is allowed, because all Confluent components are open source',
+      'Nothing. Even Apache Kafka can\'t be sold as a service.',
+      'It can, as long as it buys a developer licence'],
+    answer: 0,
+    explain: 'Apache 2.0 allows reselling. The Confluent Community License allows almost everything else, but it specifically forbids offering the software as a SaaS that competes with Confluent. Tick the hosted-service box in the explorer to see this.' },
+  { q: 'You installed <code>cp-server</code> on the lab cluster without a licence key 5 weeks ago. Control Center and RBAC start failing just before a demo. Why?',
+    options: ['Confluent Platform 8.x needs ZooKeeper for RBAC',
+      'The 30-day trial licence that started on first run has expired, so Enterprise features stop working',
+      'Control Center only works on Confluent Cloud',
+      'The brokers ran out of disk'],
+    answer: 1,
+    explain: 'Confluent Server runs Enterprise features on a 30-day trial when no licence is set. Install close to the event, apply a real licence, or use <code>cp-kafka</code> plus the Community components for long-lived free clusters.' },
+  { q: 'Which statement about Tiered Storage is accurate in 2026?',
+    options: ['Only Confluent has it. Apache Kafka can never offload segments.',
+      'It is part of the Confluent Community License',
+      'It needs ZooKeeper',
+      'Apache Kafka has the tiered storage framework (KIP-405) but ships no remote storage plugin. Confluent Server includes a working implementation under the Enterprise licence.'],
+    answer: 3,
+    explain: 'KIP-405 added the <code>RemoteStorageManager</code> interface to Apache Kafka, but you need a third-party plugin for S3 or other storage. Confluent Server ships a supported implementation and Confluent Cloud uses one. That is the typical pattern: Apache provides the framework, Confluent provides it ready to run.' }
+]);
+</script>
+</body>
+</html>

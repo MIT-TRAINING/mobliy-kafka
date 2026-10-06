@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control Center Walkthrough</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 6 · Introducing Confluent Kafka</a>
+    <div class="nav"><span>5 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 5</div>
+  <h1>Confluent Control Center walkthrough</h1>
+  <p class="lede">Control Center (C3) is the web UI of self-managed Confluent Platform. It runs on port <code>9021</code>
+    and shows in a few clicks what took several <code>kafka-*.sh</code> commands in Module 2. This is a simplified model of
+    it. Click the menu, topics and consumer groups to complete the four missions. Then stop broker-2 or slow down
+    <code>billing-svc</code>, and find the problem from the UI.</p>
+
+  <div class="card">
+    <div class="controls">
+      <button class="danger" id="brk">Stop broker-2</button>
+      <button id="slow">Slow down billing-svc</button>
+      <button id="reset">Reset</button>
+      <span class="pill" id="state"></span>
+    </div>
+    <div class="chips" id="missions" aria-label="Missions"></div>
+    <div class="stage" style="margin-top:10px"><svg id="svg" viewBox="0 0 900 420" role="img" aria-label="Simplified Control Center user interface"></svg></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Where to look in Control Center</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Question</th><th>Control Center</th><th>Apache CLI equivalent (Module 2)</th></tr></thead>
+      <tbody>
+        <tr><td>Is the cluster healthy?</td><td>Cluster overview: brokers online, under-replicated and offline partitions</td><td><code>kafka-topics.sh --describe --under-replicated-partitions</code></td></tr>
+        <tr><td>Which broker is slow or down?</td><td>Brokers: status, throughput, partitions per broker</td><td><code>kafka-broker-api-versions.sh</code>, <code>kafka-metadata-quorum.sh</code>, JMX</td></tr>
+        <tr><td>How is a topic configured?</td><td>Topics → <i>topic</i> → Configuration</td><td><code>kafka-configs.sh --describe --entity-type topics</code></td></tr>
+        <tr><td>What is in a topic?</td><td>Topics → <i>topic</i> → Messages (browse by offset or time)</td><td><code>kafka-console-consumer.sh --from-beginning</code></td></tr>
+        <tr><td>Is a consumer falling behind?</td><td>Consumers → <i>group</i>: lag per partition</td><td><code>kafka-consumer-groups.sh --describe --group …</code></td></tr>
+        <tr><td>Are connectors and queries running?</td><td>Connect and ksqlDB pages</td><td>Connect REST API on <code>:8083</code>, ksqlDB CLI</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="grid grid-2" style="margin-top:16px">
+    <div class="card">
+      <h3>How Control Center gets its data</h3>
+      <p style="color:var(--muted);font-size:15px;margin:0">Management pages (topics, configs, consumer groups) call the cluster's
+        admin APIs. Monitoring charts need metrics: the brokers report them to Control Center. In CP 8.x, Control Center stores
+        metrics in Prometheus. Older 7.x versions stored them in internal <code>_confluent-*</code> topics. If the metrics
+        configuration is missing, the management pages work but the charts stay empty.</p>
+    </div>
+    <div class="card">
+      <h3>Control Center vs Cloud Console</h3>
+      <p style="color:var(--muted);font-size:15px;margin:0">Confluent Cloud has no Control Center. Its web UI is the
+        <b>Cloud Console</b> at confluent.cloud, with the same ideas (topics, messages, consumer lag, connectors) and the
+        Metrics API for monitoring. Your lab uses both: the Cloud Console for <code>env-l07</code>, and Control Center for the
+        shared CP cluster.</p>
+    </div>
+  </div>
+  <div class="callout"><b>Admin takeaway:</b> use Control Center to <i>find</i> a problem quickly, then confirm it on the
+    command line before you change anything. For example, an under-replicated count in the overview should match
+    <code>kafka-topics.sh --describe --under-replicated-partitions</code>. The CLI output can go into the incident ticket.</div>
+  <div class="callout warn"><b>Admin gotcha:</b> anyone who can open Control Center can do what their RBAC roles allow, and that
+    includes <b>Delete topic</b>. On a shared cluster, give operations staff read-only roles (Module 7), and don't use a
+    superuser account to log in to the UI.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="04-confluent-cli-auth.html"><small>← Previous</small>Confluent CLI overview &amp; authentication</a>
+    <a class="next" href="06-topic-management.html"><small>Next →</small>Topic management via CLI &amp; Control Center</a>
+  </div>
+</div>
+
+<script>
+const NAV = [['home', 'Home'], ['overview', 'Cluster overview'], ['brokers', 'Brokers'], ['topics', 'Topics'], ['connect', 'Connect'], ['ksql', 'ksqlDB'], ['consumers', 'Consumers'], ['settings', 'Cluster settings']];
+const TOPICS = [
+  { name: 'cdr.voice', parts: 12, prod: '4.2 MB/s', cfg: { 'cleanup.policy': 'delete', 'retention.ms': '604800000 (7 days)', 'min.insync.replicas': '2', 'max.message.bytes': '1048588' } },
+  { name: 'cdr.roaming', parts: 6, prod: '0.6 MB/s', cfg: { 'cleanup.policy': 'delete', 'retention.ms': '259200000 (3 days)', 'min.insync.replicas': '2', 'max.message.bytes': '1048588' } },
+  { name: 'l07.cdr.voice', parts: 6, prod: '0.1 MB/s', cfg: { 'cleanup.policy': 'delete', 'retention.ms': '86400000 (1 day)', 'min.insync.replicas': '2', 'max.message.bytes': '1048588' } }
+];
+const GROUPS = [
+  { name: 'billing-svc', topic: 'cdr.voice', parts: 12, base: 120 },
+  { name: 'analytics-svc', topic: 'cdr.voice', parts: 12, base: 340 },
+  { name: 'audit-svc', topic: 'cdr.roaming', parts: 6, base: 15 }
+];
+const MISSIONS = [['brokers', 'Find how many brokers are online'], ['urp', 'Stop broker-2, then find the under-replicated partitions'],
+  ['lag', 'Open the billing-svc consumer group and read its lag'], ['ret', 'Find retention.ms of l07.cdr.voice']];
+const svg = document.getElementById('svg'), log = document.getElementById('log');
+const scene = el('g', {}, svg);
+let S, lagNodes = [];
+function init() { S = { view: 'home', topic: null, tab: 'overview', group: null, down: false, slow: false, extraLag: 0, done: {} }; }
+
+const totalParts = () => TOPICS.reduce((a, t) => a + t.parts, 0);
+const urp = () => S.down ? totalParts() : 0;
+const lagOf = g => g.base + (g.name === 'billing-svc' ? S.extraLag : 0);
+
+function txt(x, y, t, a) { return el('text', Object.assign({ x, y, 'font-size': 13, text: t }, a || {}), scene); }
+function tile(x, y, w, label, value, bad) {
+  el('rect', { x, y, width: w, height: 70, rx: 8, fill: bad ? 'var(--bad-soft)' : 'var(--surface)', stroke: bad ? 'var(--bad)' : 'var(--border)' }, scene);
+  txt(x + 12, y + 22, label, { class: 'muted', 'font-size': 12 });
+  return txt(x + 12, y + 54, value, { 'font-size': 22, 'font-weight': 700, fill: bad ? 'var(--bad)' : 'var(--text)' });
+}
+function table(y, cols, rows, onRow) {
+  cols.forEach(([h, x]) => txt(x, y, h, { class: 'muted', 'font-size': 12, 'font-weight': 600 }));
+  rows.forEach((r, i) => {
+    const ry = y + 12 + i * 34, g = el('g', {}, scene);
+    el('rect', { x: 184, y: ry, width: 700, height: 30, rx: 6, fill: r.bad ? 'var(--bad-soft)' : 'var(--surface)', stroke: 'var(--border)' }, g);
+    r.cells.forEach((c, j) => el('text', { x: cols[j][1], y: ry + 20, 'font-size': 13, 'font-weight': j ? 400 : 600, fill: r.bad && j ? 'var(--bad)' : (j === 0 && onRow ? 'var(--accent)' : 'var(--text)'), text: c }, g));
+    if (onRow) svgButton(g, `Open ${r.cells[0]}`, () => onRow(r.key));
+  });
+}
+
+function go(view, extra) { Object.assign(S, { view }, extra || {}); render(); }
+
+function render() {
+  scene.innerHTML = ''; lagNodes = [];
+  el('rect', { x: 0, y: 0, width: 900, height: 420, rx: 10, fill: 'var(--surface-2)' }, scene);
+  el('rect', { x: 0, y: 0, width: 900, height: 34, rx: 10, fill: 'var(--surface)' }, scene);
+  txt(14, 22, 'Confluent Control Center', { 'font-weight': 700 });
+  txt(886, 22, 'https://c3.lab.internal:9021 · l07', { 'text-anchor': 'end', class: 'muted mono', 'font-size': 11 });
+  NAV.forEach(([id, label], i) => {
+    const on = S.view === id || (S.view === 'topic' && id === 'topics') || (S.view === 'group' && id === 'consumers');
+    const g = el('g', {}, scene);
+    el('rect', { x: 8, y: 44 + i * 40, width: 160, height: 34, rx: 7, fill: on ? 'var(--accent)' : 'transparent' }, g);
+    el('text', { x: 20, y: 66 + i * 40, 'font-size': 13, 'font-weight': on ? 700 : 500, fill: on ? '#fff' : 'var(--text)', text: label }, g);
+    svgButton(g, label, () => { go(id, { topic: null, group: null, tab: 'overview' }); logLine(log, `Opened <b>${label}</b>.`); });
+  });
+  const V = VIEWS[S.view]; V();
+  check();
+  const st = document.getElementById('state');
+  st.textContent = S.down ? `${urp()} under-replicated` : S.slow ? 'billing-svc lag rising' : 'Cluster healthy';
+  st.className = 'pill ' + (S.down ? 'bad' : S.slow ? 'warn' : 'ok');
+  document.getElementById('brk').textContent = S.down ? 'Start broker-2' : 'Stop broker-2';
+  document.getElementById('slow').textContent = S.slow ? 'Fix billing-svc' : 'Slow down billing-svc';
+  document.getElementById('missions').innerHTML = MISSIONS.map(([k, t], i) => `<span class="chip ${S.done[k] ? 'ok' : ''}">${S.done[k] ? '✓' : i + 1 + '.'} ${t}</span>`).join('');
+}
+
+const VIEWS = {
+  home() {
+    txt(184, 64, 'Clusters', { 'font-size': 16, 'font-weight': 700 });
+    const g = el('g', {}, scene);
+    el('rect', { x: 184, y: 80, width: 340, height: 130, rx: 10, fill: 'var(--surface)', stroke: S.down ? 'var(--bad)' : 'var(--ok)', 'stroke-width': 2 }, g);
+    el('text', { x: 200, y: 108, 'font-weight': 700, 'font-size': 15, fill: 'var(--accent)', text: 'cp-lab' }, g);
+    el('text', { x: 508, y: 108, 'text-anchor': 'end', 'font-size': 12, 'font-weight': 700, fill: S.down ? 'var(--bad)' : 'var(--ok)', text: S.down ? 'Unhealthy' : 'Healthy' }, g);
+    [['Brokers', S.down ? '2 / 3' : '3 / 3'], ['Topics', TOPICS.length], ['Partitions', totalParts()], ['Under-replicated', urp()]].forEach(([k, v], i) => {
+      el('text', { x: 200 + (i % 2) * 160, y: 140 + Math.floor(i / 2) * 44, 'font-size': 12, class: 'muted', text: k }, g);
+      el('text', { x: 200 + (i % 2) * 160, y: 160 + Math.floor(i / 2) * 44, 'font-size': 16, 'font-weight': 700, text: v }, g);
+    });
+    svgButton(g, 'Open cluster cp-lab', () => { go('overview'); logLine(log, 'Opened cluster <b>cp-lab</b>.'); });
+    txt(184, 240, 'Click the cluster card to open its overview.', { class: 'muted' });
+  },
+  overview() {
+    txt(184, 64, 'cp-lab · Cluster overview', { 'font-size': 16, 'font-weight': 700 });
+    tile(184, 80, 165, 'Brokers online', S.down ? '2 / 3' : '3 / 3', S.down);
+    tile(361, 80, 165, 'Under-replicated', urp(), S.down);
+    tile(538, 80, 165, 'Offline partitions', 0);
+    tile(715, 80, 169, 'Production', '4.9 MB/s');
+    txt(184, 186, 'Production (MB/s), last 10 minutes', { class: 'muted', 'font-size': 12 });
+    for (let i = 0; i < 30; i++) {
+      const h = 40 + Math.round(30 * Math.abs(Math.sin(i * .7))) + (i > 24 && S.down ? -10 : 0);
+      el('rect', { x: 184 + i * 23, y: 300 - h, width: 16, height: h, rx: 3, fill: 'var(--p0)', opacity: .8 }, scene);
+    }
+    if (S.down) txt(184, 330, '⚠ broker-2 is not reporting. Every partition with a replica on broker-2 is under-replicated.', { fill: 'var(--bad)', 'font-weight': 600 });
+  },
+  brokers() {
+    txt(184, 64, 'Brokers', { 'font-size': 16, 'font-weight': 700 });
+    table(96, [['Broker', 196], ['Status', 330], ['Partitions', 460], ['Leaders', 580], ['Bytes in', 700]],
+      [1, 2, 3].map(b => {
+        const off = S.down && b === 2;
+        return { bad: off, cells: [`broker-${b}`, off ? 'Offline' : 'Online', String(totalParts()), off ? '0' : S.down ? '12' : '8', off ? '—' : S.down ? '2.4 MB/s' : '1.6 MB/s'] };
+      }));
+    txt(184, 230, S.down ? 'Brokers 1 and 3 took over broker-2\'s leaders. ISR = 2 of 3, so acks=all still works (min.insync.replicas=2).' : 'Three brokers, each a replica of every partition (RF 3), leaders evenly spread.', { class: 'muted' });
+  },
+  topics() {
+    txt(184, 64, 'Topics', { 'font-size': 16, 'font-weight': 700 });
+    txt(884, 64, '+ Add topic (Topic 6)', { 'text-anchor': 'end', fill: 'var(--accent)', 'font-weight': 600 });
+    table(96, [['Topic', 196], ['Partitions', 400], ['Under-replicated', 510], ['Production', 680]],
+      TOPICS.map(t => ({ key: t.name, bad: S.down, cells: [t.name, String(t.parts), S.down ? String(t.parts) : '0', t.prod] })),
+      k => { go('topic', { topic: k, tab: 'overview' }); logLine(log, `Opened topic <b>${k}</b>.`); });
+    txt(184, 230, 'Internal topics (_schemas, _confluent-*) are hidden by default. Click a topic name.', { class: 'muted' });
+  },
+  topic() {
+    const t = TOPICS.find(x => x.name === S.topic);
+    txt(184, 64, `Topics › ${t.name}`, { 'font-size': 16, 'font-weight': 700 });
+    ['overview', 'messages', 'schema', 'config'].forEach((tab, i) => {
+      const g = el('g', {}, scene), on = S.tab === tab;
+      el('rect', { x: 184 + i * 120, y: 78, width: 112, height: 30, rx: 6, fill: on ? 'var(--accent-soft)' : 'var(--surface)', stroke: on ? 'var(--accent)' : 'var(--border)' }, g);
+      el('text', { x: 240 + i * 120, y: 98, 'text-anchor': 'middle', 'font-size': 13, 'font-weight': on ? 700 : 500, text: { overview: 'Overview', messages: 'Messages', schema: 'Schema', config: 'Configuration' }[tab] }, g);
+      svgButton(g, `${tab} tab`, () => { go('topic', { tab }); logLine(log, `Opened the <b>${tab}</b> tab of ${t.name}.`); });
+    });
+    if (S.tab === 'overview') {
+      tile(184, 124, 200, 'Partitions', t.parts); tile(396, 124, 200, 'Replication factor', 3); tile(608, 124, 200, 'Under-replicated', S.down ? t.parts : 0, S.down);
+    } else if (S.tab === 'messages') {
+      ['offset 18231 · key 966512345678 · {"duration":214,"roaming":true}', 'offset 18230 · key 966598765432 · {"duration":37,"roaming":false}', 'offset 18229 · key 966500011122 · {"duration":602,"roaming":false}']
+        .forEach((m, i) => txt(196, 140 + i * 28, m, { class: 'mono', 'font-size': 12 }));
+      txt(184, 240, 'Browse by offset or timestamp: the UI version of kafka-console-consumer.', { class: 'muted' });
+    } else if (S.tab === 'schema') {
+      txt(196, 140, `Subject ${t.name}-value · version 1 · Avro`, { class: 'mono', 'font-size': 12 });
+      txt(196, 166, '{"type":"record","name":"Cdr","fields":[{"name":"msisdn",…},{"name":"duration",…}]}', { class: 'mono', 'font-size': 12 });
+      txt(184, 200, 'Read from Schema Registry (Topic 1).', { class: 'muted' });
+    } else {
+      Object.entries(t.cfg).forEach(([k, v], i) => {
+        const hl = k === 'retention.ms';
+        el('rect', { x: 184, y: 124 + i * 34, width: 700, height: 30, rx: 6, fill: hl ? 'var(--accent-soft)' : 'var(--surface)', stroke: 'var(--border)' }, scene);
+        txt(196, 144 + i * 34, k, { class: 'mono', 'font-weight': 600 });
+        txt(480, 144 + i * 34, v, { class: 'mono' });
+      });
+      txt(184, 290, 'Edit settings here is the same as confluent kafka topic update --config (Topic 6).', { class: 'muted' });
+    }
+  },
+  connect() {
+    txt(184, 64, 'Connect · connect-lab', { 'font-size': 16, 'font-weight': 700 });
+    table(96, [['Connector', 196], ['Type', 440], ['Status', 560], ['Tasks', 700]],
+      [{ cells: ['cdr-file-source', 'Source', 'Running', '1 / 1'] }, { cells: ['billing-dw-jdbc-sink', 'Sink', 'Running', '2 / 2'] }]);
+  },
+  ksql() {
+    txt(184, 64, 'ksqlDB · ksqldb-lab', { 'font-size': 16, 'font-weight': 700 });
+    table(96, [['Persistent query', 196], ['Sink topic', 480], ['Status', 680]], [{ cells: ['CSAS_CDR_ROAMING_1', 'cdr.roaming', 'RUNNING'] }]);
+    txt(184, 180, 'CREATE STREAM cdr_roaming AS SELECT * FROM cdr_voice WHERE roaming = true;', { class: 'mono', 'font-size': 12 });
+  },
+  consumers() {
+    txt(184, 64, 'Consumers', { 'font-size': 16, 'font-weight': 700 });
+    table(96, [['Consumer group', 196], ['Topic', 400], ['Total lag (messages)', 560], ['Members', 780]],
+      GROUPS.map(g => ({ key: g.name, bad: g.name === 'billing-svc' && S.slow, cells: [g.name, g.topic, String(lagOf(g)), '3'] })),
+      k => { go('group', { group: k }); logLine(log, `Opened consumer group <b>${k}</b>.`); });
+    lagNodes = [];
+  },
+  group() {
+    const g = GROUPS.find(x => x.name === S.group);
+    txt(184, 64, `Consumers › ${g.name} · ${g.topic}`, { 'font-size': 16, 'font-weight': 700 });
+    lagNodes.push([tile(184, 80, 220, 'Total lag (messages)', String(lagOf(g)), g.name === 'billing-svc' && S.slow), g]);
+    const n = g.parts, total = lagOf(g);
+    for (let p = 0; p < n; p++) {
+      const lag = Math.round(total / n * (0.6 + 0.8 * ((p * 7) % 5) / 4));
+      const h = Math.min(180, 6 + lag / Math.max(1, total / n) * 60);
+      el('rect', { x: 196 + p * 56, y: 360 - h, width: 40, height: h, rx: 4, fill: S.slow && g.name === 'billing-svc' ? 'var(--bad)' : 'var(--p2)' }, scene);
+      txt(216 + p * 56, 378, 'p' + p, { 'text-anchor': 'middle', 'font-size': 11, class: 'muted' });
+    }
+    txt(420, 120, 'Lag per partition = log end offset − committed offset', { class: 'muted', 'font-size': 12 });
+  },
+  settings() {
+    txt(184, 64, 'Cluster settings · broker defaults', { 'font-size': 16, 'font-weight': 700 });
+    [['default.replication.factor', '3'], ['min.insync.replicas', '2'], ['log.retention.hours', '168'], ['auto.create.topics.enable', 'false'], ['num.partitions', '6']].forEach(([k, v], i) => {
+      el('rect', { x: 184, y: 84 + i * 34, width: 700, height: 30, rx: 6, fill: 'var(--surface)', stroke: 'var(--border)' }, scene);
+      txt(196, 104 + i * 34, k, { class: 'mono', 'font-weight': 600 }); txt(520, 104 + i * 34, v, { class: 'mono' });
+    });
+    txt(184, 280, 'Dynamic broker settings can be edited here; static ones still need server.properties and a rolling restart.', { class: 'muted' });
+  }
+};
+
+function check() {
+  const before = Object.keys(S.done).length;
+  if (S.view === 'brokers') S.done.brokers = true;
+  if (S.down && ['overview', 'brokers', 'topics', 'home'].includes(S.view)) S.done.urp = true;
+  if (S.view === 'group' && S.group === 'billing-svc') S.done.lag = true;
+  if (S.view === 'topic' && S.topic === 'l07.cdr.voice' && S.tab === 'config') S.done.ret = true;
+  if (Object.keys(S.done).length > before) logLine(log, `Mission complete (${Object.keys(S.done).length} / 4).`, true);
+}
+
+document.getElementById('brk').onclick = () => {
+  S.down = !S.down;
+  logLine(log, S.down ? '<code>systemctl stop confluent-server</code> on broker-2. Look at the overview.' : 'broker-2 is back. Its replicas catch up and rejoin the ISR.', true);
+  render();
+};
+document.getElementById('slow').onclick = () => {
+  S.slow = !S.slow;
+  if (!S.slow) S.extraLag = 0;
+  logLine(log, S.slow ? 'billing-svc now processes CDRs slower than they arrive. Watch its lag in Consumers.' : 'billing-svc scaled out. The lag drains.', true);
+  render();
+};
+document.getElementById('reset').onclick = () => { init(); render(); logLine(log, 'Reset.'); };
+setInterval(() => {
+  if (!S.slow) return;
+  S.extraLag += 1800 + Math.floor(Math.random() * 600);
+  lagNodes.forEach(([node, g]) => node.textContent = String(lagOf(g)));
+  if (S.view === 'consumers') {
+    const t = [...scene.querySelectorAll('text')].filter(n => n.textContent && /^\d+$/.test(n.textContent) && n.getAttribute('x') === '560');
+    if (t[0]) t[0].textContent = String(lagOf(GROUPS[0]));
+  }
+}, 1000);
+init(); render();
+logLine(log, 'You are logged in to Control Center as l07. Start with mission 1.', true);
+
+renderQuiz('quiz', [
+  { q: 'Broker-2 stops. Where in Control Center do you see the impact first, and what does it show for this 3-broker, RF 3 cluster?',
+    options: ['Consumers: every group shows zero lag',
+      'Cluster overview: brokers online 2/3 and every partition under-replicated, but no offline partitions, because each partition still has 2 in-sync replicas',
+      'Topics: all topics are deleted',
+      'Connect: all connectors fail'],
+    answer: 1,
+    explain: 'With RF 3 on 3 brokers, every partition has a replica on broker-2, so all of them are under-replicated. The other two replicas stay in the ISR, which meets <code>min.insync.replicas=2</code>, so producers with <code>acks=all</code> keep working.' },
+  { q: 'Which CLI command gives the same information as Control Center\'s per-partition lag view for <code>billing-svc</code>?',
+    options: ['<code>kafka-consumer-groups.sh --bootstrap-server … --describe --group billing-svc</code>',
+      '<code>kafka-topics.sh --describe --topic cdr.voice</code>',
+      '<code>kafka-log-dirs.sh --describe</code>',
+      '<code>kafka-configs.sh --describe --entity-type groups</code>'],
+    answer: 0,
+    explain: 'Lag per partition is the log end offset minus the group\'s committed offset. <code>kafka-consumer-groups.sh --describe</code> prints CURRENT-OFFSET, LOG-END-OFFSET and LAG, which is what Control Center charts. On Confluent tooling, <code>confluent kafka consumer group lag list</code> does the same.' },
+  { q: 'The topic and consumer pages in Control Center work, but every throughput chart is empty. What is the most likely cause?',
+    options: ['The topics have no data',
+      'Control Center only charts Confluent Cloud clusters',
+      'The brokers are not reporting metrics to Control Center, for example because the metrics reporter is not configured. Management pages use admin APIs, but charts need metrics.',
+      'The browser blocks charts'],
+    answer: 2,
+    explain: 'Control Center has two data paths. Admin API calls (topics, configs, groups) work as soon as it can reach the cluster. Charts need metrics that the brokers send to Control Center. If that pipeline is missing, the management pages work and the monitoring pages stay empty (Module 8).' },
+  { q: 'Your company uses Confluent Cloud only. Where is "Control Center"?',
+    options: ['You install it on a VM and point it at Confluent Cloud',
+      'It is built into the Confluent CLI',
+      'It is under the Kafka UI tab',
+      'There is none. The Confluent Cloud Console provides the UI, and the Metrics API provides monitoring data.'],
+    answer: 3,
+    explain: 'Control Center is a component of self-managed Confluent Platform. Confluent Cloud has its own web UI (Cloud Console) and an API for metrics. Topic 3 covers which tools belong to which model.' },
+  { q: 'An operations analyst needs to watch consumer lag on the shared CP cluster but must not change anything. What should you give them?',
+    options: ['A read-only RBAC role (such as Operator or DeveloperRead on the relevant resources) and their own LDAP login for Control Center',
+      'The superuser password, with a warning to be careful',
+      'Nothing. Control Center is read-only for everyone.',
+      'SSH access to a broker'],
+    answer: 0,
+    explain: 'Control Center enforces RBAC: each user sees and does only what their role bindings allow. Delete topic, edit config and reset offsets are all possible for a privileged user. Module 7 covers the roles in detail.' }
+]);
+</script>
+</body>
+</html>

@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cloud vs Self-Managed</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 6 · Introducing Confluent Kafka</a>
+    <div class="nav"><span>3 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 3</div>
+  <h1>Confluent Cloud vs self-managed Confluent Platform</h1>
+  <p class="lede">Choosing a deployment model means choosing which layers <i>you</i> are paged for. Switch between the four
+    models and watch ownership of each layer move from your team to Confluent. Then fire an incident and see whose pager it
+    goes to. Notice that two incidents go to you in every model.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Model</span>
+      <div class="seg" role="group" aria-label="Deployment model" id="modelSeg">
+        <button data-v="apache" aria-pressed="false">Apache Kafka (VMs)</button>
+        <button data-v="cp" aria-pressed="true">Confluent Platform (VMs)</button>
+        <button data-v="cfk" aria-pressed="false">CP on Kubernetes (CFK)</button>
+        <button data-v="cloud" aria-pressed="false">Confluent Cloud</button>
+      </div>
+    </div>
+    <div class="controls">
+      <span class="ctl-label">Incident</span>
+      <button data-i="disk">Broker disk 95% full</button>
+      <button data-i="cve">Critical CVE in Kafka</button>
+      <button data-i="peak">Eid traffic ×3</button>
+      <button data-i="lag">billing-svc lag growing</button>
+      <button data-i="auth">TopicAuthorizationException</button>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 400" role="img" aria-label="Platform layers coloured by who owns them, and where incidents are routed"></svg></div>
+    <div class="legend"><span><i style="background:var(--p1)"></i>you own it</span><span><i style="background:var(--p5)"></i>you own it, an operator automates it</span>
+      <span><i style="background:var(--p3)"></i>shared</span><span><i style="background:var(--p2)"></i>Confluent owns it</span></div>
+    <div class="stats" id="stats"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>What changes for an administrator</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Aspect</th><th>Self-managed (Apache or CP)</th><th>Confluent Cloud</th></tr></thead>
+      <tbody>
+        <tr><td>Broker access</td><td>SSH, <code>server.properties</code>, JMX, logs</td><td>None. There are no broker hosts or broker configs to change</td></tr>
+        <tr><td>Install and upgrade</td><td>cp-ansible, CFK, packages or tarballs. You run the rolling upgrade (Module 5, Topic 3)</td><td>Confluent upgrades the cluster for you with rolling restarts</td></tr>
+        <tr><td>Topic settings</td><td>Any topic config, any replication factor</td><td>Replication factor is always 3. You can edit a documented subset of topic configs (for example <code>retention.ms</code>, <code>cleanup.policy</code>, <code>max.message.bytes</code>)</td></tr>
+        <tr><td>Authentication</td><td>SASL/SCRAM, mTLS, LDAP via MDS (Module 7)</td><td>API keys (SASL/PLAIN over TLS) or OAuth, tied to a user or service account</td></tr>
+        <tr><td>Monitoring</td><td>JMX → Prometheus / Grafana, Control Center</td><td>Cloud Console and the Metrics API (Module 8)</td></tr>
+        <tr><td>Scaling</td><td>Add brokers, then reassign partitions or let Self-Balancing do it</td><td>Basic, Standard and Enterprise scale elastically within limits. On Dedicated, you choose the number of CKUs</td></tr>
+        <tr><td>Cost</td><td>Hardware + people + licence</td><td>Pay per use: throughput, storage, partitions, cluster type</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Confluent Cloud cluster type</th><th>Typical use</th></tr></thead>
+      <tbody>
+        <tr><td><b>Basic</b></td><td>Development and test. Multi-tenant, lowest cost. Your lab environment <code>env-lNN</code> uses one</td></tr>
+        <tr><td><b>Standard</b></td><td>Production on a shared, multi-tenant cluster with a higher uptime SLA</td></tr>
+        <tr><td><b>Enterprise</b></td><td>Production with private networking, scaling elastically</td></tr>
+        <tr><td><b>Dedicated</b></td><td>Single-tenant capacity sized in CKUs. Private networking, highest limits</td></tr>
+        <tr><td><b>Freight</b></td><td>Very high-throughput workloads such as logging, which can accept higher latency</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Admin takeaway:</b> moving to Cloud takes infrastructure work off your plate, not Kafka work. Consumer
+    lag, poison messages, permissions, topic design and client configs (<code>acks</code>, retries, idempotence) are still
+    yours in every model. Plan your on-call rota around them.</div>
+  <div class="callout warn"><b>Admin gotcha:</b> a script that runs <code>kafka-configs.sh --entity-type brokers</code> or
+    <code>kafka-reassign-partitions.sh</code> works on your self-managed cluster but fails on Confluent Cloud, where you
+    can't change broker configs or move partitions. Audit your runbooks before you migrate: every broker-level step needs a
+    Cloud equivalent, or it has to go.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="02-confluent-vs-apache.html"><small>← Previous</small>Confluent vs Apache Kafka: features &amp; licensing</a>
+    <a class="next" href="04-confluent-cli-auth.html"><small>Next →</small>Confluent CLI overview &amp; authentication</a>
+  </div>
+</div>
+
+<script>
+const OWN = { you: ['var(--p1)', 'you'], auto: ['var(--p5)', 'you · automated'], shared: ['var(--p3)', 'shared'], cf: ['var(--p2)', 'Confluent'] };
+// Layers listed top (closest to the business) to bottom (hardware).
+const LAYERS = [
+  { name: 'Clients, schemas & data', own: { apache: 'you', cp: 'you', cfk: 'you', cloud: 'you' } },
+  { name: 'Topics & topic configs', own: { apache: 'you', cp: 'you', cfk: 'auto', cloud: 'you' } },
+  { name: 'Access control (ACLs / RBAC, keys)', own: { apache: 'you', cp: 'you', cfk: 'you', cloud: 'shared' } },
+  { name: 'Monitoring pipeline', own: { apache: 'you', cp: 'you', cfk: 'you', cloud: 'cf' } },
+  { name: 'Scaling & partition balance', own: { apache: 'you', cp: 'you', cfk: 'auto', cloud: 'shared' } },
+  { name: 'Broker & controller configs', own: { apache: 'you', cp: 'you', cfk: 'auto', cloud: 'cf' } },
+  { name: 'Install, upgrades, rolling restarts', own: { apache: 'you', cp: 'you', cfk: 'auto', cloud: 'cf' } },
+  { name: 'OS, JVM, security patches', own: { apache: 'you', cp: 'you', cfk: 'you', cloud: 'cf' } },
+  { name: 'Servers, disks, network', own: { apache: 'you', cp: 'you', cfk: 'you', cloud: 'cf' } }
+];
+const MODEL = { apache: 'Apache Kafka on VMs', cp: 'Confluent Platform on VMs', cfk: 'Confluent Platform on Kubernetes (CFK)', cloud: 'Confluent Cloud' };
+const INC = {
+  disk: { layer: 8, msg: {
+    apache: 'Broker disk 95% full. You lower retention on the largest topics, add disk, or reassign partitions (Module 5).',
+    cp: 'Broker disk 95% full. You fix it as on Apache Kafka. With Tiered Storage enabled, old segments would already be in object storage.',
+    cfk: 'Broker disk 95% full. You expand the PersistentVolume size in the Kafka custom resource. CFK rolls the change.',
+    cloud: 'There are no broker disks for you to manage. Storage is part of the service, so you get no page.' } },
+  cve: { layer: 7, msg: {
+    apache: 'Critical CVE. You download the patched release and roll every controller and broker yourself.',
+    cp: 'Critical CVE. Confluent publishes a patch release. You roll it out with cp-ansible.',
+    cfk: 'Critical CVE. You change the image tag in the custom resources, and CFK performs the rolling upgrade.',
+    cloud: 'Critical CVE. Confluent patches the cluster with rolling restarts. Your clients just reconnect.' } },
+  peak: { layer: 4, msg: {
+    apache: 'Eid peak ×3. You add brokers, then move partitions with <code>kafka-reassign-partitions.sh</code>.',
+    cp: 'Eid peak ×3. You add brokers, and Self-Balancing Clusters moves the partitions for you (Enterprise).',
+    cfk: 'Eid peak ×3. You raise <code>replicas</code> in the Kafka custom resource, and CFK adds the brokers.',
+    cloud: 'Eid peak ×3. Basic, Standard and Enterprise clusters scale within their limits. On Dedicated, you raise the CKU count and Confluent rebalances.' } },
+  lag: { layer: 0, msg: {
+    apache: 'billing-svc lag is growing. This is your application, so you get the page.', cp: 'billing-svc lag is growing. This is your application, so you get the page.',
+    cfk: 'billing-svc lag is growing. This is your application, so you get the page.', cloud: 'billing-svc lag is growing. Confluent runs the brokers, but the slow consumer is yours. You get the page.' } },
+  auth: { layer: 2, msg: {
+    apache: 'A producer gets <code>TopicAuthorizationException</code>. You add the missing ACL.', cp: 'A producer gets <code>TopicAuthorizationException</code>. You add an RBAC role binding through MDS.',
+    cfk: 'A producer gets <code>TopicAuthorizationException</code>. You add a role binding (a CFK ConfluentRolebinding resource).',
+    cloud: 'A producer gets <code>TopicAuthorizationException</code>. Confluent runs the authorizer, but the role binding for the service account is yours to add.' } }
+};
+const svg = document.getElementById('svg'), log = document.getElementById('log');
+const scene = el('g', {}, svg), fx = el('g', {}, svg);
+const S = { model: 'cp', you: 0, cf: 0, busy: false };
+const YOU = [690, 90], CF = [690, 290];
+
+function owner(i) { return LAYERS[i].own[S.model]; }
+function render() {
+  scene.innerHTML = '';
+  el('text', { x: 20, y: 22, 'font-weight': 700, text: MODEL[S.model] }, scene);
+  LAYERS.forEach((l, i) => {
+    const y = 34 + i * 40, o = OWN[owner(i)];
+    el('rect', { x: 20, y, width: 520, height: 34, rx: 7, fill: o[0], opacity: .9 }, scene);
+    el('text', { x: 34, y: y + 22, 'font-size': 14, 'font-weight': 600, fill: '#fff', text: l.name }, scene);
+    el('text', { x: 526, y: y + 22, 'text-anchor': 'end', 'font-size': 12, fill: '#fff', text: o[1] }, scene);
+  });
+  [[YOU, 'Your on-call', 'var(--p1)', S.you], [CF, 'Confluent SRE', 'var(--p2)', S.cf]].forEach(([[x, y], name, c, n]) => {
+    el('rect', { x: x - 10, y: y - 50, width: 200, height: 100, rx: 12, fill: 'var(--surface)', stroke: c, 'stroke-width': 2 }, scene);
+    el('text', { x: x + 90, y: y - 14, 'text-anchor': 'middle', 'font-weight': 700, fill: c, text: name }, scene);
+    el('text', { x: x + 90, y: y + 20, 'text-anchor': 'middle', 'font-size': 28, 'font-weight': 700, text: n }, scene);
+    el('text', { x: x + 90, y: y + 40, 'text-anchor': 'middle', 'font-size': 11, class: 'muted', text: 'pages received' }, scene);
+  });
+  const mine = LAYERS.filter((_, i) => ['you', 'auto'].includes(owner(i))).length;
+  document.getElementById('stats').innerHTML = [[`${mine} / ${LAYERS.length}`, 'layers you own'],
+    [LAYERS.filter((_, i) => owner(i) === 'cf').length, 'layers Confluent owns'], [S.you, 'pages to you'], [S.cf, 'pages to Confluent']]
+    .map(([v, k]) => `<div class="stat"><b>${v}</b><span>${k}</span></div>`).join('');
+}
+
+async function fire(id) {
+  if (S.busy) return;
+  S.busy = true;
+  const inc = INC[id], o = owner(inc.layer), toCf = o === 'cf';
+  const y = 34 + inc.layer * 40 + 17;
+  const t = el('g', {}, fx);
+  el('circle', { r: 14, fill: 'var(--bad)' }, t);
+  el('text', { x: 0, y: 5, 'text-anchor': 'middle', 'font-size': 14, fill: '#fff', 'font-weight': 700, text: '!' }, t);
+  const [tx, ty] = toCf ? CF : YOU;
+  await tween(t, 540, y, tx + 90, ty + 60, 700);
+  t.remove();
+  if (toCf) S.cf++; else S.you++;
+  logLine(log, `<b>${LAYERS[inc.layer].name}</b> → ${toCf ? 'Confluent' : 'you'}${o === 'shared' ? ' (shared layer: your half)' : ''}. ${inc.msg[S.model]}`, true);
+  S.busy = false;
+  render();
+}
+
+wireSeg('modelSeg', v => {
+  S.model = v; S.you = 0; S.cf = 0;
+  logLine(log, `Model: <b>${MODEL[v]}</b>. Counters reset.`, true);
+  render();
+});
+document.querySelectorAll('[data-i]').forEach(b => b.onclick = () => fire(b.dataset.i));
+render();
+logLine(log, 'Pick a model, then fire incidents to see who is paged.', true);
+
+renderQuiz('quiz', [
+  { q: 'Your team moves <code>cdr.voice</code> to Confluent Cloud. Which of these stays your responsibility?',
+    options: ['Patching the brokers\' JVM',
+      'Replacing a failed broker disk',
+      'Running the rolling upgrade to the next Kafka version',
+      'Fixing growing consumer lag in <code>billing-svc</code>'],
+    answer: 3,
+    explain: 'Confluent runs the infrastructure: hardware, OS, JVM, upgrades and broker configs. Your applications, topic design, permissions and lag stay yours. In the simulation, the lag and authorization incidents page you in every model.' },
+  { q: 'On Confluent Cloud, you try to create a topic with replication factor 2 to save money. What happens?',
+    options: ['It works, and storage costs drop by a third',
+      'You can\'t choose it. Confluent Cloud topics always have replication factor 3.',
+      'It works only on Basic clusters',
+      'The topic is created with RF 2, and Confluent raises it later'],
+    answer: 1,
+    explain: 'On Confluent Cloud, Confluent sets the replication factor (3) and the broker configs. You manage the topic configs it allows you to edit, such as retention and cleanup policy.' },
+  { q: 'What does Confluent for Kubernetes (CFK) change compared with running Confluent Platform on VMs?',
+    options: ['An operator automates installs, rolling restarts and scaling from custom resources. You still own the Kubernetes cluster, the storage and the platform.',
+      'Confluent runs the cluster for you, as in Confluent Cloud',
+      'It removes the need for KRaft controllers',
+      'It is the free edition of Confluent Platform'],
+    answer: 0,
+    explain: 'CFK is still self-managed. You describe the platform in custom resources (Kafka, KRaftController, SchemaRegistry…), and the operator reconciles them, for example by rolling a config change. You still own the nodes, the disks and the on-call rota.' },
+  { q: 'A runbook step uses <code>kafka-reassign-partitions.sh</code> to move load off a hot broker. What is the Confluent Cloud equivalent?',
+    options: ['The same command with an API key',
+      '<code>confluent kafka partition reassign</code>',
+      'There isn\'t one. You can\'t reach or move partitions between brokers. Confluent balances the cluster, and on Dedicated you change capacity by setting the number of CKUs.',
+      'Open a Control Center session on the Cloud cluster'],
+    answer: 2,
+    explain: 'Broker placement is part of what Confluent manages. Runbook steps that touch brokers (configs, reassignment, restarts) have no Cloud equivalent. You remove them from the runbook, or replace them with a capacity change.' },
+  { q: 'Which statement about self-managed Confluent Platform and Apache Kafka is accurate?',
+    options: ['Confluent Platform removes your responsibility for upgrades',
+      'In both, you are paged for every layer, from disks to clients. Confluent Platform adds tools such as Self-Balancing and Control Center, and a support contract, but you still run the cluster.',
+      'Apache Kafka can\'t run on VMs',
+      'Self-managed Confluent Platform is billed per GB like Confluent Cloud'],
+    answer: 1,
+    explain: 'Compare the Apache and Confluent Platform models in the simulation: the layer colours are the same. The difference is how easy the work is (Self-Balancing for the Eid peak, cp-ansible for patches), not who does it.' }
+]);
+</script>
+</body>
+</html>

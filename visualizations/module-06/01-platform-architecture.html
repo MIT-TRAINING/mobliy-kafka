@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Confluent Platform Architecture</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 6 · Introducing Confluent Kafka</a>
+    <div class="nav"><span>1 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 1</div>
+  <h1>Confluent Platform overview &amp; architecture</h1>
+  <p class="lede">Confluent Platform is still Kafka at the centre: the same brokers, KRaft controllers, topics and
+    partitions you ran in Modules 1–5. Confluent adds services around it. Click each box to see its job, port and licence.
+    Then press <b>Send a CDR</b> to follow one voice record through the platform. Switch the edition to see which parts
+    remain without an Enterprise licence, and stop Schema Registry to see what fails.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Edition</span>
+      <div class="seg" role="group" aria-label="Edition" id="edSeg">
+        <button data-v="enterprise" aria-pressed="true">Confluent Enterprise</button>
+        <button data-v="community" aria-pressed="false">Community only</button>
+        <button data-v="apache" aria-pressed="false">Apache Kafka only</button>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="primary" id="send">▶ Send a CDR</button>
+      <button id="srBtn">Stop Schema Registry</button>
+      <button id="reset">Reset</button>
+      <span class="pill ok" id="state">All services up</span>
+    </div>
+    <div class="grid split">
+      <div class="stage"><svg id="svg" viewBox="0 0 900 370" role="img" aria-label="Confluent Platform components around a Kafka cluster"></svg></div>
+      <div class="detail" id="detail" aria-live="polite"></div>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Components at a glance</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Component</th><th>What it does</th><th>Default port</th><th>Licence</th><th>Without it (Apache only)</th></tr></thead>
+      <tbody>
+        <tr><td>Kafka brokers (Confluent Server)</td><td>Store and serve partitions. Confluent Server is Apache Kafka plus extra broker features: RBAC, Cluster Linking, Self-Balancing Clusters, Tiered Storage, schema validation</td><td><code>9092</code></td><td><span class="lic enterprise">Enterprise</span> for the extra features</td><td>Apache Kafka broker (<code>cp-kafka</code> image or the Apache tarball)</td></tr>
+        <tr><td>KRaft controllers</td><td>Metadata quorum, same as Module 1, Topic 6. CP 8.x has no ZooKeeper</td><td><code>9093</code></td><td>Same as the brokers</td><td>Identical</td></tr>
+        <tr><td>Schema Registry</td><td>Stores Avro / Protobuf / JSON Schema versions and checks compatibility. Records carry only a schema ID</td><td><code>8081</code></td><td><span class="lic community">Community</span></td><td>No central schemas; producers and consumers agree on the format themselves</td></tr>
+        <tr><td>Kafka Connect</td><td>Runs source and sink connectors (JDBC, S3, Debezium…) with no custom code</td><td><code>8083</code></td><td><span class="lic apache">Apache 2.0</span> framework; each connector has its own licence</td><td>Same framework, fewer ready-made connectors</td></tr>
+        <tr><td>ksqlDB</td><td>Stream processing in SQL: filters, joins, aggregations into new topics</td><td><code>8088</code></td><td><span class="lic community">Community</span></td><td>Write a Kafka Streams application in Java</td></tr>
+        <tr><td>REST Proxy</td><td>Produce, consume and admin over HTTP for clients that can't run a Kafka client library</td><td><code>8082</code></td><td><span class="lic community">Community</span></td><td>None</td></tr>
+        <tr><td>Metadata Service (MDS)</td><td>Runs inside Confluent Server. Handles RBAC, LDAP login and the CLI's <code>confluent login --url</code>. Also hosts the embedded REST API at <code>/kafka</code></td><td><code>8090</code></td><td><span class="lic enterprise">Enterprise</span></td><td>ACLs only (Module 7)</td></tr>
+        <tr><td>Control Center</td><td>Web UI to manage and monitor clusters, topics, consumers, Connect and ksqlDB</td><td><code>9021</code></td><td><span class="lic enterprise">Enterprise</span></td><td>CLI tools plus Grafana / Kafka UI</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Admin takeaway:</b> everything you learnt on Apache Kafka still applies. <code>server.properties</code>,
+    <code>min.insync.replicas</code>, ISR, reassignment and rolling restarts all work the same way on Confluent Server. What
+    is new is a set of extra services, each with its own port, logs, heap and upgrade schedule. Add them to your monitoring and
+    your rolling-restart runbook.</div>
+  <div class="callout warn"><b>Production trap:</b> Schema Registry, ksqlDB and Control Center keep their state <i>in Kafka
+    topics</i> (<code>_schemas</code>, <code>_confluent-ksql-*</code>, <code>_confluent-*</code>). If someone deletes
+    <code>_schemas</code> or sets a short retention on it, every schema ID disappears, and consumers can no longer deserialize
+    records. Leave internal topics alone, and give them replication factor 3.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="index.html"><small>← Back</small>Module overview</a>
+    <a class="next" href="02-confluent-vs-apache.html"><small>Next →</small>Confluent vs Apache Kafka: features &amp; licensing</a>
+  </div>
+</div>
+
+<script>
+const C = {
+  src:  { x: 14,  y: 150, w: 112, h: 64, name: 'Mediation', sub: 'CDR files', ed: 'ext',
+    role: 'The telecom mediation system writes raw voice CDRs. It is outside Kafka.', port: '—', lic: null },
+  csrc: { x: 150, y: 150, w: 128, h: 64, name: 'Connect', sub: 'source connector', ed: 'apache',
+    role: 'A source connector reads CDR files and produces records into <code>cdr.voice</code>. It needs no custom code. Its converter serializes each record and registers the schema.', port: '8083', lic: 'apache', pkg: 'cp-kafka-connect' },
+  sr:   { x: 365, y: 14,  w: 170, h: 54, name: 'Schema Registry', sub: '_schemas topic', ed: 'community',
+    role: 'Stores every version of the CDR schema and checks that a new version is compatible. Records carry a 4-byte schema ID, not the schema itself.', port: '8081', lic: 'community', pkg: 'cp-schema-registry' },
+  kafka:{ x: 310, y: 100, w: 280, h: 160, name: 'Kafka cluster', sub: '', ed: 'apache',
+    role: 'Three KRaft controllers and three brokers, exactly as in Modules 1–5. With an Enterprise licence the brokers run <b>Confluent Server</b>, which adds RBAC, Cluster Linking, Self-Balancing Clusters and Tiered Storage.', port: '9092 (clients) · 9093 (controllers)', lic: 'enterprise', pkg: 'cp-server (or cp-kafka)' },
+  ksql: { x: 625, y: 70,  w: 130, h: 60, name: 'ksqlDB', sub: 'SQL streams', ed: 'community',
+    role: 'Runs a persistent query such as <code>CREATE STREAM cdr_roaming AS SELECT … WHERE roaming = true</code>, and writes the results to a new topic.', port: '8088', lic: 'community', pkg: 'cp-ksqldb-server' },
+  app:  { x: 780, y: 70,  w: 106, h: 60, name: 'billing-svc', sub: 'consumer', ed: 'ext',
+    role: 'Your Java consumer from Module 4. It reads <code>cdr.roaming</code> and looks up the schema ID in Schema Registry to deserialize each record.', port: '—', lic: null },
+  csink:{ x: 625, y: 200, w: 130, h: 60, name: 'Connect', sub: 'sink connector', ed: 'apache',
+    role: 'A JDBC or S3 sink connector copies <code>cdr.voice</code> into the billing data warehouse and commits offsets like any other consumer group.', port: '8083', lic: 'apache', pkg: 'cp-kafka-connect' },
+  dw:   { x: 780, y: 200, w: 106, h: 60, name: 'Billing DW', sub: 'warehouse', ed: 'ext',
+    role: 'The external system that the sink connector writes to.', port: '—', lic: null },
+  rest: { x: 150, y: 296, w: 128, h: 56, name: 'REST Proxy', sub: 'HTTP clients', ed: 'community',
+    role: 'Lets clients that can\'t run a Kafka client library, such as a legacy OSS script, produce and consume over HTTP.', port: '8082', lic: 'community', pkg: 'cp-kafka-rest' },
+  c3:   { x: 340, y: 296, w: 150, h: 56, name: 'Control Center', sub: 'web UI', ed: 'enterprise',
+    role: 'A web UI for brokers, topics, consumer lag, Connect and ksqlDB (Topic 5). It talks to the brokers, Connect, ksqlDB and Schema Registry.', port: '9021', lic: 'enterprise', pkg: 'confluent-control-center' },
+  mds:  { x: 512, y: 296, w: 110, h: 56, name: 'MDS', sub: 'RBAC · LDAP', ed: 'enterprise',
+    role: 'The Metadata Service runs inside Confluent Server. It handles RBAC role bindings and LDAP logins, and serves <code>confluent login --url https://…:8090</code> and the embedded REST API at <code>/kafka</code>.', port: '8090', lic: 'enterprise', pkg: 'part of cp-server' }
+};
+const LIC = { apache: ['apache', 'Apache 2.0'], community: ['community', 'Confluent Community'], enterprise: ['enterprise', 'Enterprise'] };
+const LINKS = [['src', 'csrc'], ['csrc', 'kafka'], ['csrc', 'sr'], ['kafka', 'ksql'], ['ksql', 'app'], ['kafka', 'csink'], ['csink', 'dw'], ['rest', 'kafka'], ['c3', 'kafka'], ['mds', 'kafka'], ['app', 'sr']];
+const svg = document.getElementById('svg'), log = document.getElementById('log'), detail = document.getElementById('detail');
+const linkG = el('g', {}, svg), nodeG = el('g', {}, svg), fx = el('g', {}, svg);
+const S = { ed: 'enterprise', srUp: true, sel: 'kafka', sent: 0, ok: 0, failed: 0, busy: false };
+
+const avail = id => { const e = C[id].ed; return e === 'ext' || e === 'apache' || (e === 'community' && S.ed !== 'apache') || (e === 'enterprise' && S.ed === 'enterprise'); };
+const up = id => avail(id) && !(id === 'sr' && !S.srUp);
+const mid = id => [C[id].x + C[id].w / 2, C[id].y + C[id].h / 2];
+
+function render() {
+  linkG.innerHTML = ''; nodeG.innerHTML = '';
+  LINKS.forEach(([a, b]) => {
+    const [x1, y1] = mid(a), [x2, y2] = mid(b);
+    el('line', { x1, y1, x2, y2, stroke: 'var(--border)', 'stroke-width': 2, 'stroke-dasharray': up(a) && up(b) ? '' : '4 5', opacity: up(a) && up(b) ? 1 : .5 }, linkG);
+  });
+  Object.entries(C).forEach(([id, c]) => {
+    const g = el('g', { opacity: avail(id) ? 1 : .35 }, nodeG);
+    const isSel = S.sel === id, down = avail(id) && !up(id);
+    el('rect', { x: c.x, y: c.y, width: c.w, height: c.h, rx: 10,
+      fill: down ? 'var(--bad-soft)' : c.ed === 'ext' ? 'var(--surface-2)' : 'var(--surface)',
+      stroke: isSel ? 'var(--accent)' : down ? 'var(--bad)' : c.ed === 'enterprise' ? 'var(--warn)' : 'var(--border)',
+      'stroke-width': isSel ? 2.5 : 1.5, 'stroke-dasharray': c.ed === 'ext' ? '4 4' : '' }, g);
+    if (id === 'kafka') {
+      el('text', { x: c.x + 12, y: c.y + 20, 'font-weight': 700, text: S.ed === 'enterprise' ? 'Confluent Server cluster' : 'Apache Kafka cluster' }, g);
+      ['ctl-1', 'ctl-2', 'ctl-3'].forEach((n, i) => {
+        el('rect', { x: c.x + 14 + i * 88, y: c.y + 32, width: 80, height: 28, rx: 6, fill: 'var(--surface-2)', stroke: 'var(--border)' }, g);
+        el('text', { x: c.x + 54 + i * 88, y: c.y + 50, 'text-anchor': 'middle', 'font-size': 12, class: 'muted', text: n }, g);
+      });
+      [1, 2, 3].forEach((b, i) => {
+        el('rect', { x: c.x + 14 + i * 88, y: c.y + 72, width: 80, height: 44, rx: 6, fill: 'var(--ok-soft)', stroke: 'var(--ok)' }, g);
+        el('text', { x: c.x + 54 + i * 88, y: c.y + 92, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 600, text: 'broker-' + b }, g);
+        el('text', { x: c.x + 54 + i * 88, y: c.y + 107, 'text-anchor': 'middle', 'font-size': 10, class: 'muted', text: ':9092' }, g);
+      });
+      el('text', { x: c.x + 12, y: c.y + 140, 'font-size': 11, class: 'muted mono', text: 'cdr.voice · cdr.roaming · _schemas' }, g);
+    } else {
+      el('text', { x: c.x + c.w / 2, y: c.y + c.h / 2 - 3, 'text-anchor': 'middle', 'font-weight': 700, 'font-size': 14, text: c.name }, g);
+      el('text', { x: c.x + c.w / 2, y: c.y + c.h / 2 + 15, 'text-anchor': 'middle', 'font-size': 11, class: 'muted', text: down ? 'STOPPED' : avail(id) ? c.sub : 'not in this edition' }, g);
+    }
+    svgButton(g, `Show details for ${c.name}`, () => { S.sel = id; render(); });
+  });
+  showDetail();
+  const st = document.getElementById('state');
+  st.textContent = S.srUp ? 'All services up' : 'Schema Registry stopped';
+  st.className = 'pill ' + (S.srUp ? 'ok' : 'bad');
+  document.getElementById('srBtn').textContent = S.srUp ? 'Stop Schema Registry' : 'Start Schema Registry';
+  document.getElementById('srBtn').disabled = !avail('sr');
+  document.getElementById('stats').innerHTML = [[S.sent, 'CDRs sent'], [S.ok, 'reached billing'], [S.failed, 'failed'],
+    [Object.keys(C).filter(k => C[k].ed !== 'ext' && avail(k)).length + ' / 8', 'components available']]
+    .map(([v, k]) => `<div class="stat"><b>${v}</b><span>${k}</span></div>`).join('');
+}
+
+function showDetail() {
+  const c = C[S.sel], l = c.lic && LIC[S.sel === 'kafka' && S.ed !== 'enterprise' ? 'apache' : c.lic];
+  detail.innerHTML = `<h3>${c.name}</h3>${l ? `<span class="lic ${l[0]}">${l[1]}</span>` : '<span class="pill">external system</span>'}
+    <p>${c.role}</p>
+    ${!avail(S.sel) ? `<p><b style="color:var(--bad)">Not available in the ${S.ed === 'apache' ? 'Apache-only' : 'Community'} edition.</b></p>` : ''}
+    ${c.pkg ? `<dl class="kv"><dt>Port</dt><dd>${c.port}</dd><dt>Image / package</dt><dd>${c.pkg}</dd></dl>` : ''}`;
+}
+
+async function fly(a, b, label, color) {
+  const [x1, y1] = mid(a), [x2, y2] = mid(b);
+  const t = el('g', {}, fx);
+  el('rect', { x: -32, y: -11, width: 64, height: 22, rx: 11, fill: color || 'var(--p0)' }, t);
+  el('text', { x: 0, y: 4, 'text-anchor': 'middle', 'font-size': 11, 'font-weight': 600, fill: '#fff', text: label }, t);
+  await tween(t, x1, y1, x2, y2, 650);
+  t.remove();
+}
+
+async function send() {
+  if (S.busy) return;
+  S.busy = true; S.sent++;
+  document.getElementById('send').disabled = true;
+  const msisdn = '9665' + String(10000000 + Math.floor(Math.random() * 89999999));
+  const roaming = S.sent % 2 === 1;
+  logLine(log, `CDR #${S.sent}: MSISDN ${msisdn}, ${roaming ? 'roaming' : 'home network'}, 214 s call.`, true);
+  await fly('src', 'csrc', 'CDR');
+  if (avail('sr')) {
+    await fly('csrc', 'sr', 'schema?', 'var(--p3)');
+    if (!S.srUp) {
+      S.failed++;
+      logLine(log, 'The Avro converter can\'t reach Schema Registry, so it can\'t get a schema ID. The connector task fails, and the CDR is <b>not produced</b>.', true);
+      return done();
+    }
+    logLine(log, 'Schema Registry: schema <code>cdr.voice-value</code> v1 is compatible, so it returns ID 1. The record carries only that 4-byte ID.');
+    await fly('sr', 'csrc', 'id=1', 'var(--p3)');
+  } else logLine(log, 'No Schema Registry: the connector writes plain JSON. Nothing checks that producers and consumers agree on the fields.');
+  await fly('csrc', 'kafka', 'cdr.voice');
+  logLine(log, 'Leader broker appended the record to <code>cdr.voice</code> and replicated it to the ISR (acks=all).');
+  const sink = fly('kafka', 'csink', 'cdr.voice', 'var(--p2)').then(() => fly('csink', 'dw', 'row', 'var(--p2)'));
+  if (avail('ksql')) {
+    await fly('kafka', 'ksql', 'cdr.voice', 'var(--p1)');
+    if (roaming) {
+      logLine(log, 'ksqlDB: <code>WHERE roaming = true</code> matches, so the query writes it to <code>cdr.roaming</code>.');
+      await fly('ksql', 'app', 'cdr.roaming', 'var(--p1)');
+      if (S.srUp && avail('sr')) logLine(log, 'billing-svc looks up schema ID 1 (cached after the first call) and deserializes the record.');
+      S.ok++;
+    } else logLine(log, 'ksqlDB: home-network call, filtered out of <code>cdr.roaming</code>.');
+  } else {
+    logLine(log, 'No ksqlDB in this edition. To route roaming CDRs, you would write and run a Kafka Streams application yourself.');
+    if (roaming) S.ok++;
+  }
+  await sink;
+  logLine(log, 'Sink connector wrote the CDR to the billing warehouse and committed its offset.');
+  done();
+}
+function done() { S.busy = false; document.getElementById('send').disabled = false; render(); }
+
+wireSeg('edSeg', v => {
+  S.ed = v;
+  if (!avail(S.sel)) S.sel = 'kafka';
+  logLine(log, v === 'enterprise' ? 'Enterprise licence: Confluent Server, MDS/RBAC and Control Center are all available.'
+    : v === 'community' ? 'Community only: Schema Registry, ksqlDB and REST Proxy remain. Control Center, MDS/RBAC and the Confluent Server features are gone.'
+    : 'Apache Kafka only: brokers, controllers and Connect. Everything else is up to you.', true);
+  render();
+});
+document.getElementById('send').onclick = send;
+document.getElementById('srBtn').onclick = () => {
+  S.srUp = !S.srUp;
+  logLine(log, S.srUp ? '<code>systemctl start confluent-schema-registry</code>. It rebuilds its state from the <code>_schemas</code> topic.' : '<code>systemctl stop confluent-schema-registry</code>', true);
+  render();
+};
+document.getElementById('reset').onclick = () => {
+  Object.assign(S, { srUp: true, sel: 'kafka', sent: 0, ok: 0, failed: 0 });
+  log.innerHTML = ''; render(); logLine(log, 'Reset.');
+};
+render();
+logLine(log, 'Click any box for details, or send a CDR through the platform.', true);
+
+renderQuiz('quiz', [
+  { q: 'Your team moves from Apache Kafka 4.x to Confluent Platform 8.x. What happens to the broker settings you learnt in Modules 3–5, such as <code>min.insync.replicas</code> and <code>log.retention.hours</code>?',
+    options: ['They are replaced by Confluent-only settings managed in Control Center',
+      'They work exactly the same way. Confluent Server is Apache Kafka plus extra features, so the core configs and behaviour carry over.',
+      'They only apply if you keep ZooKeeper running',
+      'They move to Schema Registry'],
+    answer: 1,
+    explain: 'Confluent Server is built on Apache Kafka (CP 8.x ships Kafka 4.x), so it uses the same partitions, ISR, retention and <code>server.properties</code> settings. Confluent adds extra features and services around it. It does not replace the core.' },
+  { q: 'In the simulation you stopped Schema Registry and sent a CDR. Why did the source connector fail?',
+    options: ['The brokers refuse records while Schema Registry is down',
+      'Schema Registry sits between producers and brokers and forwards the records',
+      'The KRaft controllers need Schema Registry to elect leaders',
+      'The Avro converter has to register the schema or look up its ID before it can serialize the record. With no registry, it gets no ID and the task fails.'],
+    answer: 3,
+    explain: 'Schema Registry is not in the data path: records go straight from the producer to the brokers. But the serializer needs a schema ID, and only the registry can give it one. The brokers stay healthy throughout. Clients that already have the ID cached can keep working for a while.' },
+  { q: 'Which components remain if you run Confluent Platform <b>without</b> an Enterprise licence (Community features only)?',
+    options: ['Kafka brokers, controllers and Connect, plus Schema Registry, ksqlDB and REST Proxy',
+      'Only Control Center',
+      'Everything, because the licence only affects support',
+      'Only the brokers. Every other component needs an Enterprise licence.'],
+    answer: 0,
+    explain: 'Schema Registry, ksqlDB and REST Proxy are under the Confluent Community License, and Connect is Apache 2.0. Control Center, MDS/RBAC and the Confluent Server features (Cluster Linking, Self-Balancing, Tiered Storage) need an Enterprise licence (Topic 2).' },
+  { q: 'A colleague wants to free up disk space by deleting the <code>_schemas</code> topic because "it\'s internal". What happens?',
+    options: ['Nothing. Schema Registry stores schemas in its own local database.',
+      'Kafka recreates the topic with all the old data',
+      'Schema Registry loses every schema and its ID. Consumers that find an unknown ID in a record can no longer deserialize it.',
+      'Only ksqlDB is affected'],
+    answer: 2,
+    explain: 'Schema Registry keeps its state in the <code>_schemas</code> topic and rebuilds it from there on startup. Delete the topic and every schema is gone, but records in <code>cdr.voice</code> still carry the old IDs. Protect internal topics, and back up <code>_schemas</code> (Module 10).' },
+  { q: 'Which port and service do you point <code>confluent login --url</code> at on a self-managed Confluent Platform cluster?',
+    options: ['Control Center on 9021',
+      'The Metadata Service (MDS) inside Confluent Server, usually on 8090',
+      'Schema Registry on 8081',
+      'The KRaft controller listener on 9093'],
+    answer: 1,
+    explain: 'The MDS handles authentication and RBAC for Confluent Platform. It runs inside the brokers and listens on 8090 by default. The same port serves the embedded REST API at <code>/kafka</code>, which the CLI uses for topic commands (Topic 4).' }
+]);
+</script>
+</body>
+</html>

@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Confluent CLI &amp; Authentication</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .cmds { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
+  .cmds button { font-family: var(--mono); font-size: 12px; padding: 6px 10px; }
+  .note { font-size: 12px; color: var(--muted); margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 6 · Introducing Confluent Kafka</a>
+    <div class="nav"><span>4 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 4</div>
+  <h1>Confluent CLI overview &amp; authentication</h1>
+  <p class="lede">One binary, <code>confluent</code>, manages both Confluent Cloud and Confluent Platform. Before most
+    commands work, it needs a <b>context</b>: who you are, and which environment and cluster you mean. Commands are run as
+    learner <code>l07</code>. Try <code>topic list</code> first, then build the context step by step and watch the chain
+    light up. Notice that <code>produce</code> needs one more thing on Cloud: an <b>API key</b>.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Target</span>
+      <div class="seg" role="group" aria-label="Target platform" id="modeSeg">
+        <button data-v="cloud" aria-pressed="true">Confluent Cloud</button>
+        <button data-v="cp" aria-pressed="false">Confluent Platform (MDS)</button>
+      </div>
+      <button id="reset">Reset</button>
+      <span class="pill" id="state"></span>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 220" role="img" aria-label="CLI context chain: login, environment, cluster and API key"></svg></div>
+    <div class="cmds" id="cmds" aria-label="Commands to run"></div>
+    <div class="term" id="term" aria-live="polite"><div class="term-empty">Click a command above to run it.</div></div>
+    <div class="note">Output is shortened. Table layout and message wording vary slightly between CLI versions.</div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Two kinds of credentials</h2>
+  <div class="grid grid-2">
+    <div class="card">
+      <h3>Your login (control plane)</h3>
+      <p style="color:var(--muted);font-size:15px;margin:0 0 8px"><code>confluent login</code> gets a short-lived token for
+        <i>you</i>. The CLI uses it for management calls over HTTPS: environments, clusters, service accounts, role bindings,
+        and topic create / list / describe / delete through the Kafka REST API.</p>
+      <dl class="terms">
+        <dt>Cloud</dt><dd><code>confluent login [--save] [--organization …]</code>. Email and password or SSO</dd>
+        <dt>Platform</dt><dd><code>confluent login --url https://mds:8090 --certificate-authority-path ca.pem</code>. LDAP username and password</dd>
+        <dt>CI / scripts</dt><dd><code>CONFLUENT_CLOUD_EMAIL</code> / <code>CONFLUENT_CLOUD_PASSWORD</code>, or <code>CONFLUENT_PLATFORM_USERNAME</code> / <code>_PASSWORD</code> / <code>_MDS_URL</code></dd>
+      </dl>
+    </div>
+    <div class="card">
+      <h3>API key (data plane, Cloud)</h3>
+      <p style="color:var(--muted);font-size:15px;margin:0 0 8px">Producing and consuming use the Kafka protocol on port 9092. Every
+        Kafka client authenticates with an <b>API key and secret</b> (SASL/PLAIN over TLS) that belong to a user or a service
+        account. Your login token is not used for this.</p>
+      <dl class="terms">
+        <dt>Create</dt><dd><code>confluent api-key create --resource lkc-…</code>. The secret is shown <b>once</b></dd>
+        <dt>Select</dt><dd><code>confluent api-key use &lt;key&gt;</code>, or pass <code>--api-key</code> / <code>--api-secret</code></dd>
+        <dt>Java clients</dt><dd>The same key goes into <code>sasl.jaas.config</code> (Module 7)</dd>
+      </dl>
+    </div>
+  </div>
+
+  <h2>Command groups you will use</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Group</th><th>Example</th><th>Apache Kafka equivalent</th></tr></thead>
+      <tbody>
+        <tr><td><code>context</code></td><td><code>confluent context list</code> / <code>use</code></td><td>Different <code>--command-config</code> files</td></tr>
+        <tr><td><code>environment</code></td><td><code>confluent environment use env-…</code></td><td>None (a Cloud concept)</td></tr>
+        <tr><td><code>kafka cluster</code></td><td><code>confluent kafka cluster describe</code></td><td><code>kafka-metadata-quorum.sh</code>, <code>kafka-broker-api-versions.sh</code></td></tr>
+        <tr><td><code>kafka topic</code></td><td><code>create</code>, <code>list</code>, <code>describe</code>, <code>update</code>, <code>delete</code>, <code>produce</code>, <code>consume</code></td><td><code>kafka-topics.sh</code>, <code>kafka-configs.sh</code>, console producer/consumer</td></tr>
+        <tr><td><code>kafka consumer group</code></td><td><code>confluent kafka consumer group lag list billing-svc</code></td><td><code>kafka-consumer-groups.sh --describe</code></td></tr>
+        <tr><td><code>api-key</code>, <code>iam</code></td><td><code>confluent iam rbac role-binding create …</code></td><td><code>kafka-acls.sh</code> (Module 7)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Admin takeaway:</b> before any change, run <code>confluent context list</code> (or
+    <code>confluent environment list</code> and <code>confluent kafka cluster list</code>) and check the <code>*</code> marker.
+    The CLI remembers the last environment and cluster you used. A <code>topic delete</code> typed in the wrong context
+    deletes the topic in the wrong place.</div>
+  <div class="callout warn"><b>Security gotcha:</b> <code>confluent login --save</code> stores your credentials in
+    <code>~/.confluent/config.json</code> (and in the macOS keychain where available). An API secret pasted into a shell
+    stays in <code>~/.bash_history</code>. On the shared lab VMs, run <code>confluent logout</code> at the end of the day, and
+    don't commit config files with keys to git.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="03-cloud-vs-self-managed.html"><small>← Previous</small>Confluent Cloud vs self-managed Platform</a>
+    <a class="next" href="05-control-center.html"><small>Next →</small>Confluent Control Center walkthrough</a>
+  </div>
+</div>
+
+<script>
+const ENV = 'env-x7m2q', LKC = 'lkc-9p3kd', KEY = '7QW2XKD4MRL5P3ZA', MDS = 'https://cp-mds.lab.internal:8090', REST = 'https://cp-broker-1.lab.internal:8090/kafka';
+const svg = document.getElementById('svg'), log = document.getElementById('log'), term = document.getElementById('term'), cmds = document.getElementById('cmds');
+const scene = el('g', {}, svg);
+let S;
+function init(mode) {
+  S = { mode: mode || 'cloud', logged: false, env: null, cluster: null, keyMade: false, key: false, rest: false, made: false, ok: 0, err: 0 };
+  term.innerHTML = '<div class="term-empty">Click a command above to run it.</div>';
+}
+const LOGIN_ERR = ['Error: you must log in to Confluent Cloud with a username and password or log in to Confluent Platform with a URL to use this command', '', 'Suggestions:', '    Log in to Confluent Cloud with "confluent login".'];
+
+const CLOUD = [
+  ['confluent kafka topic list', () => {
+    if (!S.logged) return err(LOGIN_ERR, 'No login yet, so the CLI has no token.');
+    if (!S.cluster) return err(['Error: no Kafka cluster selected', '', 'Suggestions:', '    Choose a cluster with "confluent kafka cluster use &lt;id&gt;", or pass "--cluster".'],
+      S.env === ENV ? 'You chose the environment, but not the cluster.' : 'You are in the <code>default</code> environment, and no cluster is selected.');
+    return ok(['      Name      | Internal | Replication Factor | Partition Count', '----------------+----------+--------------------+------------------',
+      '  l07.cdr.voice  | false    |                  3 |               6', '  l07.cdr.sms    | false    |                  3 |               3'], 'Topic list works with your login token. No API key is needed for management calls.');
+  }],
+  ['confluent login --save', () => {
+    S.logged = true; S.env = 'env-d3f4lt'; S.cluster = null;
+    return ok(['Enter your Confluent Cloud credentials:', 'Email: l07@mobily-training.example', 'Password: ************',
+      'Logged in as "l07@mobily-training.example" for organization "1f3c…" ("Mobily Kafka Training").', 'Using environment "env-d3f4lt".'],
+      'Logged in. The CLI picked the organization\'s <b>default</b> environment, which is not your lab environment.');
+  }],
+  ['confluent environment list', () => {
+    if (!S.logged) return err(LOGIN_ERR);
+    return ok(['  Current |     ID     |  Name', '----------+------------+----------', `  ${S.env === 'env-d3f4lt' ? '*' : ' '}       | env-d3f4lt | default`, `  ${S.env === ENV ? '*' : ' '}       | ${ENV}  | env-l07`],
+      'The <code>*</code> marks the current environment. As EnvironmentAdmin of <code>env-l07</code>, you see it plus any environment you have a role in.');
+  }],
+  [`confluent environment use ${ENV}`, () => {
+    if (!S.logged) return err(LOGIN_ERR);
+    S.env = ENV; S.cluster = null;
+    return ok([`Using environment "${ENV}".`], 'Environment set. Changing the environment clears the selected cluster.');
+  }],
+  ['confluent kafka cluster list', () => {
+    if (!S.logged) return err(LOGIN_ERR);
+    if (S.env !== ENV) return ok(['  Current | ID | Name | Type | Cloud | Region | Availability | Status', '----------+----+------+------+-------+--------+--------------+---------'], 'No clusters here. Your cluster is in <code>env-l07</code>.');
+    return ok(['  Current |    ID     |   Name    | Type  | Cloud |    Region    | Availability | Status', '----------+-----------+-----------+-------+-------+--------------+--------------+---------',
+      `  ${S.cluster ? '*' : ' '}       | ${LKC} | l07-basic | BASIC | aws   | me-central-1 | single-zone  | UP`], 'One Basic cluster, as set up for each learner.');
+  }],
+  [`confluent kafka cluster use ${LKC}`, () => {
+    if (!S.logged) return err(LOGIN_ERR);
+    if (S.env !== ENV) return err([`Error: Kafka cluster "${LKC}" not found`], 'The cluster belongs to <code>env-l07</code>. Switch environment first.');
+    S.cluster = LKC;
+    return ok([`Set Kafka cluster "${LKC}" as the active cluster for environment "${ENV}".`], 'Cluster selected. Topic management commands now work.');
+  }],
+  ['confluent kafka topic produce l07.cdr.voice', () => {
+    if (!S.logged) return err(LOGIN_ERR);
+    if (!S.cluster) return err(['Error: no Kafka cluster selected'], 'Select the cluster first.');
+    if (!S.key) return err([`Error: no API key selected for resource "${LKC}"`, '', 'Suggestions:', `    Select an API key for resource "${LKC}" with "confluent api-key use &lt;API_KEY&gt;".`, '    To do so, you must have either already created or stored an API key for the resource.'],
+      'Producing uses the Kafka protocol, which authenticates with an <b>API key</b>, not your login token.');
+    return ok(['Starting Kafka Producer. Use Ctrl-C or Ctrl-D to exit.', '966512345678:{"msisdn":"966512345678","duration":214}', '^D'], 'Record produced with the API key over SASL_SSL.');
+  }],
+  [`confluent api-key create --resource ${LKC}`, () => {
+    if (!S.logged) return err(LOGIN_ERR);
+    if (S.env !== ENV) return err([`Error: Kafka cluster "${LKC}" not found`]);
+    S.keyMade = true;
+    return ok(['It may take a couple of minutes for the API key to be ready.', 'Save the API key and secret. The secret is not retrievable later.',
+      '+------------+------------------------------------------------------------------+', `| API Key    | ${KEY}                                                 |`,
+      '| API Secret | <span class="hl">cfltS3cr3t…(shown once)…</span>                                         |', '+------------+------------------------------------------------------------------+'],
+      'Key created, owned by your user. Copy the secret now, because the CLI can\'t show it again.');
+  }],
+  [`confluent api-key use ${KEY}`, () => {
+    if (!S.logged) return err(LOGIN_ERR);
+    if (!S.keyMade) return err([`Error: API key "${KEY}" not found`], 'Create the key first.');
+    S.key = true;
+    return ok([`Using API Key "${KEY}".`], 'The CLI now uses this key for produce and consume on this cluster.');
+  }],
+  ['confluent context list', () => ok(S.logged ? ['  Current |                          Name                          | Platform | Credential', '----------+--------------------------------------------------------+----------+-------------',
+    '  *       | login-l07@mobily-training.example-https://confluent.cloud | confluent.cloud | username-l07@…'] : ['  Current | Name | Platform | Credential', '----------+------+----------+-------------'], S.logged ? 'One context. Logging in to CP as well would add a second one, and <code>confluent context use</code> switches between them.' : 'No contexts until you log in.')],
+  ['confluent logout', () => {
+    if (!S.logged) return err(['Error: you are not logged in']);
+    S.logged = false; S.env = null; S.cluster = null; S.key = false;
+    return ok(['You are now logged out.'], 'Token removed. The saved context is kept, but you must log in again.');
+  }]
+];
+
+const CP = [
+  [`confluent kafka topic list --url ${REST}`, () => cpList()],
+  [`confluent login --url ${MDS} --certificate-authority-path /etc/kafka/secrets/lab-ca.pem`, () => {
+    S.logged = true;
+    return ok(['Enter your Confluent credentials:', 'Username: l07', 'Password: ************', 'Logged in as "l07".'], 'MDS checked your LDAP password and issued a token. Your RBAC role bindings decide what you can do with it.');
+  }],
+  ['confluent kafka topic list', () => {
+    if (!S.logged) return err(LOGIN_ERR);
+    if (!S.rest) return err(['Error: Kafka REST URL not found', '', 'Suggestions:', '    Use the "--url" flag or set the "CONFLUENT_REST_URL" environment variable.'], 'On Confluent Platform, topic commands go to a REST endpoint: Confluent Server\'s embedded API at <code>:8090/kafka</code>, or a REST Proxy.');
+    return cpList();
+  }],
+  [`export CONFLUENT_REST_URL=${REST}`, () => { S.rest = true; return ok([], 'Every topic command in this shell now uses the embedded REST API, so you no longer need <code>--url</code>.'); }],
+  ['confluent kafka topic create cdr.voice --partitions 6', () => {
+    if (!S.logged) return err(LOGIN_ERR);
+    if (!S.rest) return err(['Error: Kafka REST URL not found'], 'Set <code>--url</code> or <code>CONFLUENT_REST_URL</code> first.');
+    return err(['Error: Not authorized to access topics: [cdr.voice]'], 'Login worked. <b>Authorization</b> failed: your RBAC role covers only topics with the prefix <code>l07.</code>.');
+  }],
+  ['confluent kafka topic create l07.cdr.data --partitions 6 --replication-factor 3', () => {
+    if (!S.logged) return err(LOGIN_ERR);
+    if (!S.rest) return err(['Error: Kafka REST URL not found']);
+    S.made = true;
+    return ok(['Created topic "l07.cdr.data".'], 'Allowed by your ResourceOwner role on the topic prefix <code>l07.</code>. On Platform you can choose the replication factor.');
+  }],
+  ['confluent logout', () => {
+    if (!S.logged) return err(['Error: you are not logged in']);
+    S.logged = false;
+    return ok(['You are now logged out.'], 'Logged out of MDS.');
+  }]
+];
+function cpList() {
+  if (!S.logged) return err(LOGIN_ERR, 'There is no MDS token yet. <code>--url</code> only tells the CLI <i>where</i> to send the request, not who you are.');
+  return ok(['      Name', '-----------------', '  l07.cdr.voice', ...(S.made ? ['  l07.cdr.data'] : [])], 'RBAC filters the list: you only see topics you have a role on.');
+}
+
+function ok(lines, note) { S.ok++; return { lines, note, bad: false }; }
+function err(lines, note) { S.err++; return { lines, note, bad: true }; }
+
+function run(cmd, fn) {
+  const r = fn();
+  termRun(term, cmd, r.lines, r.bad);
+  if (r.note) logLine(log, (r.bad ? '<b style="color:var(--bad)">✗</b> ' : '<b style="color:var(--ok)">✓</b> ') + r.note, r.bad);
+  render();
+}
+
+function chain() {
+  if (S.mode === 'cloud') return [
+    ['Login', S.logged ? 'l07@…' : '—', S.logged], ['Environment', S.env ? (S.env === ENV ? 'env-l07' : 'default') : '—', S.env === ENV],
+    ['Kafka cluster', S.cluster || '—', !!S.cluster], ['API key', S.key ? KEY.slice(0, 8) + '…' : S.keyMade ? 'created, not used' : '—', S.key]];
+  return [['MDS login', S.logged ? 'l07 (LDAP)' : '—', S.logged], ['REST URL', S.rest ? ':8090/kafka' : 'pass --url', S.rest], ['RBAC role', 'Topic:l07.* (prefixed)', S.logged]];
+}
+
+function render() {
+  scene.innerHTML = '';
+  const c = chain(), w = S.mode === 'cloud' ? 200 : 260, gap = (860 - c.length * w) / (c.length - 1);
+  c.forEach(([name, val, on], i) => {
+    const x = 20 + i * (w + gap);
+    if (i) el('line', { x1: x - gap, y1: 70, x2: x, y2: 70, stroke: on ? 'var(--ok)' : 'var(--border)', 'stroke-width': 3 }, scene);
+    el('rect', { x, y: 30, width: w, height: 80, rx: 10, fill: on ? 'var(--ok-soft)' : 'var(--surface)', stroke: on ? 'var(--ok)' : 'var(--border)', 'stroke-width': 1.5 }, scene);
+    el('text', { x: x + 14, y: 58, 'font-weight': 700, fill: on ? 'var(--ok)' : 'var(--text)', text: (on ? '✓ ' : '○ ') + name }, scene);
+    el('text', { x: x + 14, y: 84, 'font-size': 12, class: 'mono muted', text: val }, scene);
+  });
+  const lanes = S.mode === 'cloud'
+    ? [['Management: environment, cluster, topic create/list/delete', S.logged && !!S.cluster, 'needs login + cluster'], ['Data: topic produce / consume', S.logged && !!S.cluster && S.key, 'needs login + cluster + API key']]
+    : [['Topic commands via REST (create/list/delete)', S.logged && S.rest, 'needs MDS login + REST URL'], ['Only on topics l07.*', S.logged, 'RBAC role binding']];
+  lanes.forEach(([t, on, need], i) => {
+    const y = 140 + i * 36;
+    el('circle', { cx: 32, cy: y, r: 7, fill: on ? 'var(--ok)' : 'var(--bad)' }, scene);
+    el('text', { x: 48, y: y + 5, 'font-size': 13, text: t }, scene);
+    el('text', { x: 880, y: y + 5, 'text-anchor': 'end', 'font-size': 12, fill: on ? 'var(--ok)' : 'var(--muted)', text: on ? 'works' : need }, scene);
+  });
+  const st = document.getElementById('state');
+  st.textContent = `${S.ok} ok · ${S.err} errors`;
+  st.className = 'pill ' + (S.err ? 'warn' : 'ok');
+}
+
+function buildCmds() {
+  cmds.innerHTML = '';
+  (S.mode === 'cloud' ? CLOUD : CP).forEach(([cmd, fn]) => {
+    const b = document.createElement('button');
+    b.textContent = cmd.replace(/ --certificate-authority-path \S+/, ' --certificate-authority-path …');
+    b.onclick = () => run(cmd, fn);
+    cmds.appendChild(b);
+  });
+}
+
+wireSeg('modeSeg', v => {
+  init(v); buildCmds(); render();
+  logLine(log, v === 'cloud' ? 'Target: Confluent Cloud. Context = login → environment → cluster (→ API key).' : 'Target: Confluent Platform. Context = MDS login + REST URL. RBAC limits what you can touch.', true);
+});
+document.getElementById('reset').onclick = () => { init(S.mode); buildCmds(); render(); logLine(log, 'Reset.'); };
+init('cloud'); buildCmds(); render();
+logLine(log, 'Start with the first command, <code>topic list</code>, to see why the context matters.', true);
+
+renderQuiz('quiz', [
+  { q: 'You logged in with <code>confluent login</code>, and <code>confluent kafka topic list</code> fails with "no Kafka cluster selected". What is missing?',
+    options: ['An API key for the cluster',
+      'A restart of the CLI',
+      'The environment and cluster context: <code>confluent environment use env-…</code> then <code>confluent kafka cluster use lkc-…</code>',
+      'Schema Registry credentials'],
+    answer: 2,
+    explain: 'Login only proves who you are, and the CLI starts in the organization\'s default environment. Topic commands need an active cluster in the current environment, or <code>--environment</code> and <code>--cluster</code> flags.' },
+  { q: 'Why does <code>confluent kafka topic produce</code> on Cloud need an API key when <code>topic create</code> did not?',
+    options: ['Producing is a paid feature',
+      'Produce and consume use the Kafka protocol, which authenticates with an API key and secret (SASL/PLAIN). Topic create goes through the REST API with your login token.',
+      'API keys are only needed for topics with more than 3 partitions',
+      'Because <code>topic create</code> secretly creates an API key'],
+    answer: 1,
+    explain: 'There are two credential types: a login token for management (control plane), and API keys for Kafka clients (data plane). Your Java producers in Module 4 would need the same kind of key, usually one owned by a service account rather than a person.' },
+  { q: 'On Confluent Platform, what does <code>confluent login --url https://cp-mds:8090</code> authenticate against?',
+    options: ['The Metadata Service (MDS) in Confluent Server, which checks your LDAP credentials and issues a token. RBAC decides what you may do.',
+      'Confluent Cloud, through a proxy',
+      'ZooKeeper',
+      'The Control Center web server'],
+    answer: 0,
+    explain: 'MDS is the authentication and RBAC service of self-managed Confluent Platform (Topic 1). Topic commands then need a REST endpoint (<code>--url …:8090/kafka</code> or <code>CONFLUENT_REST_URL</code>), and your role bindings decide which topics you can touch.' },
+  { q: 'As <code>l07</code> on the shared Platform cluster, you run <code>confluent kafka topic create cdr.voice</code> and get "Not authorized to access topics: [cdr.voice]". Your login worked. What do you do?',
+    options: ['Log in again with <code>--save</code>',
+      'Use <code>--force</code>',
+      'Switch to Confluent Cloud, which has no permissions',
+      'Name the topic with your prefix, <code>l07.cdr.voice</code>. Your RBAC role binding covers only <code>Topic:l07.*</code>.'],
+    answer: 3,
+    explain: 'Authentication succeeded, but authorization failed. On the shared cluster, every learner has a role on their own topic prefix. That is the same separation you used with <code>lNN.*</code> topics and prefixed ACLs on the Apache cluster.' },
+  { q: 'You just ran <code>confluent api-key create</code> and closed the terminal without copying the secret. What now?',
+    options: ['Run <code>confluent api-key describe</code> to show the secret',
+      'Find it in Control Center',
+      'Create a new key, and delete the old one with <code>confluent api-key delete</code>. Confluent never shows a secret again after creation.',
+      'Use the key without a secret'],
+    answer: 2,
+    explain: 'The secret is shown once and is not stored in a form you can retrieve. Create a replacement and delete the unused key, so that you don\'t leave forgotten credentials lying around. Module 7 covers key rotation.' }
+]);
+</script>
+</body>
+</html>

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka Module 6 Visualizations</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .topics { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: 24px; }
+  .topic { display: block; text-decoration: none; color: var(--text); transition: border-color .15s, transform .15s; }
+  .topic:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .topic .num { font-family: var(--mono); color: var(--accent); font-size: 13px; font-weight: 600; }
+  .topic h3 { margin: 6px 0; }
+  .topic p { margin: 0 0 10px; color: var(--muted); font-size: 15px; }
+  .topic .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  ol.hands { margin: 0; padding-left: 20px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <span>Apache Kafka &amp; Confluent Kafka Administration</span>
+    <div class="nav"><a href="../module-05/index.html">← Module 5</a><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Module 6</div>
+  <h1>Introducing Confluent Kafka: Platform, Architecture &amp; Administration Basics</h1>
+  <p class="lede">Interactive visualizations for each Module 6 topic. Each page has a hands-on simulation you can
+    play with, followed by a 5-question self-quiz with explanations.</p>
+  <p style="color:var(--muted);font-size:14px;margin:4px 0 0"><b style="color:var(--text)">Objective:</b> Transition core
+    Kafka administration skills to the Confluent Kafka platform.</p>
+
+  <div class="topics">
+    <a class="card topic" href="01-platform-architecture.html">
+      <div class="num">01</div><h3>Confluent Platform overview &amp; architecture</h3>
+      <p>Click each Confluent Platform component to see its job, port and licence, then send a CDR through Connect, Schema Registry, the brokers and ksqlDB.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="02-confluent-vs-apache.html">
+      <div class="num">02</div><h3>Confluent vs Apache Kafka: features &amp; licensing</h3>
+      <p>Tick the features an operator's platform needs and see which licence each one requires: Apache 2.0, Confluent Community or Enterprise.</p>
+      <div class="tags"><span class="pill">explorer</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="03-cloud-vs-self-managed.html">
+      <div class="num">03</div><h3>Confluent Cloud vs self-managed Platform</h3>
+      <p>Switch between deployment models and see who owns each layer, from disks to topic configs. Then fire 2 a.m. incidents and see who gets paged.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="04-confluent-cli-auth.html">
+      <div class="num">04</div><h3>Confluent CLI overview &amp; authentication</h3>
+      <p>Log in to Confluent Cloud or to Confluent Platform's MDS, choose an environment and cluster, add an API key, and see which commands fail at each step.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="05-control-center.html">
+      <div class="num">05</div><h3>Confluent Control Center walkthrough</h3>
+      <p>Click through a model of Control Center: brokers, topics, consumers and cluster settings. Break a broker and find the problem from the UI.</p>
+      <div class="tags"><span class="pill">explorer</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="06-topic-management.html">
+      <div class="num">06</div><h3>Topic management via CLI &amp; Control Center</h3>
+      <p>Create, describe, update and delete topics with <code>confluent kafka topic</code> or the Control Center form. Both change the same cluster, so you can see how each one maps to the other.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+  </div>
+
+  <h2>Hands-on for this module</h2>
+  <div class="card">
+    <ol class="hands">
+      <li>Access and explore the shared Confluent Kafka cluster / Confluent Cloud console</li>
+      <li>Topic create / list / describe / delete on the shared Confluent Kafka cluster via CLI and Control Center</li>
+    </ol>
+  </div>
+</div>
+</body>
+</html>
