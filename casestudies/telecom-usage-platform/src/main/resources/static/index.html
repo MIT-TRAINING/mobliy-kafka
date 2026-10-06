@@ -210,7 +210,9 @@ function log(title, body) {
   $('log').textContent = `[${t}] ${title}\n${typeof body === 'string' ? body : JSON.stringify(body, null, 2)}\n\n` + $('log').textContent;
 }
 async function call(path, method='GET') {
-  const r = await fetch(path, {method});
+  // Relative URL ('api/...', not '/api/...') so the page also works behind a path
+  // prefix, e.g. the code-server proxy on the lab VMs: https://<vm>/proxy/8090/
+  const r = await fetch(path.replace(/^\//, ''), {method});
   const text = await r.text();
   let body; try { body = JSON.parse(text); } catch { body = text; }
   if (!r.ok) throw Object.assign(new Error(body.detail || text), {body, status: r.status, title: body.title});

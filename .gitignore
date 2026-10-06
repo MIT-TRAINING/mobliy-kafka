@@ -59,3 +59,31 @@ node_modules/
 .idea/
 *.swp
 *.swo
+
+# Java / Spring Boot (Maven & Gradle)
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.class
+.gradle/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE project settings (Eclipse / IntelliJ)
+*.iml
+*.ipr
+*.iws
+.classpath
+.project
+.settings/
+bin/
+
+# Terraform (infra/terraform) — state contains generated VM passwords
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+infra/secrets/
+
+# shared Kafka cluster stack
+infra/cluster/secrets/
+infra/cluster/spike/work/
