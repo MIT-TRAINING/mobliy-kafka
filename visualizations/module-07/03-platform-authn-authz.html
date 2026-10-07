@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Platform AuthN &amp; AuthZ</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 7 · Administering Kafka Security</a>
+    <div class="nav"><span>3 / 5</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 3</div>
+  <h1>Confluent Platform authentication &amp; authorization</h1>
+  <p class="lede">Every request to the shared Platform cluster passes through the same checkpoints. First the
+    <b>TLS</b> handshake on listener <code>CLIENT :9092</code>, then <b>SASL/PLAIN</b> with your LDAP password (authentication),
+    then the <b>Confluent Server Authorizer</b>, which checks RBAC role bindings and ACLs (authorization). Pick a request and
+    see which checkpoint stops it. Then switch LDAP off, or add an ACL, and send the same requests again.</p>
+
+  <div class="card">
+    <div class="controls">
+      <label class="ctl-label"><input type="checkbox" id="ldapDown"> LDAP server down</label>
+      <label class="ctl-label"><input type="checkbox" id="acl"> ACL: allow <code>User:l07</code> Create on <code>Topic:cdr.voice</code></label>
+      <span class="pill" id="state"></span>
+    </div>
+    <div class="scen" id="scen" aria-label="Requests to send"></div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 320" role="img" aria-label="Request pipeline: client, TLS, SASL with LDAP, principal, authorizer with RBAC and ACLs, resource and audit log"></svg></div>
+    <pre class="code" id="cfg"></pre>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Authentication: who are you?</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Mechanism</th><th>Identity comes from</th><th>On the shared CP cluster</th></tr></thead>
+      <tbody>
+        <tr><td>mTLS (<code>ssl.client.auth=required</code>)</td><td>The client certificate's subject</td><td>Controllers and the <code>BROKER</code> listener (:9091): brokers prove themselves with host certificates</td></tr>
+        <tr><td>SASL/PLAIN + LDAP callback</td><td>LDAP bind with username and password</td><td>The <code>CLIENT</code> listener (:9092), over TLS: learners <code>l01</code>…<code>l18</code> and <code>trainer</code></td></tr>
+        <tr><td>SASL/OAUTHBEARER</td><td>A token from MDS or an OAuth/OIDC provider</td><td>Platform components such as Schema Registry, Connect and Control Center use MDS-issued tokens</td></tr>
+        <tr><td>SASL/SCRAM-SHA-512</td><td>Credentials stored in the cluster metadata</td><td>Not used here. It is what the shared <b>Apache</b> cluster uses (Topic 5)</td></tr>
+        <tr><td>SASL/GSSAPI (Kerberos)</td><td>A Kerberos ticket</td><td>Not used. Common in Active Directory shops</td></tr>
+        <tr><td>MDS login (HTTPS :8090)</td><td>LDAP username and password, exchanged for a token</td><td><code>confluent login --url $MDS_URL</code>, Control Center sign-in</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>Authorization: what may you do?</h2>
+  <div class="grid grid-3">
+    <div class="card"><h3 style="margin-top:0"><code>super.users</code></h3><p style="color:var(--muted);font-size:15px;margin:0">Broker config.
+      These principals skip every check. Keep the list to brokers and the MDS super user, never people.</p></div>
+    <div class="card"><h3 style="margin-top:0">RBAC via MDS</h3><p style="color:var(--muted);font-size:15px;margin:0">Role bindings for users and
+      LDAP groups (<code>User:l07</code>, <code>Group:kafka-ops</code>). They are stored in the <code>_confluent-metadata-auth</code> topic and cached on every broker.
+      Roles include <code>SystemAdmin</code>, <code>ClusterAdmin</code>, <code>UserAdmin</code>, <code>SecurityAdmin</code>, <code>AuditAdmin</code>, <code>Operator</code> and the resource roles.</p></div>
+    <div class="card"><h3 style="margin-top:0">ACLs</h3><p style="color:var(--muted);font-size:15px;margin:0">Still supported next to RBAC, and needed for a few
+      things RBAC doesn't cover. On the shared cluster, learners get <code>Describe</code> on the cluster as an ACL. A matching <code>DENY</code> ACL always wins.</p></div>
+  </div>
+  <div class="callout" style="margin-top:16px"><b>Admin takeaway:</b> read the error to find the checkpoint. <code>PKIX path building failed</code>
+    → the client doesn't trust the CA. <code>disconnected</code> right after connecting → wrong <code>security.protocol</code>.
+    <code>SaslAuthenticationException</code> → bad credentials or LDAP down. <code>*_AUTHORIZATION_FAILED</code> → login worked, so fix the role binding.</div>
+  <div class="callout warn"><b>Production trap:</b> with the LDAP callback, <b>new</b> logins depend on LDAP. If LDAP is down, connected clients
+    keep running, but every restart and new consumer fails to authenticate. Run LDAP highly available, and use LDAPS. The lab's
+    <code>ldap://…:389</code> stays inside a private subnet, which is acceptable for a lab only.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="02-api-keys-secrets.html"><small>← Previous</small>API keys &amp; secrets management</a>
+    <a class="next" href="04-encryption-network.html"><small>Next →</small>Encryption &amp; network security</a>
+  </div>
+</div>
+
+<script>
+const SC = [
+  { label: 'l07 creates topic l07.cdr.sms', user: 'l07', op: 'Create', res: 'l07.cdr.sms', method: 'kafka.CreateTopics' },
+  { label: 'l07 creates topic cdr.voice', user: 'l07', op: 'Create', res: 'cdr.voice', method: 'kafka.CreateTopics' },
+  { label: 'l07 produces to l07.cdr.voice', user: 'l07', op: 'Write', res: 'l07.cdr.voice' },
+  { label: 'l07 with a wrong password', user: 'l07', op: 'Write', res: 'l07.cdr.voice', badPw: true },
+  { label: 'Client set to SASL_PLAINTEXT', user: 'l07', op: 'Write', res: 'l07.cdr.voice', proto: 'SASL_PLAINTEXT' },
+  { label: 'Client without cp-ca.pem', user: 'l07', op: 'Write', res: 'l07.cdr.voice', noCa: true },
+  { label: 'trainer deletes l07.cdr.sms', user: 'trainer', op: 'Delete', res: 'l07.cdr.sms', method: 'kafka.DeleteTopics' }
+];
+const ST = [
+  { x: 14, t: 'Client', s: 'lab VM' }, { x: 162, t: 'TLS', s: 'CLIENT :9092' }, { x: 310, t: 'SASL/PLAIN', s: 'LDAP bind' },
+  { x: 458, t: 'Principal', s: '' }, { x: 606, t: 'Authorizer', s: 'RBAC → ACLs' }, { x: 754, t: 'Topic', s: '' }
+];
+const svg = document.getElementById('svg'), log = document.getElementById('log');
+const scene = el('g', {}, svg), fx = el('g', {}, svg);
+const S = { cur: 0, stage: [], why: '', ok: 0, denied: 0, audit: [], busy: false };
+
+function evaluate(sc) {
+  const ldapDown = document.getElementById('ldapDown').checked, acl = document.getElementById('acl').checked;
+  if (sc.proto === 'SASL_PLAINTEXT') return { fail: 1, client: 'WARN Bootstrap broker cp-kafka.lab.internal:9092 (id: -1 rack: null) disconnected', why: 'The broker expects a TLS ClientHello, but the client opened with plaintext SASL. The broker logs <code>Failed authentication … (SSL handshake failed)</code>, and the client keeps reconnecting.' };
+  if (sc.noCa) return { fail: 1, client: 'javax.net.ssl.SSLHandshakeException: PKIX path building failed … unable to find valid certification path to requested target', why: 'The broker\'s certificate is signed by the course CA, which the client doesn\'t trust. Set <code>ssl.truststore.type=PEM</code> and <code>ssl.truststore.location=…/cp-ca.pem</code>.' };
+  if (ldapDown) return { fail: 2, client: 'org.apache.kafka.common.errors.SaslAuthenticationException: Authentication failed', why: 'The broker could not reach LDAP to check the password, so no <b>new</b> login succeeds. Clients that were already connected keep working.' };
+  if (sc.badPw) return { fail: 2, client: 'SaslAuthenticationException: Authentication failed during authentication due to invalid credentials with SASL mechanism PLAIN', why: 'The LDAP bind for <code>uid=l07</code> was rejected. This is authentication, so no role binding can fix it.' };
+  if (sc.user === 'trainer') return { via: 'role binding <b>SystemAdmin</b> on the cluster' };
+  if (sc.res.startsWith('l07.')) return { via: 'role binding <b>ResourceOwner</b> on <code>Topic:l07.</code> (prefix)' };
+  if (acl && sc.res === 'cdr.voice' && sc.op === 'Create') return { via: 'ACL <b>ALLOW User:l07 Create Topic:cdr.voice</b>. No role binding matched, so the authorizer checked the ACLs next' };
+  return { fail: 4, client: 'TOPIC_AUTHORIZATION_FAILED: Not authorized to access topics: [' + sc.res + ']', why: `Authentication worked. No role binding or ACL gives <code>User:${sc.user}</code> ${sc.op} on <code>${sc.res}</code>.` };
+}
+
+function config(sc) {
+  return `bootstrap.servers=cp-kafka.lab.internal:9092
+security.protocol=${sc.proto || 'SASL_SSL'}
+sasl.mechanism=PLAIN
+sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required \\
+  username="${sc.user}" password="${sc.badPw ? 'wrong-password' : '••••••••'}";` +
+    (sc.noCa ? '\n# ssl.truststore.* missing: the JVM default truststore does not know the course CA'
+      : sc.proto ? '' : '\nssl.truststore.type=PEM\nssl.truststore.location=/home/learner/kafka/cp-ca.pem');
+}
+
+function render() {
+  scene.innerHTML = '';
+  const sc = SC[S.cur];
+  ST.forEach((st, i) => {
+    const state = S.stage[i];
+    const fill = state === 'ok' ? 'var(--ok-soft)' : state === 'bad' ? 'var(--bad-soft)' : 'var(--surface)';
+    const stroke = state === 'ok' ? 'var(--ok)' : state === 'bad' ? 'var(--bad)' : 'var(--border)';
+    if (i) el('line', { x1: st.x - 18, y1: 92, x2: st.x, y2: 92, stroke: 'var(--border)', 'stroke-width': 2 }, scene);
+    el('rect', { x: st.x, y: 52, width: 130, height: 80, rx: 10, fill, stroke, 'stroke-width': 1.8 }, scene);
+    el('text', { x: st.x + 12, y: 78, 'font-weight': 700, 'font-size': 14, text: st.t }, scene);
+    const sub = i === 3 ? 'User:' + sc.user : i === 5 ? sc.res : i === 0 ? (sc.proto || 'SASL_SSL') : st.s;
+    el('text', { x: st.x + 12, y: 100, 'font-size': 11, class: 'mono muted', text: sub }, scene);
+    if (state === 'bad') el('text', { x: st.x + 118, y: 78, 'text-anchor': 'end', 'font-size': 16, fill: 'var(--bad)', text: '✗' }, scene);
+    if (state === 'ok') el('text', { x: st.x + 118, y: 78, 'text-anchor': 'end', 'font-size': 16, fill: 'var(--ok)', text: '✓' }, scene);
+  });
+  el('text', { x: 14, y: 30, 'font-size': 13, 'font-weight': 600, fill: 'var(--muted)', text: `${sc.label} · operation ${sc.op}` }, scene);
+  // LDAP under SASL, MDS under authorizer, audit under topic
+  const ldapDown = document.getElementById('ldapDown').checked;
+  el('line', { x1: 375, y1: 132, x2: 375, y2: 182, stroke: ldapDown ? 'var(--bad)' : 'var(--border)', 'stroke-width': 2, 'stroke-dasharray': ldapDown ? '5 4' : '' }, scene);
+  el('rect', { x: 310, y: 182, width: 130, height: 60, rx: 10, fill: ldapDown ? 'var(--bad-soft)' : 'var(--surface-2)', stroke: ldapDown ? 'var(--bad)' : 'var(--border)' }, scene);
+  el('text', { x: 322, y: 206, 'font-weight': 600, 'font-size': 13, text: 'OpenLDAP' }, scene);
+  el('text', { x: 322, y: 226, 'font-size': 11, class: 'mono muted', text: ldapDown ? 'unreachable' : 'cp-ldap:389' }, scene);
+  el('line', { x1: 671, y1: 132, x2: 671, y2: 182, stroke: 'var(--border)', 'stroke-width': 2 }, scene);
+  el('rect', { x: 576, y: 182, width: 190, height: 60, rx: 10, fill: 'var(--surface-2)', stroke: 'var(--border)' }, scene);
+  el('text', { x: 588, y: 204, 'font-weight': 600, 'font-size': 13, text: 'MDS role bindings' }, scene);
+  el('text', { x: 588, y: 222, 'font-size': 11, class: 'mono muted', text: 'l07 → ResourceOwner l07.*' }, scene);
+  el('text', { x: 588, y: 236, 'font-size': 11, class: 'mono muted', text: document.getElementById('acl').checked ? '+ ACL l07 Create cdr.voice' : 'trainer → SystemAdmin' }, scene);
+  el('line', { x1: 819, y1: 132, x2: 819, y2: 182, stroke: 'var(--border)', 'stroke-width': 2, 'stroke-dasharray': '3 4' }, scene);
+  el('rect', { x: 776, y: 182, width: 110, height: 60, rx: 10, fill: 'var(--warn-soft)', stroke: 'var(--warn)' }, scene);
+  el('text', { x: 786, y: 204, 'font-weight': 600, 'font-size': 12, text: 'Audit log' }, scene);
+  el('text', { x: 786, y: 222, 'font-size': 10, class: 'mono muted', text: 'confluent-audit-' }, scene);
+  el('text', { x: 786, y: 235, 'font-size': 10, class: 'mono muted', text: 'log-events' }, scene);
+  S.audit.slice(0, 3).forEach((a, i) => el('text', { x: 14, y: 270 + i * 18, 'font-size': 11, class: 'mono', fill: a.g ? 'var(--ok)' : 'var(--bad)',
+    text: `audit: methodName=${a.m} principal=User:${a.u} resource=topic=${a.r} granted=${a.g}` }, scene));
+  if (!S.audit.length) el('text', { x: 14, y: 270, 'font-size': 11, class: 'muted', text: 'Audit events for management operations (create, delete, alter) appear here.' }, scene);
+  document.getElementById('cfg').textContent = config(sc);
+  const st = document.getElementById('state');
+  st.textContent = `${S.ok} allowed · ${S.denied} stopped`;
+  st.className = 'pill ' + (S.denied ? 'warn' : 'ok');
+}
+
+async function send(i) {
+  if (S.busy) return;
+  S.busy = true; S.cur = i; S.stage = [];
+  document.querySelectorAll('#scen button').forEach((b, k) => b.setAttribute('aria-pressed', k === i));
+  const sc = SC[i], r = evaluate(sc), last = r.fail === undefined ? 5 : r.fail;
+  render();
+  const tok = el('circle', { r: 9, fill: 'var(--accent)' }, fx);
+  for (let k = 0; k <= last; k++) {
+    await tween(tok, (k ? ST[k - 1].x : ST[0].x) + 65, 142, ST[k].x + 65, 142, k ? 380 : 1);
+    S.stage[k] = k === r.fail ? 'bad' : 'ok';
+    render();
+  }
+  tok.remove();
+  if (sc.method && (r.fail === undefined || r.fail === 4)) S.audit.unshift({ m: sc.method, u: sc.user, r: sc.res, g: r.fail === undefined });
+  if (r.fail === undefined) { S.ok++; logLine(log, `<b style="color:var(--ok)">✓ ${sc.label}</b>: allowed by ${r.via}.${sc.method ? '' : ' Allowed produce and consume are not audit-logged by default, because they would flood the log.'}`, true); }
+  else { S.denied++; logLine(log, `<b style="color:var(--bad)">✗ ${sc.label}</b>, stopped at <b>${ST[r.fail].t}</b>: <code>${r.client}</code><br>${r.why}`, true); }
+  render();
+  S.busy = false;
+}
+
+SC.forEach((sc, i) => {
+  const b = document.createElement('button');
+  b.textContent = sc.label; b.setAttribute('aria-pressed', i === 0);
+  b.onclick = () => send(i);
+  document.getElementById('scen').appendChild(b);
+});
+document.getElementById('ldapDown').onchange = e => { logLine(log, e.target.checked ? 'LDAP is unreachable. Send a request to see which checkpoint fails.' : 'LDAP is back.', true); render(); };
+document.getElementById('acl').onchange = e => {
+  logLine(log, e.target.checked ? 'Added: <code>kafka-acls.sh --bootstrap-server $CP --command-config admin.properties --add --allow-principal User:l07 --operation Create --topic cdr.voice</code>' : 'ACL removed.', true);
+  render();
+};
+render();
+logLine(log, 'Send <b>l07 creates topic l07.cdr.sms</b> first, then try the requests that fail.', true);
+
+renderQuiz('quiz', [
+  { q: 'A Java client on a lab VM fails with <code>SSLHandshakeException: PKIX path building failed</code>. What do you fix?',
+    options: ['The LDAP password',
+      'The client\'s truststore: point <code>ssl.truststore.location</code> at the course CA (<code>cp-ca.pem</code>, type <code>PEM</code>)',
+      'The RBAC role binding',
+      '<code>security.protocol</code>, which should be <code>SASL_PLAINTEXT</code>'],
+    answer: 1,
+    explain: 'PKIX errors come from the TLS handshake, before SASL. The client doesn\'t trust the CA that signed the broker\'s certificate. Switching to plaintext is not an option: the <code>CLIENT</code> listener only speaks TLS.' },
+  { q: 'Which pair correctly separates an <i>authentication</i> failure from an <i>authorization</i> failure?',
+    options: ['<code>SaslAuthenticationException</code> = you aren\'t who you claim to be; <code>TOPIC_AUTHORIZATION_FAILED</code> = you are known but lack a role binding or ACL',
+      'Both mean a wrong password',
+      '<code>TOPIC_AUTHORIZATION_FAILED</code> = wrong password; <code>SaslAuthenticationException</code> = missing role',
+      'Both mean the topic does not exist'],
+    answer: 0,
+    explain: 'Authentication (TLS, then SASL) establishes the principal, <code>User:l07</code>. Only after that does the authorizer check what that principal may do. Fixing a role binding can never help with a <code>SaslAuthenticationException</code>.' },
+  { q: 'LDAP goes down at 09:00. What happens on the shared Platform cluster?',
+    options: ['All traffic stops at once',
+      'Nothing: LDAP is only used by Control Center',
+      'Brokers shut down to protect data',
+      'Clients that are already connected keep working, but new connections and restarts fail to authenticate'],
+    answer: 3,
+    explain: 'With the LDAP callback handler, the password is checked against LDAP at login. Role bindings are cached on the brokers, so authorization for existing sessions continues. Any client that reconnects after a rebalance, a deploy or a broker restart is locked out until LDAP is back.' },
+  { q: 'On Confluent Platform, where do RBAC role bindings live, and who enforces them?',
+    options: ['In ZooKeeper, enforced by Control Center',
+      'In LDAP, enforced by the client library',
+      'In MDS, stored in the <code>_confluent-metadata-auth</code> topic, and enforced on every request by the Confluent Server Authorizer on each broker',
+      'In each topic\'s configuration'],
+    answer: 2,
+    explain: 'LDAP provides identities and group membership. MDS keeps the role bindings in an internal topic. Each broker caches them and authorizes every request locally, so a quick check does not need a call to MDS or LDAP.' },
+  { q: '<code>l07</code> has no role binding on <code>cdr.voice</code>, but an ACL allows <code>User:l07</code> Create on it. Can <code>l07</code> create the topic?',
+    options: ['No. When RBAC is enabled, ACLs are ignored.',
+      'Yes. The Confluent Server Authorizer accepts a grant from either RBAC or ACLs, unless a <code>DENY</code> ACL matches.',
+      'Only through Control Center',
+      'Only after MDS restarts'],
+    answer: 1,
+    explain: 'With RBAC enabled, the authorizer consults both RBAC and ACLs. That is how the shared cluster gives learners cluster <code>Describe</code>. Audit the two together: a forgotten ACL is a permission that no role binding listing will show you.' }
+]);
+</script>
+</body>
+</html>

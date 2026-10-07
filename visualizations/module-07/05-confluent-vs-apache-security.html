@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Confluent vs Apache Security</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .cmdcol h3 { margin: 0 0 6px; font-size: 15px; }
+  .cmdcol pre.code { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 11.5px; }
+  .cmdcol p { margin: 8px 0 0; font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 7 · Administering Kafka Security</a>
+    <div class="nav"><span>5 / 5</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 5</div>
+  <h1>Confluent vs Apache Kafka: ACLs, SASL &amp; SSL</h1>
+  <p class="lede">Apache Kafka builds security from separate parts: SSL listeners, SASL users and ACLs. Confluent adds
+    identity sources (LDAP, service accounts), <b>role bindings</b> that bundle many ACLs into one role, and audit logs.
+    Pick a real requirement and compare the three implementations. Watch how many statements each one needs, and move the
+    team-size slider on requirement 3.</p>
+
+  <div class="card">
+    <div class="scen" id="reqs" aria-label="Security requirements"></div>
+    <div class="sliders" style="margin-top:12px">
+      <label><span>Ops team members (requirement 3) <output id="nOut">5</output></span><input type="range" id="n" min="1" max="20" value="5"></label>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 300" role="img" aria-label="Number of statements needed on Apache Kafka, Confluent Platform and Confluent Cloud"></svg></div>
+    <div class="grid grid-3" id="cmds"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>The same ideas, different names</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Concept</th><th>Apache Kafka</th><th>Confluent Platform</th><th>Confluent Cloud</th></tr></thead>
+      <tbody>
+        <tr><td>Identity</td><td>SCRAM user, certificate DN, Kerberos principal</td><td>LDAP user and LDAP group via MDS</td><td>User, service account, OAuth identity pool</td></tr>
+        <tr><td>Credential</td><td>Password (SCRAM/PLAIN), client certificate</td><td>LDAP password, MDS token, certificate</td><td>API key and secret, OAuth token</td></tr>
+        <tr><td>Permission unit</td><td>ACL: principal + operation + resource + pattern + allow/deny + host</td><td>Role binding, plus ACLs</td><td>Role binding, plus ACLs (<code>confluent kafka acl</code>)</td></tr>
+        <tr><td>Explicit deny</td><td>Yes, <code>--deny-principal</code></td><td>ACLs only, no deny roles</td><td>ACLs only, no deny roles</td></tr>
+        <tr><td>Groups</td><td>Not built in: every ACL names a user</td><td><code>Group:kafka-ops</code> from LDAP</td><td>SSO group mappings</td></tr>
+        <tr><td>Delegation</td><td>Changing ACLs needs <code>Alter</code> on the cluster</td><td><code>ResourceOwner</code> can grant roles on its own resources</td><td>Same as Platform</td></tr>
+        <tr><td>Audit</td><td><code>kafka.authorizer.logger</code> in log4j</td><td><code>confluent-audit-log-events</code> topic</td><td>A separate audit log cluster (<code>confluent audit-log describe</code>)</td></tr>
+        <tr><td>Wire encryption</td><td>You configure <code>SSL</code> / <code>SASL_SSL</code> listeners</td><td>You configure it; cp-ansible automates it</td><td>Always TLS</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Migration tip:</b> moving from Apache to Confluent doesn't require you to throw away ACLs. Confluent Server honours them
+    next to RBAC. Translate the common patterns first: <code>--consumer</code> → two <code>DeveloperRead</code> bindings,
+    <code>--producer</code> → <code>DeveloperWrite</code>, and prefixed <code>All</code> → <code>ResourceOwner</code> with <code>--prefix</code>. Then list
+    what is left with <code>kafka-acls.sh --list</code>.</div>
+  <div class="callout warn"><b>MQ admin gotcha:</b> unlike MQ's <code>setmqaut</code> with a group, plain Apache Kafka ACLs cannot use your OS or LDAP
+    groups. Each person needs their own ACLs, so 20 on-call engineers mean 20 sets. That growth, and forgotten ACLs after people leave, is
+    the main reason teams adopt group-based RBAC.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="04-encryption-network.html"><small>← Previous</small>Encryption &amp; network security</a>
+    <a class="next" href="index.html"><small>Done →</small>Back to Module 7 overview</a>
+  </div>
+</div>
+
+<script>
+const AK = 'kafka-acls.sh --bootstrap-server $BS --command-config admin.properties';
+const CPB = 'confluent iam rbac role-binding create';
+const CCX = '--environment env-x7m2q --cloud-cluster lkc-9p3kd --kafka-cluster lkc-9p3kd';
+const REQ = [
+  { t: '1 · billing-svc consumes cdr.voice', n: () => [3, 2, 2], k: ['ACL', 'binding', 'binding'],
+    a: `${AK} --add \\\n  --allow-principal User:billing-svc \\\n  --consumer --topic cdr.voice --group billing-svc`,
+    an: '<code>--consumer</code> expands to 3 ACLs: Read and Describe on the topic, Read on the group.',
+    p: `${CPB} --principal User:billing-svc \\\n  --role DeveloperRead --resource Topic:cdr.voice --kafka-cluster $CP_ID\n${CPB} --principal User:billing-svc \\\n  --role DeveloperRead --resource Group:billing-svc --kafka-cluster $CP_ID`,
+    c: `${CPB} --principal User:sa-r7k2p9 \\\n  --role DeveloperRead ${CCX} --resource Topic:cdr.voice\n# same again with --resource Group:billing-svc` },
+  { t: '2 · cdr-collector produces to cdr.voice', n: () => [3, 1, 1], k: ['ACL', 'binding', 'binding'],
+    a: `${AK} --add \\\n  --allow-principal User:cdr-collector \\\n  --producer --topic cdr.voice`,
+    an: '<code>--producer</code> adds Write, Describe and Create on the topic. Create is more than most producers need.',
+    p: `${CPB} --principal User:cdr-collector \\\n  --role DeveloperWrite --resource Topic:cdr.voice --kafka-cluster $CP_ID`,
+    c: `${CPB} --principal User:sa-k4m8q1 \\\n  --role DeveloperWrite ${CCX} --resource Topic:cdr.voice` },
+  { t: '3 · Ops team can describe everything, read nothing', scale: true, n: m => [5 * m, 1, m], k: ['ACL', 'binding', 'binding'],
+    a: `# once per engineer (no groups):\n${AK} --add \\\n  --allow-principal User:op01 \\\n  --operation Describe --operation DescribeConfigs \\\n  --topic '*' --cluster\n${AK} --add \\\n  --allow-principal User:op01 --operation Describe --group '*'`,
+    an: '5 ACLs for each engineer: Describe and DescribeConfigs on all topics and on the cluster, plus Describe on all groups.',
+    p: `${CPB} --principal Group:kafka-ops \\\n  --role Operator --kafka-cluster $CP_ID`,
+    c: `# once per engineer, or once for an SSO group mapping:\n${CPB} --principal User:u-op01 \\\n  --role Operator --environment env-x7m2q --cloud-cluster lkc-9p3kd` },
+  { t: '4 · l07 owns everything under l07.', n: () => [2, 2, 2], k: ['ACL', 'binding', 'binding'],
+    a: `${AK} --add \\\n  --allow-principal User:l07 --operation All \\\n  --topic l07. --group l07. \\\n  --resource-pattern-type prefixed`,
+    an: 'Prefixed ACLs, as on the shared Apache cluster. l07 still cannot give anyone else access.',
+    p: `${CPB} --principal User:l07 --role ResourceOwner \\\n  --resource Topic:l07. --prefix --kafka-cluster $CP_ID\n# same again with --resource Group:l07.`,
+    c: `${CPB} --principal User:u-l07 --role ResourceOwner \\\n  ${CCX} --resource Topic:l07. --prefix\n# same again with --resource Group:l07.` },
+  { t: '5 · Create an identity for a new app', n: () => [1, 1, 2], k: ['credential', 'LDAP entry', 'credential'],
+    a: `kafka-configs.sh --bootstrap-server $BS --command-config admin.properties \\\n  --alter --entity-type users --entity-name cdr-collector \\\n  --add-config 'SCRAM-SHA-512=[password=…]'`,
+    an: 'The credential is stored in Kafka\'s own metadata. Kafka has no notion of an "application".',
+    p: `# the identity lives in LDAP, not in Kafka\nldapadd -H ldaps://ldap.example:636 -D … -f cdr-collector.ldif`,
+    c: `confluent iam service-account create cdr-collector \\\n  --description "CDR ingestion"\nconfluent api-key create --resource lkc-9p3kd \\\n  --service-account sa-k4m8q1` },
+  { t: '6 · Rotate an app\'s credential', n: () => [1, 1, 2], k: ['change', 'change', 'key op'],
+    a: `kafka-configs.sh … --alter --entity-type users \\\n  --entity-name cdr-collector \\\n  --add-config 'SCRAM-SHA-512=[password=NEW]'\n# the old password stops working for new logins now`,
+    an: 'One password per mechanism: there is no overlap window, so restart clients in step with the change.',
+    p: `# change the LDAP password (ldappasswd / directory tooling)\n# same issue: no overlap window`,
+    c: `confluent api-key create --resource lkc-9p3kd --service-account sa-k4m8q1\n# deploy, verify, then:\nconfluent api-key delete <OLD_KEY> --force` },
+  { t: '7 · Someone leaves the company', n: () => [3, 2, 1], k: ['cleanup', 'cleanup', 'action'],
+    a: `kafka-configs.sh … --alter --entity-type users \\\n  --entity-name op07 --delete-config 'SCRAM-SHA-512'\n${AK} --list --principal User:op07\n${AK} --remove --allow-principal User:op07 …`,
+    an: 'Delete the credential, then find and remove every ACL that names the user.',
+    p: `# disable the account in LDAP: new logins fail\nconfluent iam rbac role-binding list --principal User:op07\n# then delete the leftover bindings`,
+    c: `# remove the user from the organization:\n# their user-owned API keys are deleted too\nconfluent iam user delete u-op07` },
+  { t: '8 · Who deleted cdr.voice?', n: () => [1, 0, 1], k: ['config', 'setup step', 'lookup'],
+    a: `# log4j: kafka.authorizer.logger=DEBUG\n# (allowed operations are logged only at DEBUG)\ngrep 'Delete' kafka-authorizer.log`,
+    an: 'There is no audit log, only the authorizer logger on each broker. Turn it on before you need it.',
+    p: `# management events are audited by default\nkafka-console-consumer.sh … \\\n  --topic confluent-audit-log-events | grep DeleteTopics`,
+    c: `confluent audit-log describe\n# consume the audit topic in the audit log cluster\n# with an API key for that cluster` }
+];
+const svg = document.getElementById('svg'), log = document.getElementById('log');
+const scene = el('g', {}, svg);
+const COLS = [{ t: 'Apache Kafka', s: 'SASL/SCRAM + ACLs', c: 'var(--p1)' }, { t: 'Confluent Platform', s: 'LDAP + MDS RBAC', c: 'var(--p3)' }, { t: 'Confluent Cloud', s: 'service accounts + API keys + RBAC', c: 'var(--p0)' }];
+const S = { r: 0, n: 5, shown: [0, 0, 0] };
+
+function render() {
+  scene.innerHTML = '';
+  const r = REQ[S.r], counts = r.n(S.n);
+  COLS.forEach((col, i) => {
+    const x = 20 + i * 296;
+    el('rect', { x, y: 10, width: 276, height: 280, rx: 12, fill: 'var(--surface)', stroke: 'var(--border)', 'stroke-width': 1.5 }, scene);
+    el('text', { x: x + 14, y: 36, 'font-weight': 700, fill: col.c, text: col.t }, scene);
+    el('text', { x: x + 14, y: 56, 'font-size': 11, class: 'muted', text: col.s }, scene);
+    el('text', { x: x + 262, y: 46, 'text-anchor': 'end', 'font-size': 30, 'font-weight': 700, fill: col.c, text: counts[i] }, scene);
+    el('text', { x: x + 262, y: 64, 'text-anchor': 'end', 'font-size': 11, class: 'muted', text: r.k[i] + (counts[i] === 1 ? '' : 's') }, scene);
+    const shown = Math.min(counts[i], 100);
+    for (let k = 0; k < shown; k++) {
+      const bx = x + 14 + (k % 10) * 25, by = 82 + Math.floor(k / 10) * 20;
+      const b = el('rect', { x: bx, y: by, width: 21, height: 15, rx: 3, fill: col.c, opacity: k < S.shown[i] ? .85 : 0 }, scene);
+      if (k >= S.shown[i]) setTimeout(() => b.setAttribute('opacity', .85), reducedMotion ? 0 : 25 * (k - S.shown[i]));
+    }
+    if (!counts[i]) el('text', { x: x + 14, y: 100, 'font-size': 13, fill: 'var(--ok)', text: 'Nothing to configure: on by default.' }, scene);
+  });
+  S.shown = counts.map(c => Math.min(c, 100));
+}
+
+function show(i) {
+  S.r = i; S.shown = [0, 0, 0];
+  document.querySelectorAll('#reqs button').forEach((b, k) => b.setAttribute('aria-pressed', k === i));
+  document.getElementById('n').disabled = !REQ[i].scale;
+  const r = REQ[i];
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  document.getElementById('cmds').innerHTML = [[COLS[0], r.a, r.an], [COLS[1], r.p, ''], [COLS[2], r.c, '']].map(([col, cmd, note]) =>
+    `<div class="cmdcol"><h3 style="color:${col.c}">${col.t}</h3><pre class="code">${esc(cmd)}</pre>${note ? `<p>${note}</p>` : ''}</div>`).join('');
+  const c = r.n(S.n);
+  logLine(log, `<b>${r.t}</b>: Apache ${c[0]} · Platform ${c[1]} · Cloud ${c[2]}. ${r.an}`, true);
+  render();
+}
+
+REQ.forEach((r, i) => {
+  const b = document.createElement('button');
+  b.textContent = r.t; b.onclick = () => show(i);
+  document.getElementById('reqs').appendChild(b);
+});
+document.getElementById('n').oninput = e => {
+  S.n = +e.target.value; document.getElementById('nOut').textContent = S.n;
+  const c = REQ[S.r].n(S.n);
+  S.shown = [0, 0, 0]; render();
+  logLine(log, `${S.n} ops engineers: Apache needs <b>${c[0]}</b> ACLs, Platform needs <b>1</b> group binding, and Cloud needs <b>${c[2]}</b> bindings (or 1 with an SSO group mapping).`);
+};
+show(0);
+
+renderQuiz('quiz', [
+  { q: 'On Apache Kafka you run <code>kafka-acls.sh --add --allow-principal User:billing-svc --consumer --topic cdr.voice --group billing-svc</code>. What does it create?',
+    options: ['One ACL: Read on the topic',
+      'Three ACLs: Read and Describe on the topic, and Read on the consumer group',
+      'A SCRAM user called billing-svc',
+      'A role binding with the <code>DeveloperRead</code> role'],
+    answer: 1,
+    explain: '<code>--consumer</code> and <code>--producer</code> are shortcuts for the usual ACL sets. On Confluent the same need is two <code>DeveloperRead</code> bindings (topic and group). The topic + group pair is the same in both models.' },
+  { q: 'An MQ admin wants to grant the LDAP group <code>kafka-ops</code> describe rights on the Apache cluster with one ACL. What happens?',
+    options: ['It works with <code>--allow-principal Group:kafka-ops</code>',
+      'It works if the brokers join the LDAP domain',
+      'It works only for SCRAM users',
+      'Apache Kafka\'s built-in authorizer doesn\'t resolve LDAP groups, so ACLs must name each user. Confluent Platform RBAC can bind to <code>Group:kafka-ops</code>.'],
+    answer: 3,
+    explain: 'Plain Apache Kafka matches the authenticated principal exactly, typically <code>User:&lt;name&gt;</code>. Group-based access needs a custom principal builder or authorizer. That is one of the main operational differences that Confluent RBAC with MDS and LDAP solves.' },
+  { q: 'Which platform lets you rotate an app\'s credential with an overlap window, so that old and new credentials work at the same time?',
+    options: ['Confluent Cloud: create a second API key for the same service account, switch the app over, then delete the old key',
+      'Apache Kafka SCRAM: <code>--add-config</code> keeps the old password valid for 24 hours',
+      'Confluent Platform LDAP: the old password stays cached forever',
+      'None of them'],
+    answer: 0,
+    explain: 'A SCRAM user has one password per mechanism, and changing it in LDAP replaces it too. Cloud API keys are separate credentials for the same principal, so you can have two at once (Topic 2).' },
+  { q: 'You are migrating the shared Apache cluster\'s learner ACLs (<code>--operation All --topic l07. --group l07. --resource-pattern-type prefixed</code>) to Confluent Platform. What is the closest RBAC equivalent?',
+    options: ['<code>SystemAdmin</code> on the cluster',
+      '<code>DeveloperManage</code> on <code>Topic:l07.</code>',
+      '<code>ResourceOwner</code> on <code>Topic:l07.</code> and <code>Group:l07.</code> with <code>--prefix</code>. This is what the shared Platform cluster uses, and it also lets l07 grant access to others.',
+      'No equivalent: prefixes are Apache-only'],
+    answer: 2,
+    explain: '<code>All</code> on a prefix maps to <code>ResourceOwner</code> on the same prefix. One difference: <code>ResourceOwner</code> can manage role bindings on those resources, so learners can share their topics without asking the admin.' },
+  { q: 'You delete the SCRAM credential of <code>billing-svc</code> on the Apache cluster, but its running consumer keeps fetching. Why, and how do you cut it off at once?',
+    options: ['The deletion failed. Run it again.',
+      'SCRAM credentials take 24 hours to expire',
+      'The consumer is using a cached ACL',
+      'Authentication happens when a connection opens, so existing sessions continue until they reconnect (or re-authenticate, if <code>connections.max.reauth.ms</code> is set). Remove its ACLs too: authorization is checked on every request.'],
+    answer: 3,
+    explain: 'Revoking the credential stops new logins. Removing the ACLs stops requests on connections that are already open, because the authorizer checks every request. Do both when someone leaves, or when a credential leaks.' }
+]);
+</script>
+</body>
+</html>

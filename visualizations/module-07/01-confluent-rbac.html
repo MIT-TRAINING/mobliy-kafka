@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Confluent RBAC</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .tests { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .tests button { font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 7 · Administering Kafka Security</a>
+    <div class="nav"><span>1 / 5</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 1</div>
+  <h1>Confluent RBAC (Role-Based Access Control)</h1>
+  <p class="lede">With RBAC you don't list Kafka operations one by one. You give a <b>principal</b> a <b>role</b> at a
+    <b>scope</b>: an organization, environment, cluster, or a single topic or consumer group. Your task: the
+    <code>billing-svc</code> app runs as service account <code>sa-l07-app</code> and must consume <code>l07.cdr.voice</code>
+    with group <code>l07.billing</code>, and do nothing else. Add role bindings, run the tests, and try for
+    <b>least privilege</b>.</p>
+
+  <div class="card">
+    <div class="cli-form">
+      <label>Role
+        <select id="role">
+          <option>DeveloperRead</option><option>DeveloperWrite</option><option>DeveloperManage</option><option>ResourceOwner</option>
+          <option>Operator</option><option>MetricsViewer</option><option>CloudClusterAdmin</option><option>EnvironmentAdmin</option>
+        </select></label>
+      <label>Resource
+        <select id="res">
+          <option value="Topic:l07.cdr.voice">Topic l07.cdr.voice (literal)</option>
+          <option value="Topic:l07.cdr.">Topic l07.cdr. (prefix)</option>
+          <option value="Topic:l07.audit">Topic l07.audit (literal)</option>
+          <option value="Group:l07.billing">Group l07.billing (literal)</option>
+          <option value="Group:l07.">Group l07. (prefix)</option>
+        </select></label>
+      <button class="primary" id="add">Add role binding</button>
+      <button id="presetGood">Preset: just enough</button>
+      <button id="presetLazy">Preset: lazy admin</button>
+      <button id="clear">Remove all</button>
+    </div>
+    <div class="cli-preview" id="preview"></div>
+    <div class="chips" id="chips" aria-label="Current role bindings"></div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 380" role="img" aria-label="Role bindings for sa-l07-app across organization, environment, cluster and resource scopes"></svg></div>
+    <div class="controls" style="margin-bottom:0"><span class="ctl-label">Run as sa-l07-app:</span><span class="pill" id="state"></span></div>
+    <div class="tests" id="tests"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Predefined roles you will meet</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Role</th><th>Bound at</th><th>Can</th><th>Cannot</th></tr></thead>
+      <tbody>
+        <tr><td><code>DeveloperRead</code></td><td>Topic, group (literal or prefix)</td><td>Consume from a topic; join a consumer group</td><td>Produce, create, delete</td></tr>
+        <tr><td><code>DeveloperWrite</code></td><td>Topic, transactional ID</td><td>Produce</td><td>Read records, change configs</td></tr>
+        <tr><td><code>DeveloperManage</code></td><td>Topic, group</td><td>Create, delete, describe and configure topics</td><td>Read or write any records</td></tr>
+        <tr><td><code>ResourceOwner</code></td><td>Topic, group</td><td>Everything on the resource, including granting roles on it to others</td><td>Anything outside that resource</td></tr>
+        <tr><td><code>Operator</code></td><td>Cluster (also environment or organization)</td><td>View and describe the cluster and its topics</td><td>See data or change anything</td></tr>
+        <tr><td><code>MetricsViewer</code></td><td>Cluster (also environment or organization)</td><td>Read metrics (Module 8)</td><td>Describe topics, read data</td></tr>
+        <tr><td><code>CloudClusterAdmin</code></td><td>Cluster</td><td>Everything inside one cluster, including data</td><td>Other clusters, billing, users</td></tr>
+        <tr><td><code>EnvironmentAdmin</code></td><td>Environment</td><td>Everything in the environment: clusters, topics, API keys, role bindings. Your role in <code>env-l07</code></td><td>Other environments, organization settings</td></tr>
+        <tr><td><code>OrganizationAdmin</code></td><td>Organization</td><td>Everything, including users, service accounts and billing</td><td>Nothing in the org</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="grid grid-2" style="margin-top:16px">
+    <div class="callout" style="margin:0"><b>Admin gotcha:</b> a consumer needs <b>two</b> bindings: <code>DeveloperRead</code> on the
+      topic <i>and</i> on its consumer group. With only the topic binding, the app fails with
+      <code>GROUP_AUTHORIZATION_FAILED</code>. This is the most common failure on a new RBAC setup.</div>
+    <div class="callout warn" style="margin:0"><b>Production trap:</b> RBAC only <b>adds</b> permissions. There is no deny role. If you
+      gave <code>EnvironmentAdmin</code> to an app, you can't take one topic away from it. Delete the broad binding and grant narrow ones:
+      <code>confluent iam rbac role-binding delete …</code>.</div>
+  </div>
+  <div class="callout"><b>Same model on Platform:</b> Confluent Platform uses the same resource roles (<code>DeveloperRead</code> …
+    <code>ResourceOwner</code>, <code>Operator</code>) through MDS. Its admin roles are <code>SystemAdmin</code>, <code>ClusterAdmin</code>,
+    <code>UserAdmin</code>, <code>SecurityAdmin</code> and <code>AuditAdmin</code> (Topic 3). On the shared Platform cluster you hold
+    <code>ResourceOwner</code> on <code>Topic:l07.</code> and <code>Group:l07.</code> as prefixes.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="index.html"><small>← Back</small>Module overview</a>
+    <a class="next" href="02-api-keys-secrets.html"><small>Next →</small>API keys &amp; secrets management</a>
+  </div>
+</div>
+
+<script>
+const SA = 'sa-r7k2p9', ENV = 'env-x7m2q', LKC = 'lkc-9p3kd';
+const ALL = ['read', 'write', 'create', 'delete', 'alter', 'describe', 'grant'];
+const ROLES = {
+  DeveloperRead:     { scope: 'resource', topic: ['read', 'describe'], group: ['read', 'describe'], c: 'var(--p0)' },
+  DeveloperWrite:    { scope: 'resource', topic: ['write', 'describe'], group: [], c: 'var(--p1)' },
+  DeveloperManage:   { scope: 'resource', topic: ['create', 'delete', 'alter', 'describe'], group: ['describe', 'delete'], c: 'var(--p2)' },
+  ResourceOwner:     { scope: 'resource', topic: ALL, group: ALL, c: 'var(--p3)' },
+  Operator:          { scope: 'cluster', topic: ['describe'], group: ['describe'], c: 'var(--p5)' },
+  MetricsViewer:     { scope: 'cluster', topic: [], group: [], c: 'var(--muted)' },
+  CloudClusterAdmin: { scope: 'cluster', topic: ALL, group: ALL, c: 'var(--warn)' },
+  EnvironmentAdmin:  { scope: 'env', topic: ALL, group: ALL, c: 'var(--bad)' }
+};
+const TILES = [
+  { id: 'voice', type: 'Topic', name: 'l07.cdr.voice', x: 318, y: 132 },
+  { id: 'sms', type: 'Topic', name: 'l07.cdr.sms', x: 584, y: 132 },
+  { id: 'audit', type: 'Topic', name: 'l07.audit', x: 318, y: 232 },
+  { id: 'grp', type: 'Group', name: 'l07.billing', x: 584, y: 232 }
+];
+const TESTS = [
+  { label: 'Consume l07.cdr.voice (group l07.billing)', goal: true, need: [['voice', 'read'], ['grp', 'read']] },
+  { label: 'Produce to l07.cdr.voice', need: [['voice', 'write']] },
+  { label: 'Produce to l07.audit', need: [['audit', 'write']] },
+  { label: 'Create topic l07.cdr.sms', need: [['sms', 'create']], create: true },
+  { label: 'Delete topic l07.cdr.sms', need: [['sms', 'delete']], del: true },
+  { label: 'Grant DeveloperRead on l07.cdr.voice to analytics', need: [['voice', 'grant']] }
+];
+const svg = document.getElementById('svg'), log = document.getElementById('log');
+const scene = el('g', {}, svg), fx = el('g', {}, svg);
+const S = { bindings: [], sms: false, results: {} };
+const tile = id => TILES.find(t => t.id === id);
+
+function parseRes(v) { const [type, name] = v.split(':'); return { type, name, prefix: name.endsWith('.') }; }
+function scopeOf(role) { return ROLES[role].scope; }
+function matches(b, t) {
+  if (scopeOf(b.role) !== 'resource') return true;
+  return b.type === t.type && (b.prefix ? t.name.startsWith(b.name) : t.name === b.name);
+}
+function grant(t, op) { return S.bindings.find(b => matches(b, t) && ROLES[b.role][t.type === 'Topic' ? 'topic' : 'group'].includes(op)); }
+function bindLabel(b) { const s = scopeOf(b.role); return s === 'env' ? 'environment env-l07' : s === 'cluster' ? 'cluster ' + LKC : `${b.type}:${b.name}${b.prefix ? ' (prefix)' : ''}`; }
+
+function command(role, resV) {
+  const s = scopeOf(role), r = parseRes(resV);
+  let c = `confluent iam rbac role-binding create --principal User:${SA} --role ${role} --environment ${ENV}`;
+  if (s !== 'env') c += ` --cloud-cluster ${LKC}`;
+  if (s === 'resource') c += ` --kafka-cluster ${LKC} --resource ${r.type}:${r.name}${r.prefix ? ' --prefix' : ''}`;
+  return c;
+}
+
+function addBinding(role, resV, quiet) {
+  const b = scopeOf(role) === 'resource' ? { role, ...parseRes(resV) } : { role };
+  if (S.bindings.some(x => x.role === b.role && x.type === b.type && x.name === b.name)) { if (!quiet) logLine(log, 'That role binding already exists.'); return; }
+  S.bindings.push(b); S.results = {};
+  if (!quiet) logLine(log, `Bound <b>${role}</b> on ${bindLabel(b)} to <code>sa-l07-app</code>.`, true);
+}
+
+function drawBox(x, y, w, h, title, roles, dash) {
+  el('rect', { x, y, width: w, height: h, rx: 12, fill: 'none', stroke: 'var(--border)', 'stroke-width': 1.5, 'stroke-dasharray': dash || '' }, scene);
+  el('text', { x: x + 12, y: y + 22, 'font-size': 13, 'font-weight': 600, fill: 'var(--muted)', text: title }, scene);
+  roles.forEach((b, i) => el('text', { x: x + w - 12 - i * 150, y: y + 22, 'text-anchor': 'end', 'font-size': 12, 'font-weight': 700, fill: ROLES[b.role].c, text: '● ' + b.role }, scene));
+}
+
+function render() {
+  scene.innerHTML = '';
+  // principal
+  el('rect', { x: 14, y: 122, width: 226, height: 120, rx: 12, fill: 'var(--accent-soft)', stroke: 'var(--accent)', 'stroke-width': 2 }, scene);
+  el('text', { x: 30, y: 152, 'font-weight': 700, text: 'sa-l07-app' }, scene);
+  el('text', { x: 30, y: 174, 'font-size': 12, class: 'mono muted', text: 'User:' + SA }, scene);
+  el('text', { x: 30, y: 196, 'font-size': 12, class: 'muted', text: 'service account, runs billing-svc' }, scene);
+  el('text', { x: 30, y: 222, 'font-size': 12, fill: S.bindings.length ? 'var(--ok)' : 'var(--bad)', text: S.bindings.length + ' role binding(s)' }, scene);
+
+  drawBox(262, 14, 624, 334, 'Organization', []);
+  drawBox(278, 46, 594, 294, 'Environment env-l07', S.bindings.filter(b => scopeOf(b.role) === 'env'));
+  drawBox(294, 78, 564, 254, 'Cluster l07-basic · ' + LKC, S.bindings.filter(b => scopeOf(b.role) === 'cluster'));
+
+  TILES.forEach(t => {
+    const exists = t.id !== 'sms' || S.sms;
+    const g = el('g', {}, scene);
+    el('rect', { x: t.x, y: t.y, width: 256, height: 88, rx: 10, fill: 'var(--surface)', stroke: 'var(--border)', 'stroke-width': 1.5, 'stroke-dasharray': exists ? '' : '5 4' }, g);
+    el('text', { x: t.x + 12, y: t.y + 22, 'font-size': 13, 'font-weight': 700, class: 'mono', text: t.name }, g);
+    el('text', { x: t.x + 244, y: t.y + 22, 'text-anchor': 'end', 'font-size': 11, class: 'muted', text: t.type + (exists ? '' : ' · not created') }, g);
+    const own = S.bindings.filter(b => scopeOf(b.role) === 'resource' && matches(b, t));
+    el('text', { x: t.x + 12, y: t.y + 44, 'font-size': 11, fill: own.length ? ROLES[own[0].role].c : 'var(--muted)',
+      text: own.length ? own.map(b => b.role + (b.prefix ? '*' : '')).join(', ') : 'no resource binding' }, g);
+    const ops = t.type === 'Topic' ? [['R', 'read'], ['W', 'write'], ['C', 'create'], ['D', 'delete'], ['G', 'grant']] : [['R', 'read'], ['D', 'delete'], ['G', 'grant']];
+    ops.forEach(([k, op], i) => {
+      const on = !!grant(t, op);
+      el('rect', { x: t.x + 12 + i * 30, y: t.y + 56, width: 24, height: 22, rx: 5, fill: on ? 'var(--ok-soft)' : 'var(--surface-2)', stroke: on ? 'var(--ok)' : 'var(--border)' }, g);
+      el('text', { x: t.x + 24 + i * 30, y: t.y + 72, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 700, fill: on ? 'var(--ok)' : 'var(--muted)', text: k }, g);
+    });
+    svgButton(g, `${t.type} ${t.name}: show effective permissions`, () => {
+      const list = ops.filter(([, op]) => grant(t, op)).map(([, op]) => `${op} (via ${grant(t, op).role})`);
+      logLine(log, `<code>${t.name}</code>: ${list.length ? list.join(', ') : 'no permissions. Every request is denied.'}`);
+    });
+  });
+  el('text', { x: 262, y: 372, 'font-size': 11, class: 'muted', text: 'R read · W write · C create · D delete · G grant roles  ·  * = prefix binding' }, scene);
+
+  document.getElementById('chips').innerHTML = S.bindings.length
+    ? S.bindings.map((b, i) => `<button class="chip on" data-i="${i}" aria-label="Remove ${b.role} on ${bindLabel(b)}">${b.role} · ${bindLabel(b)} ✕</button>`).join('')
+    : '<span class="ctl-label">No role bindings yet. Every request from sa-l07-app is denied.</span>';
+  document.querySelectorAll('#chips button').forEach(c => c.onclick = () => {
+    const b = S.bindings.splice(+c.dataset.i, 1)[0]; S.results = {};
+    logLine(log, `Deleted the binding <b>${b.role}</b> on ${bindLabel(b)}.`);
+    render();
+  });
+  document.getElementById('tests').innerHTML = '';
+  TESTS.forEach((t, i) => {
+    const b = document.createElement('button');
+    const r = S.results[i];
+    b.textContent = (r === undefined ? '' : r ? '✓ ' : '✗ ') + t.label;
+    if (r !== undefined) b.style.borderColor = r ? 'var(--ok)' : 'var(--bad)';
+    b.onclick = () => runTest(i);
+    document.getElementById('tests').appendChild(b);
+  });
+  const done = Object.keys(S.results).length === TESTS.length;
+  const goalOk = TESTS.every((t, i) => !!t.goal === allowedFor(t));
+  const st = document.getElementById('state');
+  st.textContent = !done ? `${Object.keys(S.results).length} / ${TESTS.length} tests run` : goalOk ? 'least privilege ✓' : TESTS[0] && allowedFor(TESTS[0]) ? 'works, but over-privileged' : 'billing-svc is broken';
+  st.className = 'pill ' + (!done ? '' : goalOk ? 'ok' : allowedFor(TESTS[0]) ? 'warn' : 'bad');
+  updatePreview();
+}
+
+function allowedFor(t) { return t.need.every(([id, op]) => grant(tile(id), op)); }
+
+async function runTest(i) {
+  const t = TESTS[i], miss = t.need.find(([id, op]) => !grant(tile(id), op));
+  const target = tile(t.need[0][0]);
+  const tok = el('circle', { r: 9, fill: 'var(--accent)' }, fx);
+  await tween(tok, 240, 182, target.x + 128, target.y + 44, 650);
+  tok.setAttribute('fill', miss ? 'var(--bad)' : 'var(--ok)');
+  await sleep(350); tok.remove();
+  S.results[i] = !miss;
+  if (miss) {
+    const mt = tile(miss[0]);
+    const code = t.need[0][0] === 'voice' && t.need.length > 1 && miss[0] === 'grp' ? 'GROUP_AUTHORIZATION_FAILED' : t.label.startsWith('Grant') ? 'HTTP 403 Forbidden' : 'TOPIC_AUTHORIZATION_FAILED';
+    logLine(log, `<b style="color:var(--bad)">✗ ${t.label}</b>: <code>${code}</code>. No binding gives <b>${miss[1]}</b> on ${mt.type} <code>${mt.name}</code>.`, true);
+  } else {
+    let extra = '';
+    if (t.create) { extra = S.sms ? ' The topic already exists, so the broker answers <code>TOPIC_ALREADY_EXISTS</code>, but the request was authorized.' : ' Topic created.'; S.sms = true; }
+    if (t.del) { extra = S.sms ? ' Topic deleted.' : ' Authorized, but the topic does not exist: <code>UNKNOWN_TOPIC_OR_PARTITION</code>.'; S.sms = false; }
+    const via = t.need.map(([id, op]) => grant(tile(id), op).role).filter((v, k, a) => a.indexOf(v) === k).join(' + ');
+    logLine(log, `<b style="color:var(--ok)">✓ ${t.label}</b>: allowed by ${via}.${extra}${t.goal ? '' : ' <i>billing-svc does not need this.</i>'}`, !t.goal);
+  }
+  render();
+}
+
+function updatePreview() {
+  const role = document.getElementById('role').value, s = scopeOf(role), res = document.getElementById('res');
+  res.disabled = s !== 'resource';
+  document.getElementById('preview').textContent = command(role, res.value);
+}
+document.getElementById('role').onchange = updatePreview;
+document.getElementById('res').onchange = updatePreview;
+document.getElementById('add').onclick = () => { addBinding(document.getElementById('role').value, document.getElementById('res').value); render(); };
+document.getElementById('presetGood').onclick = () => {
+  S.bindings = []; addBinding('DeveloperRead', 'Topic:l07.cdr.voice', true); addBinding('DeveloperRead', 'Group:l07.billing', true);
+  logLine(log, 'Preset: <b>DeveloperRead</b> on the topic and on the consumer group. Now run all six tests.', true); render();
+};
+document.getElementById('presetLazy').onclick = () => {
+  S.bindings = []; addBinding('EnvironmentAdmin', '', true);
+  logLine(log, 'Preset: <b>EnvironmentAdmin</b> on env-l07. Everything works, so run the tests and count what else the app could now do.', true); render();
+};
+document.getElementById('clear').onclick = () => { S.bindings = []; S.results = {}; logLine(log, 'All role bindings deleted.'); render(); };
+
+render();
+logLine(log, 'Mission: billing-svc must consume <code>l07.cdr.voice</code> with group <code>l07.billing</code>, and nothing else. Run a test first to see what happens with no role bindings.', true);
+
+renderQuiz('quiz', [
+  { q: '<code>sa-l07-app</code> has <code>DeveloperRead</code> on <code>Topic:l07.cdr.voice</code>. The consumer in group <code>l07.billing</code> still fails. What is missing?',
+    options: ['<code>DeveloperWrite</code> on the topic, because consumers commit offsets',
+      'A new API key',
+      '<code>Operator</code> on the cluster',
+      '<code>DeveloperRead</code> on <code>Group:l07.billing</code>. Joining a group and committing offsets is authorized on the group resource.'],
+    answer: 3,
+    explain: 'A consumer in a group touches two resources: the topic (to fetch) and the consumer group (to join and commit offsets). Without the group binding, the client fails with <code>GROUP_AUTHORIZATION_FAILED</code>. Committing offsets does not need write access to the topic.' },
+  { q: 'You bind <code>DeveloperManage</code> on <code>Topic:l07.cdr.</code> with <code>--prefix</code>. A week later someone creates <code>l07.cdr.sms</code>. Is the new topic covered?',
+    options: ['Yes. A prefix binding matches every current and future topic whose name starts with <code>l07.cdr.</code>.',
+      'No. Bindings are copied to topics only when they are created',
+      'Only after a rolling restart of the cluster',
+      'Only if the topic has the same partition count'],
+    answer: 0,
+    explain: 'Prefix bindings match by name at request time, so they cover topics that don\'t exist yet. This is why the course uses <code>lNN.</code> prefixes. One binding covers all of a learner\'s or a team\'s topics, and a literal binding covers exactly one name.' },
+  { q: 'A CI pipeline must create, configure and delete topics under <code>l07.</code>, but must never read CDR records. Which binding fits?',
+    options: ['<code>CloudClusterAdmin</code> on the cluster',
+      '<code>ResourceOwner</code> on <code>Topic:l07.</code> (prefix)',
+      '<code>DeveloperManage</code> on <code>Topic:l07.</code> (prefix)',
+      '<code>DeveloperRead</code> plus <code>DeveloperWrite</code> on <code>Topic:l07.</code>'],
+    answer: 2,
+    explain: '<code>DeveloperManage</code> covers create, delete, describe and configs, but no data access. <code>ResourceOwner</code> and <code>CloudClusterAdmin</code> also allow reading records, and the Developer read/write roles cannot create topics.' },
+  { q: 'An app holds <code>EnvironmentAdmin</code>. Security wants it blocked from <code>l07.audit</code> only. What do you do?',
+    options: ['Add a deny role binding on <code>Topic:l07.audit</code>',
+      'Delete the <code>EnvironmentAdmin</code> binding and grant only the narrow Developer roles the app needs. RBAC has no deny.',
+      'Rename <code>l07.audit</code> so the role no longer matches',
+      'Rotate the app\'s API key'],
+    answer: 1,
+    explain: 'RBAC role bindings only grant access. Anyone used to MQ authority records with explicit exclusions should note this. With RBAC you fix over-privilege by removing the broad binding. Kafka ACLs do support <code>DENY</code> rules (Topic 5), but a broad admin role is the wrong starting point.' },
+  { q: 'You bind <code>Operator</code> to an on-call engineer on cluster <code>lkc-9p3kd</code>. What can they do?',
+    options: ['Describe the cluster and its topics and consumer groups, but not read records or change anything',
+      'Everything a <code>CloudClusterAdmin</code> can do except billing',
+      'Read every topic but not write',
+      'Nothing until they also get <code>MetricsViewer</code>'],
+    answer: 0,
+    explain: 'Operator is for monitoring and troubleshooting: they can see what exists and how it is configured, but they can\'t see data or make changes. Bindings at cluster scope apply to every topic and group in that cluster, including topics created later.' }
+]);
+</script>
+</body>
+</html>

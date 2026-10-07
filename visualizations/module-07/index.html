@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka Module 7 Visualizations</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .topics { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: 24px; }
+  .topic { display: block; text-decoration: none; color: var(--text); transition: border-color .15s, transform .15s; }
+  .topic:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .topic .num { font-family: var(--mono); color: var(--accent); font-size: 13px; font-weight: 600; }
+  .topic h3 { margin: 6px 0; }
+  .topic p { margin: 0 0 10px; color: var(--muted); font-size: 15px; }
+  .topic .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  ol.hands { margin: 0; padding-left: 20px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <span>Apache Kafka &amp; Confluent Kafka Administration</span>
+    <div class="nav"><a href="../module-06/index.html">← Module 6</a><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Module 7</div>
+  <h1>Administering Kafka Security</h1>
+  <p class="lede">Interactive visualizations for each Module 7 topic. Each page has a hands-on simulation you can
+    play with, followed by a 5-question self-quiz with explanations.</p>
+  <p style="color:var(--muted);font-size:14px;margin:4px 0 0"><b style="color:var(--text)">Objective:</b> Secure Confluent
+    Kafka clusters using Confluent's administration and access-control model.</p>
+
+  <div class="topics">
+    <a class="card topic" href="01-confluent-rbac.html">
+      <div class="num">01</div><h3>Confluent RBAC (Role-Based Access Control)</h3>
+      <p>Bind roles to the service account <code>sa-l07-app</code> at different scopes, run produce, consume, create and grant tests, and find the least-privilege set.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="02-api-keys-secrets.html">
+      <div class="num">02</div><h3>API keys &amp; secrets management (Confluent Cloud)</h3>
+      <p>Move a live app from a personal key to a service-account key, then leak the secret and rotate it without a single failed request.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="03-platform-authn-authz.html">
+      <div class="num">03</div><h3>Confluent Platform authentication &amp; authorization</h3>
+      <p>Send requests through TLS, SASL/PLAIN with LDAP, and the RBAC and ACL authorizer. Find which checkpoint stops each one, and what happens when LDAP goes down.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="04-encryption-network.html">
+      <div class="num">04</div><h3>Encryption &amp; network security</h3>
+      <p>Tap every link of the Apache, Platform and Cloud clusters (client, replication, controller, identity store and disk) and see what an eavesdropper captures.</p>
+      <div class="tags"><span class="pill">explorer</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="05-confluent-vs-apache-security.html">
+      <div class="num">05</div><h3>Confluent vs Apache: ACLs, SASL &amp; SSL</h3>
+      <p>Pick a real requirement and compare the Apache ACL commands with Platform and Cloud role bindings. Count the statements as the team grows.</p>
+      <div class="tags"><span class="pill">explorer</span><span class="pill">5-question quiz</span></div>
+    </a>
+  </div>
+
+  <h2>Hands-on for this module</h2>
+  <div class="card">
+    <ol class="hands">
+      <li>Configure RBAC roles and API keys on the shared Confluent Kafka cluster</li>
+      <li>Validate access with test users / service accounts</li>
+    </ol>
+  </div>
+</div>
+</body>
+</html>

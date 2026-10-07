@@ -1,0 +1,1200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka Security Deck</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+/* ---------- Tokens (same palette as the Module 1 deck) ---------- */
+:root {
+  --bg: #e9ecf1; --slide: #fbfbfd; --surface: #ffffff; --surface-2: #eef1f5; --border: #d8dde5;
+  --text: #1b2330; --muted: #5b6678; --accent: #2f6fdb; --accent-soft: #dce8fb;
+  --ok: #1f8a4c; --ok-soft: #dcf2e4; --bad: #c43b3b; --bad-soft: #f9e0e0; --warn: #b7791f; --warn-soft: #fbefd8;
+  --p0: #2f6fdb; --p1: #d0682a; --p2: #2a9d6f; --p3: #8a4fd1; --p4: #c2417b; --p5: #3a8fa8;
+  --grid: rgba(27, 35, 48, .045);
+  --shadow: 0 1px 2px rgba(20,30,50,.06), 0 6px 20px rgba(20,30,50,.06);
+  --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0a0d12; --slide: #11151c; --surface: #1a1f28; --surface-2: #232a35; --border: #333c4a;
+    --text: #e6eaf0; --muted: #9aa5b5; --accent: #6b9cf0; --accent-soft: #22324f;
+    --ok: #4cc27e; --ok-soft: #1d3527; --bad: #ef7070; --bad-soft: #3d2222; --warn: #e0a84a; --warn-soft: #3a2f1c;
+    --p0: #6b9cf0; --p1: #ec8d52; --p2: #4cc29a; --p3: #ad84ec; --p4: #e8729f; --p5: #5dbbd4;
+    --grid: rgba(230, 234, 240, .035); --shadow: none; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0a0d12; --slide: #11151c; --surface: #1a1f28; --surface-2: #232a35; --border: #333c4a;
+  --text: #e6eaf0; --muted: #9aa5b5; --accent: #6b9cf0; --accent-soft: #22324f;
+  --ok: #4cc27e; --ok-soft: #1d3527; --bad: #ef7070; --bad-soft: #3d2222; --warn: #e0a84a; --warn-soft: #3a2f1c;
+  --p0: #6b9cf0; --p1: #ec8d52; --p2: #4cc29a; --p3: #ad84ec; --p4: #e8729f; --p5: #5dbbd4;
+  --grid: rgba(230, 234, 240, .035); --shadow: none; color-scheme: dark;
+}
+
+/* ---------- Stage & slides ---------- */
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--text); font-family: var(--sans); overflow: hidden; }
+code, .mono { font-family: var(--mono); }
+.viewport { position: fixed; inset: 0; display: grid; place-items: center; }
+.deck { position: relative; width: 1280px; height: 720px; transform-origin: center center; flex: none; }
+.slide {
+  position: absolute; inset: 0; padding: 44px 64px 60px; display: flex; flex-direction: column;
+  background: var(--slide); border-radius: 18px; box-shadow: var(--shadow); overflow: hidden;
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 32px 32px;
+  opacity: 0; visibility: hidden; transform: translateX(24px); transition: opacity .35s ease, transform .35s ease, visibility 0s .35s;
+}
+.slide.active { opacity: 1; visibility: visible; transform: none; transition: opacity .35s ease, transform .35s ease; }
+.slide.before { transform: translateX(-24px); }
+.slide::before { /* accent rail */
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 6px;
+  background: linear-gradient(var(--p0), var(--p3), var(--p1));
+}
+.foot {
+  position: absolute; left: 64px; right: 64px; bottom: 20px; display: flex; justify-content: space-between;
+  font-size: 13px; color: var(--muted); letter-spacing: .02em;
+}
+.foot b { color: var(--text); font-weight: 600; }
+
+.kicker { text-transform: uppercase; letter-spacing: .12em; font-size: 13px; font-weight: 700; color: var(--accent); margin-bottom: 6px; }
+h1, h2 { margin: 0; letter-spacing: -.02em; }
+h2 { font-size: 38px; line-height: 1.12; font-weight: 800; }
+h2 .hl { color: var(--accent); }
+.sub { color: var(--muted); font-size: 18px; margin: 8px 0 0; max-width: 980px; line-height: 1.45; }
+.body { flex: 1; min-height: 0; margin-top: 22px; }
+.row { display: flex; gap: 20px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow);
+}
+.card h3 { margin: 0 0 6px; font-size: 17px; font-weight: 700; }
+.card p { margin: 0; color: var(--muted); font-size: 15px; line-height: 1.45; }
+.pill { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; background: var(--accent-soft); color: var(--accent); }
+.tag { display: inline-block; font-family: var(--mono); font-size: 12.5px; padding: 1px 7px; border-radius: 6px; background: var(--surface-2); color: var(--text); }
+.callout {
+  display: flex; gap: 14px; align-items: center; border-radius: 14px; padding: 14px 18px; font-size: 16px; line-height: 1.4;
+  background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.callout.warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.callout .big { font-size: 26px; font-weight: 800; color: var(--accent); flex: none; }
+.callout.warn .big { color: var(--warn); }
+
+/* ---------- SVG vocabulary ---------- */
+svg { display: block; width: 100%; height: auto; overflow: visible; }
+svg text { font-family: var(--sans); fill: var(--text); font-size: 14px; }
+svg .t { font-weight: 600; font-size: 15px; }
+svg .m { fill: var(--muted); font-size: 12.5px; }
+svg .mono { font-family: var(--mono); }
+svg .acc { fill: var(--accent); }
+svg .box { fill: var(--surface); stroke: var(--border); stroke-width: 1.5; }
+svg .box2 { fill: var(--surface-2); stroke: var(--border); stroke-width: 1.2; }
+svg .frame { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 6 5; }
+svg .frame-m { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 5; }
+svg .ln { stroke: var(--muted); stroke-width: 1.6; fill: none; }
+svg .ln-soft { stroke: var(--border); stroke-width: 1.4; fill: none; }
+svg .ln-acc { stroke: var(--accent); stroke-width: 2; fill: none; }
+svg .arrow { marker-end: url(#arr); }
+svg .arrow-acc { marker-end: url(#arr-acc); }
+svg .hub { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 2; }
+svg .k0, svg .k1, svg .k2, svg .k3, svg .k4, svg .k5 { stroke-width: 1.8; }
+svg .k0 { fill: color-mix(in srgb, var(--p0) 22%, var(--surface)); stroke: var(--p0); }
+svg .k1 { fill: color-mix(in srgb, var(--p1) 22%, var(--surface)); stroke: var(--p1); }
+svg .k2 { fill: color-mix(in srgb, var(--p2) 22%, var(--surface)); stroke: var(--p2); }
+svg .k3 { fill: color-mix(in srgb, var(--p3) 22%, var(--surface)); stroke: var(--p3); }
+svg .k4 { fill: color-mix(in srgb, var(--p4) 22%, var(--surface)); stroke: var(--p4); }
+svg .k5 { fill: color-mix(in srgb, var(--p5) 22%, var(--surface)); stroke: var(--p5); }
+svg .kx { fill: var(--surface-2); stroke: var(--border); stroke-width: 1.4; }
+svg .ghost { fill: none; stroke: var(--border); stroke-width: 1.4; stroke-dasharray: 4 4; }
+svg .tomb { fill: var(--surface); stroke: var(--p1); stroke-width: 1.8; stroke-dasharray: 5 4; }
+svg .cons { fill: var(--ok-soft); stroke: var(--ok); stroke-width: 1.6; }
+svg .lag { fill: var(--warn-soft); stroke: var(--warn); stroke-width: 1.6; }
+svg .unrep { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.6; stroke-dasharray: 5 4; }
+svg .gone { fill: var(--bad-soft); stroke: var(--bad); stroke-width: 1.2; stroke-dasharray: 3 4; opacity: .7; }
+svg .d0 { fill: var(--p0); } svg .d1 { fill: var(--p1); } svg .d2 { fill: var(--p2); }
+svg .d3 { fill: var(--p3); } svg .d4 { fill: var(--p4); } svg .d5 { fill: var(--p5); }
+svg .cell-t { font-size: 12px; font-weight: 600; text-anchor: middle; }
+svg .off-t { font-size: 11px; fill: var(--muted); text-anchor: middle; font-family: var(--mono); }
+svg .mid { text-anchor: middle; }
+svg .end { text-anchor: end; }
+svg .bad-t { fill: var(--bad); } svg .ok-t { fill: var(--ok); } svg .warn-t { fill: var(--warn); }
+
+/* ---------- Slide specifics ---------- */
+.title-grid { display: grid; grid-template-columns: 1fr 580px; gap: 36px; align-items: center; height: 100%; }
+.title-grid h1 { font-size: 64px; line-height: 1.02; font-weight: 800; letter-spacing: -.03em; }
+.title-grid h1 span {
+  background: linear-gradient(90deg, var(--p0), var(--p3) 55%, var(--p1)); -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.title-grid .lede { font-size: 20px; color: var(--muted); line-height: 1.45; margin: 20px 0 26px; max-width: 520px; }
+.chips { display: flex; gap: 10px; flex-wrap: wrap; }
+@keyframes drop { 0% { opacity: 0; transform: translateY(-40px); } 25%, 85% { opacity: 1; transform: none; } 100% { opacity: 0; transform: none; } }
+.new-cell { animation: drop 3s ease-out infinite; transform-box: fill-box; }
+
+.modmap { display: grid; grid-template-columns: repeat(10, 1fr); gap: 8px; }
+.mod { border-radius: 10px; padding: 10px 10px 12px; font-size: 13px; line-height: 1.3; background: var(--surface); border: 1px solid var(--border); min-height: 78px; }
+.mod b { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; letter-spacing: .06em; }
+.mod.now { background: var(--accent); color: #fff; border-color: var(--accent); box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 35%, transparent); }
+.mod.now b { color: rgba(255,255,255,.85); }
+.bands { display: grid; grid-template-columns: 1fr 4fr 4fr 1fr; gap: 8px; margin-top: 8px; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.bands div { border-top: 3px solid; padding-top: 6px; text-align: center; }
+
+.decouple { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 16px; }
+.decouple .card h3 { display: flex; align-items: center; gap: 8px; }
+.decouple .num { width: 26px; height: 26px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 13px; color: #fff; }
+
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 16px 18px; box-shadow: var(--shadow); display: flex; flex-direction: column; }
+.panel h3 { margin: 0; font-size: 20px; display: flex; align-items: center; gap: 10px; }
+.panel .cap { color: var(--muted); font-size: 15px; line-height: 1.45; margin: 4px 0 8px; }
+.panel .foot-note { margin-top: auto; font-size: 14px; color: var(--muted); border-top: 1px dashed var(--border); padding-top: 8px; }
+
+table.cmp { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14.5px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+table.cmp th, table.cmp td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: top; }
+table.cmp tr:last-child td { border-bottom: 0; }
+table.cmp th { background: var(--surface-2); font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+table.cmp td:first-child { font-weight: 600; white-space: nowrap; }
+table.cmp td.k { color: var(--accent); font-weight: 600; }
+
+.quote { font-size: 28px; line-height: 1.3; font-weight: 700; letter-spacing: -.01em; margin: 0 0 18px; }
+.quote em { font-style: normal; color: var(--accent); }
+.event { font-family: var(--mono); font-size: 14px; line-height: 1.75; }
+.event .f { color: var(--muted); display: inline-block; width: 92px; }
+.event .v { color: var(--text); }
+.usecases { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.usecases span { font-size: 13px; padding: 5px 11px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); }
+
+.legend5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-top: 12px; }
+.legend5 .card { padding: 12px 14px; border-top: 4px solid var(--accent); }
+.legend5 .card h3 { font-size: 15px; }
+.legend5 .card p { font-size: 13.5px; }
+.cards4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 14px; }
+.cards4 .card { padding: 12px 14px; }
+.cards4 .card p { font-size: 14px; color: var(--text); }
+.cards4 .card p b { color: var(--accent); }
+.stack { display: flex; flex-direction: column; gap: 12px; }
+.rule { display: flex; gap: 12px; align-items: flex-start; }
+.rule .ico { flex: none; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font-weight: 800; color: #fff; font-size: 15px; }
+.rule h3 { margin: 0 0 2px; font-size: 16px; }
+.rule p { margin: 0; font-size: 14px; color: var(--muted); line-height: 1.4; }
+
+.term {
+  background: #0d1117; color: #d6deeb; border-radius: 12px; font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
+  padding: 12px 14px; border: 1px solid #2a3240; white-space: pre; overflow: hidden;
+}
+.term .bar { display: flex; gap: 6px; margin: -2px 0 8px; }
+.term .bar i { width: 10px; height: 10px; border-radius: 50%; background: #ff5f57; }
+.term .bar i:nth-child(2) { background: #febc2e; } .term .bar i:nth-child(3) { background: #28c840; }
+.term .c { color: #7d8799; } .term .p { color: #7fd1a7; } .term .h { color: #82aaff; } .term .y { color: #ffcb6b; }
+.baseline { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+.baseline div { text-align: center; background: var(--surface-2); border-radius: 10px; padding: 8px 4px; }
+.baseline b { display: block; font-size: 24px; color: var(--accent); }
+.baseline span { font-size: 12px; color: var(--muted); font-family: var(--mono); }
+
+.timeline { display: grid; grid-template-columns: repeat(6, 1fr); position: relative; margin-top: 14px; }
+.timeline::before { content: ""; position: absolute; left: 8%; right: 8%; top: 13px; height: 3px; background: linear-gradient(90deg, var(--muted), var(--accent)); border-radius: 2px; }
+.timeline .ev { text-align: center; position: relative; font-size: 13.5px; line-height: 1.35; padding: 0 6px; }
+.timeline .ev::before { content: ""; display: block; width: 16px; height: 16px; border-radius: 50%; background: var(--slide); border: 3px solid var(--accent); margin: 5px auto 8px; }
+.timeline .ev.key::before { background: var(--accent); }
+.timeline .ev b { display: block; font-size: 16px; }
+.timeline .ev span { color: var(--muted); }
+
+.labs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 14px; }
+.labs .card { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; }
+.labs .n { flex: none; font-weight: 800; font-size: 22px; color: var(--accent); line-height: 1; }
+
+.recap { display: grid; grid-template-columns: 1.25fr 1fr; gap: 24px; }
+.take { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-content: start; }
+.take .card { padding: 12px 14px; }
+.take .card h3 { font-size: 15px; display: flex; gap: 8px; align-items: baseline; }
+.take .card h3 i { font-style: normal; color: var(--accent); font-weight: 800; }
+.take .card p { font-size: 13.5px; }
+.quiz { display: flex; flex-direction: column; gap: 10px; }
+.q { position: relative; padding-right: 110px !important; cursor: pointer; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 11px 14px; font-size: 15px; transition: border-color .2s; }
+.q:hover { border-color: var(--accent); }
+.q .a { display: none; margin-top: 6px; color: var(--ok); font-size: 14px; font-weight: 500; }
+.q.open .a { display: block; }
+.q .hint { color: var(--muted); font-size: 12px; position: absolute; right: 14px; top: 13px; }
+.q.open .hint { display: none; }
+.next { margin-top: 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px; border-radius: 14px; background: var(--accent); color: #fff; }
+.next b { font-size: 18px; }
+
+/* ---------- Chrome: controls, progress, notes ---------- */
+.progress { position: fixed; left: 0; top: 0; height: 4px; background: linear-gradient(90deg, var(--p0), var(--p3)); transition: width .3s; z-index: 5; }
+.controls { position: fixed; right: 16px; top: 12px; display: flex; gap: 6px; z-index: 5; }
+.controls button {
+  font: 600 13px var(--sans); color: var(--text); background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 10px; cursor: pointer; opacity: .75;
+}
+.controls button:hover { opacity: 1; border-color: var(--accent); }
+.notes-panel {
+  position: fixed; left: 16px; right: 16px; bottom: 16px; max-height: 32vh; overflow: auto; z-index: 6; display: none;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; font-size: 15px; line-height: 1.5;
+  box-shadow: 0 10px 40px rgba(0,0,0,.25);
+}
+.notes-panel.show { display: block; }
+.notes-panel h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--accent); }
+aside.notes { display: none; }
+
+/* ---------- Print: one slide per page ---------- */
+@page { size: 1280px 720px; margin: 0; }
+@media print {
+  body { overflow: visible; background: none; }
+  .viewport { position: static; display: block; }
+  .deck { transform: none !important; width: 1280px; height: auto; }
+  .slide { position: relative; opacity: 1; visibility: visible; transform: none; height: 720px; border-radius: 0; box-shadow: none; break-after: page; transition: none; }
+  .controls, .progress, .notes-panel { display: none !important; }
+  .q .a { display: block; } .q .hint { display: none; }
+}
+
+/* ---------- Module 7 additions ---------- */
+svg .badbox { fill: var(--bad-soft); stroke: var(--bad); stroke-width: 1.6; }
+.term.sm { font-size: 12px; line-height: 1.55; }
+.term .b { color: #ef7070; } .term .a { color: #c3a6ff; }
+.term { font-variant-ligatures: none; }
+table.cmp.tight { font-size: 13.5px; }
+table.cmp.tight th, table.cmp.tight td { padding: 7px 11px; }
+table.cmp.tight td:first-child { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+.rules2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-content: start; }
+.rules2 .card { padding: 12px 14px; border-left: 4px solid var(--accent); }
+.rules2 .card h3 { font-size: 15px; }
+.rules2 .card p { font-size: 13.5px; }
+/* Off-screen slides are not painted. Animations on them are paused in the script. */
+@media screen {
+  html.deck-ready .slide:not(.active) { content-visibility: hidden; contain-intrinsic-size: 1280px 720px; }
+}
+.slide { transition-duration: .16s, .16s, 0s; transition-delay: 0s, 0s, .16s; }
+</style>
+</head>
+<body>
+
+<!-- Shared SVG defs (markers) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" style="fill: var(--muted)"/>
+    </marker>
+    <marker id="arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" style="fill: var(--accent)"/>
+    </marker>
+  </defs>
+</svg>
+
+<div class="progress" id="progress"></div>
+<div class="viewport"><div class="deck" id="deck">
+
+
+
+<!-- ===================== 1. TITLE ===================== -->
+<section class="slide" data-title="Title">
+  <div class="title-grid">
+    <div>
+      <div class="kicker">Apache Kafka &amp; Confluent Kafka Administration · Module 7</div>
+      <h1>Administering<br><span>Kafka Security</span></h1>
+      <p class="lede">Send every request through three gates (encryption, identity and permission), and run them the Confluent way with RBAC, service accounts and API keys.</p>
+      <div class="chips">
+        <span class="pill">Beginner → Intermediate</span>
+        <span class="pill">5 topics · 2 hands-on labs</span>
+        <span class="pill">Confluent Cloud · Confluent Platform 8.x · LDAP</span>
+      </div>
+    </div>
+    <svg viewBox="0 0 580 380" role="img" aria-label="A billing application sends two requests to the Kafka cluster. Each one passes three gates: TLS encrypts it, authentication establishes who is calling, and authorization checks a role binding. The write to the topic l07.cdr.voice passes all three gates and is stored. The read from l08.cdr.voice, which belongs to another learner, is stopped at the authorization gate. Both decisions are written to the audit log.">
+      <g id="title-anim"></g>
+    </svg>
+  </div>
+  <aside class="notes">In Module 6 you logged in to Confluent with your own identity and created a personal API key. Today you give every application its own identity and exactly the rights it needs. Point at the animation: every request crosses the same three gates, encryption, then "who are you?", then "may you do this?", and the second request is stopped at the last gate. Ask the room: on IBM MQ, which object answers each of these three questions?</aside>
+</section>
+
+<!-- ===================== 2. AGENDA ===================== -->
+<section class="slide" data-title="Agenda">
+  <div class="kicker">Today's route</div>
+  <h2>From a personal login to <span class="hl">least-privilege service accounts</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 250" role="img" aria-label="Agenda as a metro line with eight stops, from the three security gates to the hands-on">
+      <path id="metro" d="M60,125 L1098,125" style="stroke: var(--accent); stroke-width: 8; stroke-linecap: round; fill: none; opacity: .25"/>
+      <path d="M60,125 L1098,125" style="stroke: var(--accent); stroke-width: 8; stroke-linecap: round; fill: none; stroke-dasharray: 1 22"/>
+      <circle r="9" class="d2"><animateMotion dur="8s" repeatCount="indefinite"><mpath href="#metro"/></animateMotion></circle>
+      <g id="stops"></g>
+    </svg>
+    <div style="margin-top:6px">
+      <div class="kicker" style="color:var(--muted)">Where Module 7 sits in the 40-hour course</div>
+      <div class="modmap">
+        <div class="mod"><b>M1</b>Messaging &amp; Kafka fundamentals</div>
+        <div class="mod"><b>M2</b>Install, setup &amp; CLI</div>
+        <div class="mod"><b>M3</b>Config, storage &amp; retention</div>
+        <div class="mod"><b>M4</b>Producing &amp; consuming</div>
+        <div class="mod"><b>M5</b>Cluster ops &amp; HA</div>
+        <div class="mod"><b>M6</b>Confluent platform</div>
+        <div class="mod now"><b>M7</b>Security &amp; RBAC</div>
+        <div class="mod"><b>M8</b>Monitoring &amp; tuning</div>
+        <div class="mod"><b>M9</b>Troubleshooting &amp; message loss</div>
+        <div class="mod"><b>M10</b>Ecosystem, DR &amp; capstone</div>
+      </div>
+      <div class="bands">
+        <div style="border-color:var(--p0);color:var(--p0)">Model</div>
+        <div style="border-color:var(--p1);color:var(--p1)">Apache Kafka administration</div>
+        <div style="border-color:var(--p4);color:var(--p4)">Confluent Kafka</div>
+        <div style="border-color:var(--p2);color:var(--p2)">Capstone</div>
+      </div>
+    </div>
+  </div>
+  <aside class="notes">Start with the mental model and the Apache Kafka baseline you have used since Module 3: SCRAM users and prefix ACLs. Then move to Confluent RBAC, service accounts, API keys and secrets on Cloud, and to LDAP, MDS and TLS on Platform. The service-account key you build today is the one your Module 8 to 10 labs and capstone phase B6 run with. Ask: who in your team owns application credentials today, the platform team or each application team?</aside>
+</section>
+
+<!-- ===================== 3. THREE GATES ===================== -->
+<section class="slide" data-title="Three gates">
+  <div class="kicker">Topic 3 · Authentication and authorization overview · the mental model</div>
+  <h2>Every request crosses <span class="hl">three gates</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 250" role="img" aria-label="A request from the billing service crosses three gates in order. Gate one, encryption: TLS protects it on the wire. Gate two, authentication: SASL, mutual TLS or an API key turns the connection into a principal such as User:sa-l07-app. Gate three, authorization: the broker checks whether that principal may perform the operation, Write, on the resource, Topic l07.cdr.voice, using an ACL or a role binding. Only then does the record reach the partition, and the decision is written to the audit log.">
+      <g id="gates"></g>
+    </svg>
+    <div class="cards4">
+      <div class="card"><p><b>Encrypt.</b> Like <code>SSLCIPH</code> on an MQ channel: TLS on a Kafka <em>listener</em>, client to broker and broker to broker.</p></div>
+      <div class="card"><p><b>Authenticate.</b> Like CHLAUTH plus <code>MCAUSER</code>: SASL, mTLS or an API key decides the <em>principal</em>.</p></div>
+      <div class="card"><p><b>Authorize.</b> Like <code>setmqaut</code> and the OAM: ACLs or RBAC role bindings decide what the principal may do.</p></div>
+      <div class="card"><p><b>Audit.</b> Like MQ authority events: Confluent writes each decision to an audit-log topic.</p></div>
+    </div>
+  </div>
+  <aside class="notes">This is the model for the whole module: three independent gates, each with its own configuration. Follow the dot. TLS only hides the bytes, authentication only produces a name, and only authorization says yes or no, so a perfectly encrypted connection can still be denied. Ask: if a client gets "SaslAuthenticationException", which gate failed, and what about "TopicAuthorizationException"?</aside>
+</section>
+
+<!-- ===================== 4. APACHE BASELINE ===================== -->
+<section class="slide" data-title="Apache baseline">
+  <div class="kicker">Topic 5 · The Apache Kafka baseline: SASL, SSL and ACLs</div>
+  <h2>On Apache Kafka, access is <span class="hl">a list of ACL rules</span></h2>
+  <div class="body">
+    <div style="display:grid;grid-template-columns:560px 1fr;gap:22px">
+      <svg viewBox="0 0 560 330" role="img" aria-label="One ACL has six parts: principal User:l07, permission Allow, operation All, resource type Topic, the name l07. with pattern type prefixed, and host star. The shared Apache cluster gives every learner four such rules: All on topics, groups and transactional IDs starting with their prefix, and Describe on the cluster. A write to l07.cdr.voice matches the topic rule and is allowed. A read from l08.cdr.voice matches no rule and is denied, because no matching ACL means deny.">
+        <g id="acl"></g>
+      </svg>
+      <div class="term sm"><div class="bar"><i></i><i></i><i></i></div><span class="c"># 1 · a SCRAM user, stored in the KRaft metadata</span>
+<span class="p">$</span> kafka-configs.sh --bootstrap-server $BS \
+    --command-config admin.properties --alter \
+    --entity-type users --entity-name <span class="h">l07</span> \
+    --add-config <span class="y">'SCRAM-SHA-512=[password=…]'</span>
+<span class="c"># 2 · prefix ACLs, as on the shared cluster</span>
+<span class="p">$</span> kafka-acls.sh --bootstrap-server $BS \
+    --command-config admin.properties --add \
+    --allow-principal <span class="h">User:l07</span> --operation <span class="y">All</span> \
+    --topic <span class="h">l07.</span> --resource-pattern-type <span class="y">prefixed</span>
+<span class="c">#   … the same for --group l07. and</span>
+<span class="c">#   --transactional-id l07.</span>
+<span class="c"># 3 · read back what a principal may do</span>
+<span class="p">$</span> kafka-acls.sh --bootstrap-server $BS \
+    --command-config admin.properties \
+    --list --principal <span class="h">User:l07</span></div>
+    </div>
+  </div>
+  <aside class="notes">This is exactly how the shared Apache cluster from Modules 3 to 5 was built, by infra/cluster/scripts/bootstrap-security.sh: one SCRAM-SHA-512 user per learner, and four prefix ACLs each. Walk through the six parts of one rule, then follow the two requests. There is no "deny everything else" line because the authorizer denies anything no rule allows. Ask: how many ACL lines would Mobily need for 200 applications, each with its own topics, groups and transactional IDs?</aside>
+</section>
+
+<!-- ===================== 5. RBAC MODEL ===================== -->
+<section class="slide" data-title="RBAC model">
+  <div class="kicker">Topic 1 · Confluent RBAC (Role-Based Access Control)</div>
+  <h2>RBAC grants <span class="hl">a role, not a list of operations</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 236" role="img" aria-label="A role binding has four parts: a principal, such as the service account for billing; a role, such as DeveloperRead; a scope, such as environment env-l07 and cluster lkc; and a resource, such as Topic l07.cdr. as a prefix. The role is a predefined bundle: DeveloperRead expands to Read and Describe, so you never list operations by hand. The binding is stored centrally, in the Confluent Cloud control plane or in MDS on Confluent Platform, and every broker enforces it.">
+      <g id="binding"></g>
+    </svg>
+    <div class="rules2" style="margin-top:12px">
+      <div class="card" style="border-left-color:var(--p4)"><h3>Roles are bundles</h3><p>Confluent defines the operations behind each role. You pick DeveloperRead, not Read plus Describe.</p></div>
+      <div class="card" style="border-left-color:var(--p3)"><h3>Scopes inherit</h3><p>A role on an environment covers every cluster and topic inside it. Bind as low as the job allows.</p></div>
+      <div class="card" style="border-left-color:var(--p0)"><h3>One model for the platform</h3><p>The same bindings cover Kafka topics, Schema Registry subjects, Connect connectors and ksqlDB clusters.</p></div>
+      <div class="card" style="border-left-color:var(--p2)"><h3>Central and delegable</h3><p>Bindings live in one place. On Platform you can bind LDAP groups, and a ResourceOwner can grant access to what it owns.</p></div>
+    </div>
+  </div>
+  <aside class="notes">Read the binding left to right as a sentence: "this principal has this role, at this scope, on this resource". The role is the big difference from ACLs: Confluent maintains the list of operations, so when Kafka adds an operation you do not chase every rule. ACLs still exist on Confluent and are checked alongside RBAC, which you will see in the comparison at the end. Ask: in MQ terms, is a role closer to an OAM group or to a single setmqaut command?</aside>
+</section>
+
+<!-- ===================== 6. ROLES AND SCOPES ===================== -->
+<section class="slide" data-title="Roles and scopes">
+  <div class="kicker">Topic 1 · Confluent RBAC · predefined roles and scopes</div>
+  <h2>Roles live at <span class="hl">a scope</span>, and they inherit downwards</h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 196" role="img" aria-label="Four nested scopes in Confluent Cloud: the organization contains environment env-l07, which contains the Basic cluster lkc, which contains resources such as Topic l07.cdr.voice and Group l07.billing. Admin roles attach to the outer scopes: OrganizationAdmin, EnvironmentAdmin and CloudClusterAdmin. Developer roles attach to resources: DeveloperRead, DeveloperWrite, DeveloperManage and ResourceOwner. A role granted on an outer scope applies to everything inside it. In the lab you are EnvironmentAdmin on env-lNN.">
+      <g id="scopes"></g>
+    </svg>
+    <table class="cmp tight" style="margin-top:10px">
+      <thead><tr><th>Role</th><th>Bound on</th><th>What it lets the principal do</th><th>Typical holder</th></tr></thead>
+      <tbody>
+        <tr><td>OrganizationAdmin</td><td>organization</td><td>Everything, including users, billing and every environment</td><td>the trainer</td></tr>
+        <tr><td>EnvironmentAdmin</td><td>environment</td><td>Everything in one environment, including its role bindings</td><td>you, on <code>env-lNN</code></td></tr>
+        <tr><td>CloudClusterAdmin</td><td>cluster</td><td>Manage one cluster, its topics and its access</td><td>a platform engineer</td></tr>
+        <tr><td>Operator</td><td>environment, cluster</td><td>See and operate resources, without reading the data</td><td>the NOC</td></tr>
+        <tr><td>DeveloperRead / Write</td><td>topic, group, transactional ID</td><td>Consume, or produce, on the named resources</td><td>application service accounts</td></tr>
+        <tr><td>ResourceOwner</td><td>topic, group, …</td><td>Full control of the resource, and grant it to others</td><td>owning team (your <code>lNN.</code> on Platform)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <aside class="notes">Point at the nesting first: a binding on an outer box flows into every inner box, which is why EnvironmentAdmin is a safe sandbox for you but far too much for an application. Confluent Platform uses the same developer roles and replaces the Cloud admin roles with SystemAdmin, ClusterAdmin, UserAdmin, SecurityAdmin and AuditAdmin. Ask: which row would you give an application, and which would you give the NOC?</aside>
+</section>
+
+<!-- ===================== 7. LEAST PRIVILEGE ===================== -->
+<section class="slide" data-title="Least privilege">
+  <div class="kicker">Topic 1 · Confluent RBAC · least privilege for the CDR pipeline</div>
+  <h2>One identity per component, <span class="hl">the narrowest role that works</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 258" role="img" aria-label="The CDR pipeline with one service account per component. Mediation has DeveloperWrite on Topic l07.cdr.voice and produces to it. Billing has DeveloperRead on the topic and on Group l07.billing and consumes from it. Fraud has DeveloperRead on the topic and on Group l07.fraud. The NOC has Operator on the cluster and can see topics and lag but not read records. When billing tries to write to the topic, the broker denies it because billing holds no write role.">
+      <g id="lp"></g>
+    </svg>
+    <div class="callout warn" style="margin-top:12px">
+      <div class="big">!</div>
+      <div><b>Common trap:</b> a consumer needs DeveloperRead on its <b>consumer group</b> as well as the topic, and a transactional producer needs DeveloperWrite on its <b>TransactionalId</b>. Miss one and the error names a resource you never thought about.</div>
+    </div>
+  </div>
+  <aside class="notes">This is the access matrix you build in capstone phase B6.1, drawn for three components. Each service account gets only the roles its component uses, so a compromised billing key can read CDRs but never write or delete them. Watch the red attempt: billing is authenticated, but authorization refuses the write. Ask: which identity in this picture would you give DeveloperManage to, if any?</aside>
+</section>
+
+<!-- ===================== 8. SERVICE ACCOUNTS & KEYS ===================== -->
+<section class="slide" data-title="Service accounts and API keys">
+  <div class="kicker">Topic 2 · API keys and secrets management (Confluent Cloud)</div>
+  <h2>An API key is a password <span class="hl">for an identity that holds roles</span></h2>
+  <div class="body">
+    <div style="display:grid;grid-template-columns:520px 1fr;gap:22px">
+      <svg viewBox="0 0 520 330" role="img" aria-label="You, as EnvironmentAdmin, create a service account and bind roles to it. You then create an API key owned by the service account and scoped to one Kafka cluster. The application connects with the key and secret over SASL_SSL. The cluster authenticates the key as the service account and authorizes the request with the service account's role bindings. A user-owned key from Module 6 is shown crossed out: it carries all of your own rights and stops working when your account is removed.">
+        <g id="sakey"></g>
+      </svg>
+      <div class="term sm"><div class="bar"><i></i><i></i><i></i></div><span class="c"># 1 · the identity (the lab pre-creates sa-$ME-app)</span>
+<span class="p">$</span> confluent iam service-account create <span class="h">sa-l07-billing</span> \
+    --description <span class="y">"billing consumer"</span>
+<span class="c"># 2 · its roles, on prefixed resources</span>
+<span class="p">$</span> confluent iam rbac role-binding create \
+    --principal <span class="h">User:$SA</span> --role <span class="y">DeveloperRead</span> \
+    --environment $ENV_ID --cloud-cluster $LKC \
+    --kafka-cluster $LKC \
+    --resource <span class="h">Topic:l07.cdr.</span> --prefix
+<span class="c">#   … and Group:l07.billing for the consumer group</span>
+<span class="c"># 3 · its key, scoped to one cluster</span>
+<span class="p">$</span> confluent api-key create --resource $LKC \
+    --service-account <span class="h">$SA</span> --description <span class="y">"billing"</span>
+<span class="c"># 4 · check what it can do</span>
+<span class="p">$</span> confluent iam rbac role-binding list \
+    --principal <span class="h">User:$SA</span> --environment $ENV_ID</div>
+    </div>
+  </div>
+  <aside class="notes">The key never holds permissions itself: it only proves "I am this service account", and the account's role bindings decide the rest. That is why the user-owned key from Module 6 is dangerous for applications: it carries your EnvironmentAdmin rights and dies when your account is removed. The commands follow infra/confluent/scripts/cc-provision.sh, which pre-created sa-lNN-app for you. Ask: what happens to the application if you delete the service account but not the key?</aside>
+</section>
+
+<!-- ===================== 9. SECRETS LIFECYCLE ===================== -->
+<section class="slide" data-title="Secrets lifecycle">
+  <div class="kicker">Topic 2 · API keys and secrets management · the lifecycle</div>
+  <h2>Secrets have a lifecycle: <span class="hl">store, rotate, revoke</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 222" role="img" aria-label="Key rotation over time. Key A is in use. You create key B, and its secret is shown once, so it goes straight into the secrets store. Clients are rolled onto key B while key A still works, so both keys are valid for a while. When traffic on key A has stopped, you delete key A. Clients never see a failed login.">
+      <g id="rotate"></g>
+    </svg>
+    <div class="rules2" style="margin-top:12px">
+      <div class="card" style="border-left-color:var(--p4)"><h3>The secret is shown once</h3><p>Confluent Cloud displays it only at creation. Store it at once, or delete the key and create another.</p></div>
+      <div class="card" style="border-left-color:var(--bad)"><h3>Never in git</h3><p>Keep secrets in a vault or secrets manager. Properties files with secrets stay outside the repository (capstone B6.2).</p></div>
+      <div class="card" style="border-left-color:var(--p2)"><h3>Rotate with overlap</h3><p>A service account can hold more than one key. Add the new key, roll the clients, then delete the old one.</p></div>
+      <div class="card" style="border-left-color:var(--p5)"><h3>On Platform: protect config files</h3><p><code>confluent secret</code> encrypts passwords inside <code>server.properties</code> and component configs.</p></div>
+    </div>
+  </div>
+  <aside class="notes">Treat the key and secret like an MQ channel password or a certificate: they have an owner, a store and an expiry plan. The overlap in the middle of the timeline is the whole trick, because two valid keys mean clients can switch without an outage. Deleting the old key is also how you revoke a leaked secret, and it takes effect at once. Ask: where does your team keep application passwords today, and who can read them?</aside>
+</section>
+
+<!-- ===================== 10. PLATFORM AUTHENTICATION ===================== -->
+<section class="slide" data-title="Platform authentication">
+  <div class="kicker">Topic 3 · Confluent Platform authentication · the shared lab cluster</div>
+  <h2>On Platform, <span class="hl">each listener</span> picks how callers prove who they are</h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 262" role="img" aria-label="A Confluent Server broker in the shared lab cluster has five entry points. CLIENT on port 9092 uses SASL_SSL with PLAIN, and the broker checks the password against OpenLDAP; learners and kafka command-line tools use it. BROKER on 9091 uses mutual TLS with host certificates for replication between brokers. INTERNAL on 9071 uses SASL_SSL with an OAUTHBEARER token from MDS for Schema Registry, Connect, ksqlDB and Control Center. Controllers listen on 9093 with mutual TLS. MDS and the Admin REST API listen on 8090 over HTTPS and turn an LDAP login into a token for the Confluent CLI and Control Center.">
+      <g id="listen"></g>
+    </svg>
+    <div class="callout warn" style="margin-top:12px">
+      <div class="big">!</div>
+      <div><b>MQ admins:</b> SASL PLAIN is not "plaintext". On the CLIENT listener the password travels inside TLS (SASL_SSL), and the broker checks it against LDAP. PLAIN over SASL_PLAINTEXT would expose it on the wire.</div>
+    </div>
+  </div>
+  <aside class="notes">These are the real listeners of the shared Confluent Platform cluster from infra/guides/confluent-platform-cluster-connect.md. Each listener has its own protocol and its own way to authenticate: people come in with LDAP passwords, servers prove themselves with certificates, and the platform services carry short-lived tokens from MDS. Only 9092, 8090 and the service ports are open to your VM. Ask: why do the brokers and controllers use certificates rather than passwords to talk to each other?</aside>
+</section>
+
+<!-- ===================== 11. PLATFORM AUTHORIZATION ===================== -->
+<section class="slide" data-title="Platform authorization">
+  <div class="kicker">Topic 3 · Confluent Platform authorization · MDS, RBAC and audit</div>
+  <h2>MDS stores the role bindings; <span class="hl">every broker enforces them</span></h2>
+  <div class="body">
+    <div style="display:grid;grid-template-columns:600px 1fr;gap:20px">
+      <svg viewBox="0 0 600 320" role="img" aria-label="Requests from the Confluent CLI over REST, from kafka-topics.sh over the Kafka protocol and from Control Center all reach the same authorizer inside Confluent Server. It checks two rule providers, CONFLUENT for RBAC role bindings kept by MDS and KRAFT_ACL for classic ACLs. Creating l07.cdr.roaming is allowed by ResourceOwner on Topic l07. Creating other.topic is denied with HTTP 403 or TopicAuthorizationException. Both decisions are recorded in the confluent-audit-log-events topic.">
+        <g id="authz"></g>
+      </svg>
+      <div class="term sm"><div class="bar"><i></i><i></i><i></i></div><span class="c"># log in to MDS with your LDAP user</span>
+<span class="p">$</span> confluent login --url $MDS_URL \
+    --certificate-authority-path $CP_CA
+<span class="c"># the Kafka cluster ID that bindings refer to</span>
+<span class="p">$</span> confluent cluster describe --url $MDS_URL \
+    --certificate-authority-path $CP_CA
+<span class="c"># your bindings: ResourceOwner on Topic:l07.</span>
+<span class="c"># and Group:l07. (prefixed)</span>
+<span class="p">$</span> confluent iam rbac role-binding list \
+    --principal <span class="h">User:l07</span> --kafka-cluster $CP_ID
+<span class="c"># as ResourceOwner, grant read-only on your prefix</span>
+<span class="p">$</span> confluent iam rbac role-binding create \
+    --principal <span class="h">User:l08</span> --role <span class="y">DeveloperRead</span> \
+    --kafka-cluster $CP_ID \
+    --resource <span class="h">Topic:l07.</span> --prefix</div>
+    </div>
+  </div>
+  <aside class="notes">You proved this in Module 6 Lab 03: the CLI, kafka-topics.sh and Control Center all hit one authorizer, and other.topic was refused by all three. The broker setting confluent.authorizer.access.rule.providers=CONFLUENT,KRAFT_ACL is why role bindings and ACLs work side by side. Denials do not go to kafka-authorizer.log; Confluent Server writes them to the confluent-audit-log-events topic. Ask: which identity would the trainer need to read that audit topic, and should learners have it?</aside>
+</section>
+
+<!-- ===================== 12. ENCRYPTION & NETWORK ===================== -->
+<section class="slide" data-title="Encryption and network">
+  <div class="kicker">Topic 4 · Encryption and network security in Confluent-managed environments</div>
+  <h2>Protect three layers: <span class="hl">the network, the wire and the disk</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 186" role="img" aria-label="Three layers of protection around a broker. The network layer decides who can reach the port: in the lab, security groups allow only the lab VMs. Encryption in transit wraps the connection in TLS between client and broker and between brokers and controllers. Encryption at rest protects the log segments on disk. A record travels from the client through all three layers and lands encrypted on disk.">
+      <g id="layers"></g>
+    </svg>
+    <table class="cmp" style="margin-top:10px">
+      <thead><tr><th>Layer</th><th>Confluent Cloud</th><th>Confluent Platform (lab)</th><th>Apache Kafka (lab)</th></tr></thead>
+      <tbody>
+        <tr><td>In transit</td><td>TLS always on: clients use SASL_SSL</td><td>TLS on every listener from the course CA; mTLS between brokers and controllers</td><td>SASL_PLAINTEXT inside the VPC: no TLS</td></tr>
+        <tr><td>At rest</td><td>Encrypted by default; bring your own key on Dedicated</td><td>Your job: encrypted volumes</td><td>Your job: encrypted volumes</td></tr>
+        <tr><td>Network</td><td>Public endpoints, or private networking on Enterprise and Dedicated</td><td>Private subnets; security groups allow only the lab VMs</td><td>Private subnets; same rule</td></tr>
+        <tr><td>Config secrets</td><td>No broker files to protect</td><td><code>confluent secret</code> encrypts config passwords</td><td>Plain files: lock down permissions</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <aside class="notes">Work through the layers from the outside in: first who can even reach the port, then whether the bytes are readable on the wire, then whether the disk is readable if a volume walks away. The Apache lab cluster deliberately runs SASL_PLAINTEXT inside the VPC, so SCRAM keeps passwords off the wire but the records themselves are not encrypted; production would add TLS. On Cloud most of this is done for you, but private networking and your own keys depend on the cluster type. Ask: for CDRs that contain MSISDNs, which row would your data-protection officer ask about first?</aside>
+</section>
+
+<!-- ===================== 13. COMPARISON ===================== -->
+<section class="slide" data-title="Apache vs Confluent">
+  <div class="kicker">Topic 5 · Comparing the Confluent security model to Apache Kafka ACLs, SASL and SSL</div>
+  <h2>The same prefix rule, <span class="hl">written two ways</span></h2>
+  <div class="body">
+    <svg viewBox="0 0 1160 210" role="img" aria-label="The lab grants every learner the same rights on both shared clusters. On the Apache cluster this takes four prefix ACLs: All on topics l07., All on groups l07., All on transactional IDs l07., and Describe and DescribeConfigs on the cluster. On Confluent Platform the topic and group ACLs become two ResourceOwner role bindings, there is no transactional ID grant, and the cluster rule stays an ordinary ACL, because RBAC and ACLs are checked together.">
+      <g id="mirror"></g>
+    </svg>
+    <table class="cmp" style="margin-top:10px">
+      <thead><tr><th>Question</th><th>Apache Kafka</th><th>Confluent (Cloud and Platform)</th></tr></thead>
+      <tbody>
+        <tr><td>Where identities live</td><td>SCRAM users in the cluster, or certificate names</td><td>Cloud users and service accounts; LDAP users and groups through MDS</td></tr>
+        <tr><td>How clients authenticate</td><td>SASL SCRAM / PLAIN / GSSAPI / OAUTHBEARER, or mTLS</td><td>API keys over SASL_SSL, OAuth; on Platform LDAP passwords, mTLS and MDS tokens</td></tr>
+        <tr><td>How access is granted</td><td>ACLs: one rule per principal, operation and resource</td><td>Role bindings at a scope, plus ACLs when you need them</td></tr>
+        <tr><td>Who can see the result</td><td>Broker authorizer log</td><td>Structured audit-log events, role-binding listings</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <aside class="notes">This is not theory: infra/cluster/scripts/bootstrap-security.sh built the left side and infra/confluent/scripts/cp-rbac-learners.sh built the right side, to give you the same rights on both clusters. Notice that the cluster Describe rule is still an ACL on Confluent: RBAC does not replace ACLs, it sits beside them. You will write this comparison for your own access matrix in capstone phase B6.6. Ask: at Mobily's scale, which column is easier to audit, and why?</aside>
+</section>
+
+<!-- ===================== 14. HANDS-ON ===================== -->
+<section class="slide" data-title="Hands-on">
+  <div class="kicker">Hands-on · RBAC and API keys on Confluent Cloud and the shared Confluent Platform</div>
+  <h2>Grant the narrowest roles, then <span class="hl">prove what is denied</span></h2>
+  <div class="body">
+    <div style="display:grid;grid-template-columns:480px 1fr;gap:20px">
+      <svg viewBox="0 0 480 300" role="img" aria-label="From your lab VM you work in two places. In Confluent Cloud, in your environment env-lNN where you are EnvironmentAdmin, you bind roles to the pre-created service account sa-lNN-app and give it its own API key, which your test clients use. On the shared Confluent Platform cluster you log in as LDAP user lNN, list your ResourceOwner bindings on the lNN prefix, and grant read-only access to a classmate.">
+        <g id="labenv"></g>
+      </svg>
+      <div class="term sm"><div class="bar"><i></i><i></i><i></i></div><span class="c"># Lab 01 · roles and a key for sa-$ME-app</span>
+<span class="p">$</span> confluent iam service-account list        <span class="c"># find sa-$ME-app</span>
+<span class="p">$</span> confluent iam rbac role-binding create --principal <span class="h">User:$SA</span> \
+    --role <span class="y">DeveloperWrite</span> --environment $ENV_ID \
+    --cloud-cluster $LKC --kafka-cluster $LKC \
+    --resource <span class="h">Topic:$ME.cdr.</span> --prefix
+<span class="p">$</span> confluent api-key create --resource $LKC --service-account <span class="h">$SA</span>
+<span class="c"># Lab 02 · validate with the service-account key ($SA_CFG)</span>
+<span class="p">$</span> kafka-console-producer.sh --bootstrap-server $CCLOUD \
+    --command-config $SA_CFG --topic <span class="h">$ME.cdr.voice</span>      <span class="c"># allowed</span>
+<span class="p">$</span> kafka-console-consumer.sh --bootstrap-server $CCLOUD \
+    --command-config $SA_CFG --topic <span class="b">$ME.cdr.voice</span> \
+    --group $ME.billing        <span class="c"># denied: no read role</span>
+<span class="c"># … then on Platform, as LDAP user $ME</span>
+<span class="p">$</span> confluent iam rbac role-binding list --principal <span class="h">User:$ME</span> \
+    --kafka-cluster $CP_ID</div>
+    </div>
+    <div class="labs" style="grid-template-columns:1fr 1fr">
+      <div class="card"><span class="n">01</span><div><h3>Configure RBAC roles and API keys on the shared Confluent Kafka cluster</h3><p>Bind the narrowest roles to <code>sa-$ME-app</code>, create its key, retire your Module 6 user key, and review your Platform bindings.</p></div></div>
+      <div class="card"><span class="n">02</span><div><h3>Validate access with test users and service accounts</h3><p>Prove each allowed path works and each forbidden one fails, and record the exact error for every denial.</p></div></div>
+    </div>
+  </div>
+  <aside class="notes">labs/module-07 is not in the repo yet, so these commands are the runtime companion for the deck. The environment follows infra/LAB-SETUP.md sections 6 and 7, and the exercise is a small version of capstone phase B6. On Cloud you are EnvironmentAdmin, so you can bind roles to sa-lNN-app; on Platform you can only grant on your own lNN prefix. Watch for the denial: if the consumer succeeds, your binding is wider than you think. Ask: which exception do you expect, TopicAuthorizationException or GroupAuthorizationException, and why?</aside>
+</section>
+
+<!-- ===================== 15. RECAP ===================== -->
+<section class="slide" data-title="Recap">
+  <div class="kicker">Wrap-up</div>
+  <h2>Key takeaways, and a quick self-check</h2>
+  <div class="body recap">
+    <div class="take">
+      <div class="card"><h3><i>01</i>Three gates</h3><p>Encrypt, authenticate, authorize: each one is configured separately, and each one fails with its own error.</p></div>
+      <div class="card"><h3><i>02</i>ACLs vs roles</h3><p>ACLs list operations per principal. RBAC binds a predefined role at a scope, and both are checked together.</p></div>
+      <div class="card"><h3><i>03</i>Least privilege</h3><p>One service account per component, Developer roles on prefixed topics, groups and transactional IDs.</p></div>
+      <div class="card"><h3><i>04</i>Keys belong to identities</h3><p>An API key only proves who is calling. The owner's role bindings decide what the call may do.</p></div>
+      <div class="card"><h3><i>05</i>Secrets lifecycle</h3><p>Shown once, kept out of git, rotated with two overlapping keys, revoked by deleting the key.</p></div>
+      <div class="card"><h3><i>06</i>Platform plumbing</h3><p>LDAP passwords on 9092, mTLS between servers, MDS tokens on 8090, audit events in a topic.</p></div>
+    </div>
+    <div>
+      <div class="quiz">
+        <div class="q"><span class="hint">click to reveal</span>A consumer has DeveloperRead on <code>Topic:l07.cdr.</code> but still fails. What is missing?<div class="a">A role on its consumer group: DeveloperRead on <code>Group:l07.billing</code>.</div></div>
+        <div class="q"><span class="hint">click to reveal</span>Why should the billing app not use your Module 6 API key?<div class="a">It carries your EnvironmentAdmin rights and dies with your account. A service-account key carries only that app's roles.</div></div>
+        <div class="q"><span class="hint">click to reveal</span>Is SASL PLAIN on the Platform CLIENT listener unsafe?<div class="a">No: it runs inside TLS (SASL_SSL), and the broker checks the password against LDAP.</div></div>
+        <div class="q"><span class="hint">click to reveal</span>How do you rotate an API key without an outage?<div class="a">Create a second key, roll the clients onto it, check that the old key is idle, then delete it.</div></div>
+      </div>
+      <div class="next"><div><div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;opacity:.85">Next up</div><b>Module 8: Monitoring &amp; performance tuning with Confluent Kafka</b></div><span style="font-size:26px">→</span></div>
+    </div>
+  </div>
+  <aside class="notes">Run the self-check as a poll before you reveal each answer, then start Lab 01 so every learner's service account has its key before the validation lab. Keep the service-account key and its properties file outside git: capstone phase B6 runs every component with its own service-account key.</aside>
+</section>
+</div></div>
+
+<div class="notes-panel" id="notesPanel"><h4>Speaker notes</h4><div id="notesText"></div></div>
+<div class="controls">
+  <button id="prev" aria-label="Previous slide">←</button>
+  <button id="counter" aria-label="Slide number" disabled style="cursor:default"></button>
+  <button id="next" aria-label="Next slide">→</button>
+  <button id="notesBtn" title="Speaker notes (N)">Notes</button>
+  <button id="themeBtn" title="Toggle theme (T)">Theme</button>
+  <button id="fsBtn" title="Fullscreen (F)">⛶</button>
+</div>
+
+<script>
+(function () {
+  const NS = "http://www.w3.org/2000/svg";
+  const el = (tag, attrs = {}, parent, text) => {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (text != null) n.textContent = text;
+    if (parent) parent.appendChild(n);
+    return n;
+  };
+  const txt = (parent, x, y, s, cls, lh = 14) => {
+    const lines = String(s).split("\n");
+    const t = el("text", { x, y: y - ((lines.length - 1) * lh) / 2, class: cls }, parent);
+    lines.forEach((l, i) => el("tspan", { x, dy: i ? lh : 0 }, t, l));
+    return t;
+  };
+  const dot = (parent, cls, path, dur, begin = 0, r = 7) => {
+    const c = el("circle", { r, class: cls }, parent);
+    el("animateMotion", { dur: dur + "s", begin: begin + "s", repeatCount: "indefinite", path }, c);
+    return c;
+  };
+  // A dot that travels a path only between fractions t0..t1 of a shared cycle
+  const seqDot = (parent, cls, path, dur, t0, t1, r = 7) => {
+    const c = el("circle", { r, class: cls, opacity: 0 }, parent);
+    el("animateMotion", { dur: dur + "s", repeatCount: "indefinite", keyPoints: "0;0;1;1", keyTimes: `0;${t0};${t1};1`, calcMode: "linear", path }, c);
+    el("animate", { attributeName: "opacity", values: "0;1;0", keyTimes: `0;${t0};${t1}`, dur: dur + "s", calcMode: "discrete", repeatCount: "indefinite" }, c);
+    return c;
+  };
+  // Show a node from fraction t of the cycle until near the end
+  const appear = (node, t, dur = 8, until = 0.94) =>
+    el("animate", { attributeName: "opacity", values: "0;1;0", keyTimes: `0;${t};${until}`, dur: dur + "s", calcMode: "discrete", repeatCount: "indefinite" }, node);
+  // Show a node only during one phase of a multi-phase cycle
+  const phase = (node, i, n, dur) => {
+    const vals = Array.from({ length: n }, (_, k) => (k === i ? 1 : 0)).join(";");
+    const kt = Array.from({ length: n }, (_, k) => (k / n).toFixed(4)).join(";");
+    el("animate", { attributeName: "opacity", values: vals, keyTimes: kt, dur: dur + "s", calcMode: "discrete", repeatCount: "indefinite" }, node);
+  };
+
+
+  const R = (p, x, y, w, h, cls) => el("rect", { x, y, width: w, height: h, rx: 10, class: cls }, p);
+  const T = (p, x, y, s, cls) => el("text", { x, y, class: cls || "t" }, p, s);
+  // Show a node only between fractions a..b of the cycle
+  const win = (node, a, b, dur) => appear(node, a, dur, b);
+  // A box with a bold title and a muted second line, left-aligned or centred
+  const card = (p, x, y, w, h, cls, a, b, mid) => {
+    R(p, x, y, w, h, cls);
+    const tx = mid ? x + w / 2 : x + 14, c = mid ? " mid" : "";
+    T(p, tx, y + h / 2 - (b ? 3 : -5), a, "t" + c);
+    if (b) T(p, tx, y + h / 2 + 15, b, "m" + c);
+  };
+  const sty = (n, s) => { n.setAttribute("style", s); return n; };
+  const head = (p, x, y, s, c = "") => sty(T(p, x, y, s, "m" + c), "font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:11.5px");
+  const cross = (p, x, y) => sty(T(p, x, y, "✕", "t mid bad-t"), "font-size:22px;font-weight:800");
+
+  /* ---- Slide 1: one request allowed, one stopped at the third gate ---- */
+  const ta = document.getElementById("title-anim");
+  const TD = 8;
+  card(ta, 0, 150, 120, 80, "k2", "billing", "sa-l07-app", true);
+  [[150, "k5", "① TLS", "encrypt"], [250, "k0", "② AuthN", "who are you?"], [350, "k4", "③ AuthZ", "may you?"]].forEach(([x, cls, a, b]) => {
+    R(ta, x, 20, 80, 260, cls);
+    T(ta, x + 40, 46, a, "t mid");
+    sty(T(ta, x + 40, 64, b, "m mid"), "font-size:11.5px");
+  });
+  [[.05, .14], [.16, .25], [.27, .36]].forEach(([a, b], i) =>
+    win(el("rect", { x: 147 + i * 100, y: 17, width: 86, height: 266, rx: 12, class: "frame" }, ta), a, b, TD));
+  R(ta, 470, 20, 110, 260, "k3");
+  T(ta, 525, 46, "Kafka", "t mid");
+  T(ta, 525, 64, "cluster", "m mid");
+  sty(T(ta, 525, 128, "l07.cdr.voice", "m mid mono"), "font-size:11px");
+  for (let i = 0; i < 5; i++) {
+    R(ta, 480 + i * 19, 138, 15, 24, i < 4 ? "cons" : "ghost").setAttribute("rx", 4);
+    if (i === 4) appear(R(ta, 480 + i * 19, 138, 15, 24, "cons"), .4, TD, .97).parentNode.setAttribute("rx", 4);
+  }
+  seqDot(ta, "d2", "M120,150 L476,150", TD, .02, .4, 7);
+  seqDot(ta, "d1", "M120,230 L346,230", TD, .5, .78, 7);
+  const no = el("g", {}, ta);
+  cross(no, 362, 238);
+  win(no, .78, .97, TD);
+  R(ta, 350, 292, 230, 30, "box2").setAttribute("rx", 7);
+  T(ta, 362, 312, "audit log", "m");
+  const ok1 = sty(T(ta, 470, 312, "✓ allow", "m ok-t"), "font-weight:700");
+  appear(ok1, .38, TD, .97);
+  const no1 = sty(T(ta, 528, 312, "✕ deny", "m bad-t"), "font-weight:700");
+  appear(no1, .8, TD, .97);
+  T(ta, 0, 352, "● write l07.cdr.voice: passes all three gates", "m ok-t");
+  T(ta, 0, 374, "● read l08.cdr.voice: stopped at ③, someone else's prefix", "m bad-t");
+
+  /* ---- Slide 2: agenda stops ---- */
+  const stops = [
+    ["Three gates", "encrypt · authN · authZ"], ["Apache baseline", "SCRAM · ACLs"], ["Confluent RBAC", "roles · scopes"],
+    ["Least privilege", "one identity each"], ["Keys & secrets", "service accounts"], ["Platform security", "LDAP · MDS · audit"],
+    ["Encrypt & compare", "wire · disk · ACL vs RBAC"], ["Hands-on", "grant and validate"]
+  ];
+  const sg = document.getElementById("stops");
+  const step = 1038 / (stops.length - 1);
+  stops.forEach(([a, b], i) => {
+    const x = 60 + i * step, up = i % 2 === 0, last = i === stops.length - 1;
+    el("circle", { cx: x, cy: 125, r: 18, style: `fill:${last ? "var(--p2)" : "var(--slide)"};stroke:${last ? "var(--p2)" : "var(--accent)"};stroke-width:4` }, sg);
+    T(sg, x, 131, last ? "▶" : String(i + 1), "t mid");
+    sg.lastChild.setAttribute("style", `fill:${last ? "#fff" : "var(--accent)"};font-size:15px`);
+    T(sg, x, up ? 68 : 182, a, "t mid");
+    T(sg, x, up ? 86 : 200, b, "m mid");
+  });
+
+  /* ---- Slide 3: the three gates ---- */
+  const gg = document.getElementById("gates");
+  const GD = 8;
+  card(gg, 0, 125, 150, 70, "k2", "billing-svc", "Java client", true);
+  const gates = [
+    [200, "k5", "① Encrypt", "TLS on the listener", "can anyone read it?", "bytes are ciphertext", .2],
+    [450, "k0", "② Authenticate", "SASL · mTLS · API key", "who are you?", "User:sa-l07-app", .42],
+    [700, "k4", "③ Authorize", "ACL or role binding", "may you do this?", "Write l07.cdr.voice ✓", .64]
+  ];
+  gates.forEach(([x, cls, a, b, q, out, t], i) => {
+    R(gg, x, 30, 210, 170, cls);
+    T(gg, x + 105, 58, a, "t mid");
+    T(gg, x + 105, 80, b, "m mid");
+    sty(T(gg, x + 105, 104, q, "t mid"), "font-size:14px;font-style:italic;font-weight:500");
+    const o = sty(T(gg, x + 105, 190, out, "m mid mono"), "font-size:12px;fill:var(--text)");
+    appear(o, t, GD, .94);
+    win(el("rect", { x: x - 3, y: 27, width: 216, height: 176, rx: 12, class: "frame" }, gg), [.036, .25, .46][i], [.2, .42, .64][i], GD);
+  });
+  [[410, 448], [660, 698]].forEach(([a, b]) => el("path", { d: `M${a},160 L${b},160`, class: "ln-soft" }, gg));
+  el("path", { d: "M150,160 L198,160", class: "ln arrow" }, gg);
+  el("path", { d: "M910,160 L958,160", class: "ln arrow" }, gg);
+  R(gg, 960, 110, 200, 100, "k3");
+  T(gg, 1060, 134, "broker", "t mid");
+  sty(T(gg, 1060, 154, "l07.cdr.voice", "m mid mono"), "font-size:12px");
+  for (let i = 0; i < 6; i++) {
+    R(gg, 990 + i * 24, 166, 20, 26, i < 5 ? "cons" : "ghost").setAttribute("rx", 4);
+    if (i === 5) appear(R(gg, 990 + i * 24, 166, 20, 26, "cons"), .66, GD, .94).parentNode.setAttribute("rx", 4);
+  }
+  seqDot(gg, "d2", "M150,160 L958,160", GD, .02, .66, 7);
+  el("path", { d: "M805,200 L805,214", class: "ln arrow" }, gg);
+  const au = el("g", {}, gg);
+  R(au, 700, 216, 460, 30, "box2").setAttribute("rx", 7);
+  sty(T(au, 714, 236, "audit log · allow · User:sa-l07-app · Write · Topic:l07.cdr.voice", "m mono"), "font-size:12px");
+  appear(au, .68, GD, .94);
+  T(gg, 0, 18, "TLS hides the bytes · authentication names the caller · authorization says yes or no", "m");
+
+  /* ---- Slide 4: anatomy of an ACL, and how a request is matched ---- */
+  const ag = document.getElementById("acl");
+  const AD = 9;
+  head(ag, 0, 12, "one ACL, six parts");
+  let ax = 0;
+  [["principal", "User:l07", 110], ["permission", "Allow", 72], ["operation", "All", 64], ["resource", "Topic", 70], ["name · pattern", "l07. prefixed", 138], ["host", "*", 50]]
+    .forEach(([k, v, w]) => {
+      R(ag, ax, 24, w, 56, "box2").setAttribute("rx", 8);
+      sty(T(ag, ax + 10, 44, k, "m"), "font-size:11px");
+      sty(T(ag, ax + 10, 68, v, "t mono"), "font-size:13px");
+      ax += w + 11;
+    });
+  head(ag, 0, 108, "the shared Apache cluster: four rules per learner");
+  const rules = ["User:l07 · All · Topic:l07. · prefixed", "User:l07 · All · Group:l07. · prefixed",
+                 "User:l07 · All · TransactionalId:l07. · prefixed", "User:l07 · Describe, DescribeConfigs · Cluster"];
+  rules.forEach((s, i) => {
+    const y = 118 + i * 34;
+    R(ag, 0, y, 560, 28, "box").setAttribute("rx", 7);
+    sty(T(ag, 12, y + 19, s, "m mono"), "font-size:12.5px;fill:var(--text)");
+  });
+  const hitA = el("rect", { x: -3, y: 115, width: 566, height: 34, rx: 9, class: "frame" }, ag);
+  phase(hitA, 0, 2, AD);
+  const scan = el("rect", { x: -3, y: 115, width: 566, height: 136, rx: 9, class: "frame-m" }, ag);
+  phase(scan, 1, 2, AD);
+  [["Write l07.cdr.voice", "k2", "→ matches rule 1 · allowed", "ok-t"], ["Read l08.cdr.voice", "k1", "→ no rule matches · denied", "bad-t"]]
+    .forEach(([req, cls, out, oc], i) => {
+      const y = 262 + i * 36;
+      R(ag, 0, y, 220, 30, cls).setAttribute("rx", 7);
+      sty(T(ag, 12, y + 20, req, "t mono"), "font-size:13px");
+      const o = sty(T(ag, 236, y + 20, out, "m " + oc), "font-weight:700");
+      phase(o, i, 2, AD);
+      seqDot(ag, i ? "d1" : "d2", `M220,${y + 15} C 300,${y + 15} 300,${i ? 190 : 132} 360,${i ? 190 : 132}`, AD, i * .5 + .02, i * .5 + .18, 5);
+    });
+
+  /* ---- Slide 5: anatomy of a role binding ---- */
+  const bd = document.getElementById("binding");
+  const BD = 8;
+  [["k0", "principal", "User:sa-l07-billing"], ["k4", "role", "DeveloperRead"], ["k3", "scope", "env-l07 › lkc-…"], ["k2", "resource", "Topic:l07.cdr. (prefix)"]]
+    .forEach(([cls, k, v], i) => {
+      const x = i * 300;
+      R(bd, x, 10, 260, 84, cls);
+      head(bd, x + 16, 36, k);
+      sty(T(bd, x + 16, 68, v, "t mono"), "font-size:15px");
+      phase(el("rect", { x: x - 3, y: 7, width: 266, height: 90, rx: 12, class: "frame" }, bd), i, 4, BD);
+      if (i < 3) {
+        el("path", { d: `M${x + 262},52 L${x + 298},52`, class: "ln arrow" }, bd);
+        T(bd, x + 280, 42, ["has", "at", "on"][i], "m mid");
+      }
+    });
+  el("path", { d: "M430,96 L430,118", class: "ln-acc arrow-acc" }, bd);
+  [["Read", 310, 70], ["Describe", 390, 96]].forEach(([s, x, w]) => {
+    R(bd, x, 122, w, 30, "box").setAttribute("rx", 15);
+    T(bd, x + w / 2, 142, s, "cell-t");
+  });
+  T(bd, 500, 142, "DeveloperRead expands to its operations: Confluent maintains the list, you never type it", "m");
+  card(bd, 0, 176, 470, 52, "box2", "Stored centrally", "Confluent Cloud control plane · MDS on Confluent Platform");
+  [0, 1, 2].forEach(k => {
+    const x = 640 + k * 180;
+    card(bd, x, 176, 160, 52, "k3", "broker " + (k + 1), "enforces it", true);
+    const p = `M470,202 C 540,202 ${x - 40},140 ${x + 80},174`;
+    el("path", { d: p, class: "ln-soft arrow" }, bd);
+    seqDot(bd, "d4", p, BD, .1 + k * .25, .3 + k * .25, 5);
+  });
+
+  /* ---- Slide 6: nested scopes ---- */
+  const sc = document.getElementById("scopes");
+  const SD = 8;
+  const boxes = [[0, 0, 1160, 192, "box2"], [150, 24, 1000, 162, "box"], [330, 48, 810, 132, "k3"], [560, 72, 570, 102, "box"]];
+  boxes.forEach(([x, y, w, h, cls]) => R(sc, x, y, w, h, cls));
+  boxes.forEach(([x, y, w, h], i) => phase(el("rect", { x: x - 3, y: y - 3, width: w + 6, height: h + 6, rx: 12, class: "frame" }, sc), i, 4, SD));
+  const chip = (x, y, w, s, cls = "k4") => { R(sc, x, y, w, 26, cls).setAttribute("rx", 13); T(sc, x + w / 2, y + 17, s, "cell-t"); };
+  T(sc, 14, 26, "Organization", "t");
+  T(sc, 14, 44, "trainer-owned", "m");
+  chip(8, 150, 136, "OrganizationAdmin");
+  T(sc, 164, 50, "Environment", "t");
+  T(sc, 164, 68, "env-l07", "m mono");
+  chip(158, 150, 164, "EnvironmentAdmin");
+  sty(T(sc, 240, 134, "← you, in the lab", "m mid acc"), "font-weight:700");
+  T(sc, 344, 74, "Cluster", "t");
+  T(sc, 344, 92, "lkc-… · Basic", "m mono");
+  chip(338, 112, 214, "CloudClusterAdmin");
+  chip(338, 144, 214, "Operator");
+  T(sc, 574, 96, "Resources", "t");
+  T(sc, 664, 96, "DeveloperRead · DeveloperWrite · DeveloperManage · ResourceOwner", "m");
+  [["Topic:l07.cdr.voice", 574, 190], ["Group:l07.billing", 774, 170], ["TransactionalId:l07.", 954, 166]].forEach(([s, x, w]) => {
+    R(sc, x, 112, w, 44, "k2");
+    sty(T(sc, x + w / 2, 139, s, "t mid mono"), "font-size:11.5px");
+  });
+  dot(sc, "d4", "M240,176 C 400,186 520,186 674,158", 4, 0, 5);
+
+  /* ---- Slide 7: least privilege in the CDR pipeline ---- */
+  const lp = document.getElementById("lp");
+  const LD = 9;
+  card(lp, 0, 98, 300, 64, "k0", "mediation", "DeveloperWrite · Topic:l07.cdr.voice");
+  R(lp, 390, 88, 300, 84, "k3");
+  sty(T(lp, 540, 112, "Topic l07.cdr.voice", "t mid mono"), "font-size:14px");
+  for (let i = 0; i < 6; i++) R(lp, 412 + i * 45, 126, 38, 32, "cons").setAttribute("rx", 5);
+  [[10, "k2", "billing", "DeveloperRead · topic + Group:l07.billing"], [96, "k2", "fraud", "DeveloperRead · topic + Group:l07.fraud"],
+   [182, "k5", "NOC", "Operator · sees topics and lag, not records"]].forEach(([y, cls, a, b]) => card(lp, 860, y, 300, 64, cls, a, b));
+  const pw = "M300,130 L388,130";
+  el("path", { d: pw, class: "ln arrow" }, lp);
+  seqDot(lp, "d0", pw, LD, .02, .16, 6);
+  [["M690,112 C 780,112 770,42 858,42", "d2", .18], ["M690,140 C 780,140 770,128 858,128", "d2", .3]].forEach(([d, c, t]) => {
+    el("path", { d, class: "ln arrow" }, lp);
+    seqDot(lp, c, d, LD, t, t + .16, 6);
+  });
+  const noc = "M858,214 C 780,214 760,172 700,166";
+  el("path", { d: noc, class: "ln-soft arrow", style: "stroke-dasharray:4 4" }, lp);
+  seqDot(lp, "d5", noc, LD, .4, .52, 4);
+  T(lp, 790, 238, "metadata only", "m mid");
+  const deny = "M858,52 C 790,52 760,96 700,100";
+  seqDot(lp, "d1", deny, LD, .6, .74, 6);
+  const dn = el("g", {}, lp);
+  cross(dn, 712, 92);
+  sty(T(dn, 540, 206, "billing tries to Write → TopicAuthorizationException", "m mid bad-t"), "font-weight:700");
+  win(dn, .74, .97, LD);
+  T(lp, 0, 20, "one service account per component · no component may delete topics", "m");
+
+  /* ---- Slide 8: service account → roles + key → application ---- */
+  const sk = document.getElementById("sakey");
+  const KD = 9;
+  card(sk, 0, 0, 240, 56, "k0", "You", "EnvironmentAdmin · env-l07");
+  card(sk, 280, 0, 240, 56, "k2", "sa-l07-billing", "service account");
+  card(sk, 0, 96, 240, 74, "k4", "API key + secret", "owner sa-l07-billing · lkc-…");
+  R(sk, 280, 96, 240, 74, "box2");
+  T(sk, 294, 118, "Role bindings", "t");
+  sty(T(sk, 294, 140, "DeveloperRead Topic:l07.cdr.", "m mono"), "font-size:11.5px");
+  sty(T(sk, 294, 158, "DeveloperRead Group:l07.billing", "m mono"), "font-size:11.5px");
+  card(sk, 0, 206, 240, 56, "k2", "billing app", "SASL_SSL · PLAIN · key");
+  card(sk, 280, 206, 240, 56, "k3", "Kafka cluster lkc-…", "key → who · roles → what");
+  const kp = [["M240,28 L278,28", "d0", .02], ["M300,56 L200,94", "d2", .14], ["M400,56 L400,94", "d2", .14],
+              ["M120,170 L120,204", "d4", .3], ["M240,234 L278,234", "d2", .45], ["M400,206 L400,172", "d3", .6]];
+  kp.forEach(([d, c, t], i) => {
+    el("path", { d, class: i === 5 ? "ln-acc arrow-acc" : "ln arrow" }, sk);
+    seqDot(sk, c, d, KD, t, t + .11, 5);
+  });
+  T(sk, 259, 16, "create", "m mid");
+  T(sk, 262, 82, "owns", "m end");
+  T(sk, 410, 82, "bound to", "m");
+  T(sk, 410, 192, "check", "m acc");
+  const okk = sty(T(sk, 510, 254, "✓ allowed", "m end ok-t"), "font-weight:700");
+  appear(okk, .72, KD, .97);
+  R(sk, 0, 282, 520, 44, "badbox");
+  sty(T(sk, 14, 309, "✕ Module 6 user-owned key: carries all your rights, dies with your account", "m"), "fill:var(--text)");
+
+  /* ---- Slide 9: key rotation with overlap ---- */
+  const rt = document.getElementById("rotate");
+  const RD = 10;
+  const xt = x => (x - 120) / 1040;
+  T(rt, 0, 64, "key A", "t");
+  T(rt, 0, 124, "key B", "t");
+  T(rt, 0, 166, "clients", "t");
+  R(rt, 120, 44, 620, 34, "k5");
+  T(rt, 136, 66, "in use", "m");
+  const gone = el("g", {}, rt);
+  R(gone, 740, 44, 420, 34, "gone");
+  T(gone, 756, 66, "deleted: any leaked copy is now useless", "m bad-t");
+  appear(gone, xt(740), RD, .97);
+  const kb = el("g", {}, rt);
+  R(kb, 360, 104, 800, 34, "k4");
+  T(kb, 376, 126, "stored in the vault, never in git", "m");
+  appear(kb, xt(360), RD, .97);
+  R(rt, 120, 150, 440, 26, "k5").setAttribute("rx", 7);
+  T(rt, 136, 168, "clients on key A", "m");
+  const cb = el("g", {}, rt);
+  R(cb, 560, 150, 600, 26, "k4").setAttribute("rx", 7);
+  T(cb, 576, 168, "clients on key B: no failed logins during the switch", "m");
+  appear(cb, xt(560), RD, .97);
+  const both = el("g", {}, rt);
+  el("rect", { x: 356, y: 36, width: 388, height: 108, rx: 10, class: "frame" }, both);
+  T(both, 550, 28, "both keys valid", "m mid acc");
+  win(both, xt(360), xt(740), RD);
+  el("path", { d: "M120,194 L1160,194", class: "ln arrow" }, rt);
+  [[360, "① create B: secret shown once"], [560, "② roll clients onto B"], [740, "③ A idle: delete A"]].forEach(([x, s]) => {
+    el("circle", { cx: x, cy: 194, r: 6, class: "kx" }, rt);
+    const on = el("circle", { cx: x, cy: 194, r: 6, class: "d4" }, rt);
+    appear(on, xt(x), RD, .97);
+    T(rt, x, 214, s, "m mid");
+  });
+  dot(rt, "d0", "M120,194 L1160,194", RD, 0, 5);
+
+  /* ---- Slide 10: listeners on a Confluent Server broker ---- */
+  const ls = document.getElementById("listen");
+  R(ls, 420, 20, 320, 220, "k3");
+  T(ls, 580, 44, "Confluent Server broker", "t mid");
+  T(ls, 580, 62, "cp-broker-1 … 3", "m mid mono");
+  const ports = [[76, "box", "CLIENT :9092", "SASL_SSL · PLAIN"], [126, "box", "INTERNAL :9071", "SASL_SSL · MDS token"], [176, "k4", "MDS + REST :8090", "HTTPS · LDAP → token"]];
+  const actors = [["k0", "learners · kafka-*.sh", "user lNN + LDAP password"], ["k5", "SR · Connect · ksqlDB · C3", "service principals"], ["k0", "Confluent CLI · C3 login", "LDAP user → MDS token"]];
+  ports.forEach(([y, cls, a, b], i) => {
+    R(ls, 432, y, 150, 44, cls).setAttribute("rx", 8);
+    sty(T(ls, 444, y + 19, a, "t mono"), "font-size:12px");
+    sty(T(ls, 444, y + 36, b, "m"), "font-size:11px");
+    card(ls, 0, y, 280, 44, actors[i][0], actors[i][1], actors[i][2]);
+    const p = `M280,${y + 22} L430,${y + 22}`;
+    el("path", { d: p, class: "ln arrow" }, ls);
+    dot(ls, ["d0", "d5", "d0"][i], p, 2.4, -i * .8, 5);
+  });
+  [[104, "BROKER :9091", "mTLS · host cert"], [176, "to controllers", ":9093 · mTLS"]].forEach(([y, a, b]) => {
+    R(ls, 590, y, 138, 44, "box").setAttribute("rx", 8);
+    sty(T(ls, 602, y + 19, a, "t mono"), "font-size:12px");
+    sty(T(ls, 602, y + 36, b, "m"), "font-size:11px");
+  });
+  card(ls, 790, 96, 170, 60, "k3", "other brokers", "replication", true);
+  card(ls, 790, 176, 170, 60, "kx", "KRaft controllers", "3 voters", true);
+  [["M728,126 L788,126", 0], ["M728,198 L788,204", 1]].forEach(([d, i]) => {
+    el("path", { d, class: "ln arrow" }, ls);
+    dot(ls, "d3", d, 1.6, -i * .6, 4);
+  });
+  card(ls, 1000, 96, 160, 60, "kx", "OpenLDAP", "l01 … l18 · services", true);
+  const lq = "M740,34 C 900,34 1080,34 1080,94";
+  el("path", { d: lq, class: "ln-soft arrow", style: "stroke-dasharray:4 4" }, ls);
+  dot(ls, "d5", lq, 2.4, 0, 4);
+  T(ls, 900, 26, "passwords checked against LDAP", "m mid");
+  T(ls, 0, 60, "who calls", "m");
+  T(ls, 0, 256, "people use passwords · servers use certificates · platform services use short-lived MDS tokens", "m");
+
+  /* ---- Slide 11: one authorizer, two rule providers ---- */
+  const az = document.getElementById("authz");
+  const ZD = 8;
+  [["confluent CLI", "REST · :8090"], ["kafka-topics.sh", "Kafka · :9092"], ["Control Center", "your login"]].forEach(([a, b], i) => {
+    card(az, 0, 20 + i * 60, 150, 50, "k0", a, b);
+    const p = `M150,${45 + i * 60} C 176,${45 + i * 60} 176,100 198,100`;
+    el("path", { d: p, class: "ln arrow" }, az);
+    seqDot(az, "d0", p, ZD, .02, .2, 5);
+    seqDot(az, "d1", p, ZD, .5, .68, 5);
+  });
+  R(az, 200, 30, 200, 140, "k4");
+  T(az, 300, 54, "ConfluentServer", "t mid");
+  T(az, 300, 72, "Authorizer", "t mid");
+  [["CONFLUENT · RBAC", 88], ["KRAFT_ACL · ACLs", 126]].forEach(([s, y]) => {
+    R(az, 214, y, 172, 30, "box").setAttribute("rx", 7);
+    sty(T(az, 300, y + 20, s, "cell-t mono"), "font-size:11.5px");
+  });
+  card(az, 200, 210, 200, 50, "k5", "MDS", "role bindings", true);
+  el("path", { d: "M300,208 L300,172", class: "ln-soft arrow", style: "stroke-dasharray:4 4" }, az);
+  card(az, 440, 30, 160, 56, "cons", "l07.cdr.roaming", "allowed");
+  card(az, 440, 110, 160, 56, "badbox", "other.topic", "403 · denied");
+  R(az, 420, 210, 180, 50, "box2");
+  T(az, 434, 232, "audit log", "t");
+  sty(T(az, 434, 250, "confluent-audit-log-events", "m mono"), "font-size:10.5px");
+  const outs = [["M400,80 L438,62", "d2", .22], ["M400,124 L438,136", "d1", .7], ["M400,156 C 420,170 430,190 450,208", "d4", .36], ["M400,156 C 420,170 430,190 450,208", "d4", .84]];
+  outs.forEach(([d, c, t], i) => {
+    if (i < 3) el("path", { d, class: "ln arrow" }, az);
+    seqDot(az, c, d, ZD, t, t + .11, 5);
+  });
+  [["create l07.cdr.roaming", 0], ["create other.topic", 1]].forEach(([s, i]) => {
+    const n = sty(T(az, 300, 16, s, "m mid mono"), "fill:var(--text);font-weight:600");
+    phase(n, i, 2, ZD);
+  });
+  T(az, 0, 300, "same identity, same check, whichever tool you use", "m");
+
+  /* ---- Slide 12: network, transit, rest ---- */
+  const ly = document.getElementById("layers");
+  const YD = 8;
+  card(ly, 0, 60, 170, 64, "k0", "billing-svc", "lab VM", true);
+  el("rect", { x: 220, y: 6, width: 940, height: 172, rx: 14, class: "frame-m" }, ly);
+  T(ly, 236, 28, "① network: private subnets · security groups allow only the lab VMs", "m");
+  R(ly, 240, 70, 610, 44, "box2").setAttribute("rx", 22);
+  T(ly, 262, 62, "② in transit: TLS · SASL_SSL to the broker · mTLS between servers", "m");
+  card(ly, 870, 50, 150, 84, "k3", "broker", "log segments", true);
+  R(ly, 1040, 50, 110, 84, "k5");
+  T(ly, 1095, 80, "disk", "t mid");
+  T(ly, 1095, 98, "③ at rest", "m mid");
+  for (let i = 0; i < 3; i++) R(ly, 1056 + i * 28, 108, 22, 18, "cons").setAttribute("rx", 3);
+  const cell = R(ly, 1056 + 2 * 28, 108, 22, 18, "cons");
+  cell.setAttribute("rx", 3);
+  T(ly, 260, 160, "the bytes inside the tunnel are unreadable to anyone on the network path", "m");
+  el("path", { d: "M170,92 L238,92", class: "ln arrow" }, ly);
+  el("path", { d: "M850,92 L868,92", class: "ln arrow" }, ly);
+  seqDot(ly, "d0", "M170,92 L868,92", YD, .05, .6, 7);
+  seqDot(ly, "d5", "M1020,92 C 1030,92 1030,117 1112,117", YD, .62, .72, 5);
+  [[217, 3, 946, 178], [237, 67, 616, 50], [1037, 47, 116, 90]].forEach(([x, y, w, h], i) =>
+    phase(el("rect", { x, y, width: w, height: h, rx: 14, class: "frame" }, ly), i, 3, YD));
+
+  /* ---- Slide 13: the same prefix rule as ACLs and as role bindings ---- */
+  const mr = document.getElementById("mirror");
+  const MD = 8;
+  head(mr, 0, 14, "Apache Kafka · bootstrap-security.sh");
+  head(mr, 640, 14, "Confluent Platform · cp-rbac-learners.sh");
+  [["ACL · All · Topic:l07. · prefixed", "k4", "ResourceOwner · Topic:l07. · prefix", "role binding"],
+   ["ACL · All · Group:l07. · prefixed", "k4", "ResourceOwner · Group:l07. · prefix", "role binding"],
+   ["ACL · All · TransactionalId:l07. · prefixed", "ghost", "not granted on the Platform cluster", ""],
+   ["ACL · Describe, DescribeConfigs · Cluster", "box2", "ACL · Describe, DescribeConfigs · Cluster", "still an ACL"]]
+    .forEach(([a, cls, b, tag], i) => {
+      const y = 26 + i * 44;
+      R(mr, 0, y, 520, 36, "box2").setAttribute("rx", 8);
+      sty(T(mr, 14, y + 23, a, "m mono"), "font-size:12.5px;fill:var(--text)");
+      R(mr, 640, y, 520, 36, cls).setAttribute("rx", 8);
+      sty(T(mr, 654, y + 23, b, cls === "ghost" ? "m" : "m mono"), `font-size:12.5px;${cls === "ghost" ? "" : "fill:var(--text)"}`);
+      if (tag) T(mr, 1146, y + 23, tag, "m end");
+      const d = `M520,${y + 18} L638,${y + 18}`;
+      el("path", { d, class: cls === "ghost" ? "ln-soft" : "ln arrow", style: cls === "ghost" ? "stroke-dasharray:4 4" : "" }, mr);
+      if (cls !== "ghost") seqDot(mr, cls === "k4" ? "d4" : "d5", d, MD, i / 4 + .04, i / 4 + .18, 5);
+      phase(el("rect", { x: -3, y: y - 3, width: 1166, height: 42, rx: 10, class: "frame" }, mr), i, 4, MD);
+    });
+
+  /* ---- Slide 14: lab environment ---- */
+  const lb = document.getElementById("labenv");
+  card(lb, 0, 0, 480, 56, "box2", "lab-lNN VM", "Confluent CLI · Kafka 4.x CLI · $SA_CFG");
+  [[115, "internet · TLS"], [365, "lab VPC"]].forEach(([x, s], i) => {
+    el("path", { d: `M${x},56 L${x},92`, class: "ln-acc arrow-acc" }, lb);
+    dot(lb, i ? "d5" : "d0", `M${x},56 L${x},92`, 1.4, -i * .7, 5);
+    T(lb, x + 10, 80, s, "m");
+  });
+  R(lb, 0, 96, 230, 204, "k0");
+  T(lb, 14, 120, "Confluent Cloud", "t");
+  T(lb, 14, 138, "env-lNN · you: EnvironmentAdmin", "m");
+  const lchip = (x, y, s, cls) => { R(lb, x, y, 202, 32, cls).setAttribute("rx", 7); sty(T(lb, x + 101, y + 21, s, "cell-t mono"), "font-size:11.5px"); };
+  lchip(14, 150, "sa-lNN-app", "k2");
+  sty(T(lb, 14, 202, "DeveloperWrite Topic:lNN.cdr.", "m mono"), "font-size:11px");
+  lchip(14, 212, "API key → $SA_CFG", "k4");
+  sty(T(lb, 14, 270, "✓ produce", "m ok-t"), "font-weight:700");
+  sty(T(lb, 104, 270, "✕ consume", "m bad-t"), "font-weight:700");
+  T(lb, 14, 288, "the denial is the proof", "m");
+  R(lb, 250, 96, 230, 204, "k5");
+  T(lb, 264, 120, "Confluent Platform 8.x", "t");
+  T(lb, 264, 138, "LDAP user lNN via MDS", "m");
+  lchip(264, 150, "ResourceOwner lNN.*", "box");
+  lchip(264, 192, "DeveloperRead → classmate", "box");
+  sty(T(lb, 264, 248, "Topic:lNN. · Group:lNN.", "m mono"), "font-size:11px");
+  T(lb, 264, 270, "grant only on your prefix", "m");
+
+  /* ---- Quiz ---- */
+  document.querySelectorAll(".q").forEach(q => q.addEventListener("click", () => q.classList.toggle("open")));
+
+  /* ---- Deck navigation ---- */
+  const deck = document.getElementById("deck");
+  const slides = [...document.querySelectorAll(".slide")];
+  const N = slides.length;
+  slides.forEach((s, i) => {
+    const f = document.createElement("div");
+    f.className = "foot";
+    f.innerHTML = `<span><b>Module 7</b> · Administering Kafka Security</span><span>${String(i + 1).padStart(2, "0")} / ${N}</span>`;
+    s.appendChild(f);
+  });
+  let cur = 0;
+  function fit() {
+    const s = Math.min(window.innerWidth / 1320, window.innerHeight / 750);
+    deck.style.transform = `scale(${s})`;
+  }
+  function motion() {
+    for (let k = 0; k < N; k++) {
+      const on = k === cur;
+      slides[k].querySelectorAll("svg").forEach(svg => {
+        if (!svg.pauseAnimations) return;
+        if (on) svg.unpauseAnimations();
+        else svg.pauseAnimations();
+      });
+    }
+  }
+  function go(i) {
+    cur = Math.max(0, Math.min(N - 1, i));
+    slides.forEach((s, k) => { s.classList.toggle("active", k === cur); s.classList.toggle("before", k < cur); });
+    document.getElementById("counter").textContent = `${cur + 1} / ${N}`;
+    document.getElementById("progress").style.width = ((cur + 1) / N * 100) + "%";
+    const n = slides[cur].querySelector("aside.notes");
+    document.getElementById("notesText").textContent = n ? n.textContent : "";
+    if (location.hash !== "#" + (cur + 1)) history.replaceState(null, "", "#" + (cur + 1));
+    motion();
+  }
+  function toggleTheme() {
+    const r = document.documentElement;
+    const dark = r.dataset.theme ? r.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+    r.dataset.theme = dark ? "light" : "dark";
+    try { localStorage.setItem("m7-deck-theme", r.dataset.theme); } catch (e) {}
+  }
+  try { const t = localStorage.getItem("m7-deck-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  const toggleNotes = () => document.getElementById("notesPanel").classList.toggle("show");
+  const fullscreen = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.();
+
+  document.getElementById("prev").onclick = () => go(cur - 1);
+  document.getElementById("next").onclick = () => go(cur + 1);
+  document.getElementById("notesBtn").onclick = toggleNotes;
+  document.getElementById("themeBtn").onclick = toggleTheme;
+  document.getElementById("fsBtn").onclick = fullscreen;
+  document.addEventListener("keydown", e => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const k = e.key;
+    if (["ArrowRight", "ArrowDown", "PageDown", " ", "Enter"].includes(k)) { e.preventDefault(); go(cur + 1); }
+    else if (["ArrowLeft", "ArrowUp", "PageUp", "Backspace"].includes(k)) { e.preventDefault(); go(cur - 1); }
+    else if (k === "Home") go(0);
+    else if (k === "End") go(N - 1);
+    else if (k === "n" || k === "N") toggleNotes();
+    else if (k === "t" || k === "T") toggleTheme();
+    else if (k === "f" || k === "F") fullscreen();
+  });
+  let tx = null;
+  document.addEventListener("touchstart", e => { tx = e.touches[0].clientX; }, { passive: true });
+  document.addEventListener("touchend", e => {
+    if (tx == null) return; const dx = e.changedTouches[0].clientX - tx;
+    if (Math.abs(dx) > 50) go(cur + (dx < 0 ? 1 : -1)); tx = null;
+  });
+  window.addEventListener("resize", fit);
+  window.addEventListener("hashchange", () => go((parseInt(location.hash.slice(1), 10) || 1) - 1));
+  document.querySelectorAll(".slide svg").forEach(svg => { if (svg.pauseAnimations) svg.pauseAnimations(); });
+  fit();
+  go((parseInt(location.hash.slice(1), 10) || 1) - 1);
+  document.documentElement.classList.add("deck-ready");
+})();
+</script>
+</body>
+</html>

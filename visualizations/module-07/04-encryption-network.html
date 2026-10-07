@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Encryption &amp; Network Security</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 7 · Administering Kafka Security</a>
+    <div class="nav"><span>4 / 5</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 4</div>
+  <h1>Encryption &amp; network security in Confluent-managed environments</h1>
+  <p class="lede">A CDR crosses several links: client to broker, broker to broker, broker to controller and to the
+    identity store, and finally the disk. Each one is either encrypted or not, and on Confluent Cloud some aren't yours to
+    configure. Choose a cluster, then <b>tap</b> each link to see what an eavesdropper in that position would capture.
+    Try the course's Apache cluster first. It is plaintext on purpose.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Cluster</span>
+      <div class="seg" role="group" aria-label="Cluster" id="tSeg">
+        <button data-v="apache" aria-pressed="true">Apache lab</button>
+        <button data-v="cp" aria-pressed="false">Platform lab</button>
+        <button data-v="basic" aria-pressed="false">Cloud Basic</button>
+        <button data-v="ded" aria-pressed="false">Cloud Dedicated + PrivateLink</button>
+      </div>
+      <button class="primary" id="all">Tap every link</button>
+      <span class="pill" id="state"></span>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 320" role="img" aria-label="Network links of a Kafka cluster; each link badge can be tapped"></svg></div>
+    <div class="legend"><span><i style="background:var(--ok)"></i>encrypted</span><span><i style="background:var(--bad)"></i>plaintext</span><span><i style="background:var(--accent)"></i>run by Confluent</span><span><i style="background:var(--warn)"></i>reachable from the internet</span></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Who encrypts what</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Layer</th><th>Apache Kafka / self-managed Platform</th><th>Confluent Cloud</th></tr></thead>
+      <tbody>
+        <tr><td>Client ↔ broker</td><td>You configure TLS listeners: <code>SSL</code> or <code>SASL_SSL</code>, keystores, truststores, certificate renewal</td><td>TLS 1.2+ always on; nothing to configure</td></tr>
+        <tr><td>Broker ↔ broker, controllers</td><td>You choose. The <code>inter.broker.listener.name</code> and controller listeners need their own TLS (mTLS on the Platform lab)</td><td>Run by Confluent</td></tr>
+        <tr><td>Identity store</td><td>LDAP or Kerberos link: use <code>ldaps://</code> (636)</td><td>Confluent identities, SSO or OAuth</td></tr>
+        <tr><td>At rest</td><td>Kafka writes plaintext log segments. Encrypt the volume (encrypted EBS on both lab clusters)</td><td>Always encrypted. Dedicated clusters can use your own key (BYOK)</td></tr>
+        <tr><td>Network reach</td><td>Private subnets, security groups, <code>advertised.listeners</code></td><td>Basic and Standard: public endpoints. Enterprise: PrivateLink. Dedicated: VPC peering, Transit Gateway, PrivateLink</td></tr>
+        <tr><td>Field-level</td><td colspan="2">Sensitive fields such as an MSISDN can be encrypted by the client before producing (Confluent client-side field-level encryption), so brokers and admins never see them</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Admin takeaway:</b> TLS on a listener protects the wire, not the disk. Anyone with a shell on a broker, or a
+    copy of an unencrypted volume snapshot, can read <code>/var/lib/kafka/data/l07.cdr.voice-0/*.log</code> with <code>kafka-dump-log.sh</code>.
+    Encrypt volumes, and restrict who can log in to brokers.</div>
+  <div class="callout warn"><b>Capacity gotcha:</b> with TLS, a broker can no longer use zero-copy <code>sendfile</code> to serve consumers. It has to
+    encrypt every byte in the JVM. Plan for more broker CPU when you enable <code>SASL_SSL</code> on a busy cluster, and measure before and after (Module 8).</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="03-platform-authn-authz.html"><small>← Previous</small>Confluent Platform authentication &amp; authorization</a>
+    <a class="next" href="05-confluent-vs-apache-security.html"><small>Next →</small>Confluent vs Apache: ACLs, SASL, SSL</a>
+  </div>
+</div>
+
+<script>
+const REC = '966512345678 {"msisdn":"966512345678","cell":"RUH-0412","duration":214}';
+const CIPH = '17 03 03 01 2a 9f c3 5e 0b d1 77 a4 e2 … (TLS ciphertext)';
+// Link geometry: [x1, y1, x2, y2, badge x, badge y]
+const GEO = {
+  client: [170, 150, 380, 74, 214, 120], repl: [465, 106, 465, 226, 400, 166], ctl: [550, 60, 690, 44, 554, 16],
+  auth: [550, 84, 690, 138, 554, 124], disk: [550, 258, 690, 258, 560, 226], net: [170, 276, 380, 92, 236, 222]
+};
+const T = {
+  apache: { name: 'Apache lab cluster', path: 'VPC, private subnet', backend: 'SCRAM in metadata', links: {
+    client: ['plain', 'SASL_PLAINTEXT :9092', `SCRAM never sends the password: you see user "l07" and a one-time proof. After that, every record is in the clear: <code>${REC}</code>`],
+    repl: ['plain', 'SASL_PLAINTEXT :9094', `Replica fetches carry the same records in the clear: <code>${REC}</code>`],
+    ctl: ['plain', 'PLAINTEXT :9093', 'Cluster metadata in the clear: topic names, configs and ACLs. The security group is the only thing protecting it.'],
+    auth: ['na', 'no external store', 'SCRAM credentials are salted hashes stored in the cluster metadata, so there is no separate identity link to tap.'],
+    disk: ['enc', 'encrypted EBS', 'A stolen snapshot is unreadable without the KMS key. On the broker itself, though, <code>kafka-dump-log.sh</code> shows every record.'],
+    net: ['enc', 'no public route', 'Unreachable from the internet: the brokers sit in private subnets.'] } },
+  cp: { name: 'Platform lab cluster', path: 'VPC, private subnet', backend: 'OpenLDAP', links: {
+    client: ['enc', 'SASL_SSL :9092', `Only ciphertext: <code>${CIPH}</code>. The PLAIN password travels inside TLS.`],
+    repl: ['enc', 'mTLS BROKER :9091', `Ciphertext. Each broker also proves its identity with its host certificate: <code>${CIPH}</code>`],
+    ctl: ['enc', 'mTLS controller', 'Ciphertext, and only principals holding a certificate from the course CA can join the quorum.'],
+    auth: ['plain', 'ldap://cp-ldap:389', '<b>Lab shortcut:</b> the broker\'s LDAP bind for each login goes in the clear, so you capture <code>uid=l07</code> and the password. In production, use <code>ldaps://…:636</code>.'],
+    disk: ['enc', 'encrypted EBS', 'The volume is encrypted, but Confluent Server still writes plaintext log segments, which anyone with a shell on the broker can read.'],
+    net: ['enc', 'no public route', 'The brokers are in private subnets. Only Control Center is published, on HTTPS through the trainer VM.'] } },
+  basic: { name: 'Confluent Cloud Basic', path: 'public internet', backend: 'Confluent IAM', links: {
+    client: ['enc', 'TLS 1.2+ SASL_SSL', `Only ciphertext, even across the public internet: <code>${CIPH}</code>`],
+    repl: ['managed', 'run by Confluent', 'You can\'t reach, configure or tap the links between brokers. Securing them is Confluent\'s job under the shared-responsibility model.'],
+    ctl: ['managed', 'run by Confluent', 'The controllers and their quorum traffic are run by Confluent.'],
+    auth: ['managed', 'API key check', 'API keys are checked inside Confluent Cloud. There is no LDAP of yours in the path.'],
+    disk: ['enc', 'encrypted at rest', 'Always encrypted with keys managed by Confluent and the cloud provider.'],
+    net: ['warn', 'public endpoint', 'Anyone on the internet can <b>reach</b> the bootstrap endpoint. TLS and a valid API key are what keep them out. To remove the public path, you need a cluster type with private networking.'] } },
+  ded: { name: 'Confluent Cloud Dedicated + PrivateLink', path: 'AWS PrivateLink', backend: 'Confluent IAM', links: {
+    client: ['enc', 'TLS over PrivateLink', `Ciphertext, and the traffic never leaves the AWS network: <code>${CIPH}</code>`],
+    repl: ['managed', 'run by Confluent', 'Run by Confluent, on infrastructure dedicated to your cluster.'],
+    ctl: ['managed', 'run by Confluent', 'Run by Confluent.'],
+    auth: ['managed', 'API key / OAuth', 'API keys or OAuth tokens, checked by Confluent.'],
+    disk: ['enc', 'encrypted · BYOK', 'Encrypted at rest. With BYOK, the key lives in <b>your</b> KMS: revoke it, and the data becomes unreadable.'],
+    net: ['enc', 'no public endpoint', 'Not reachable from the internet. Clients connect through a PrivateLink endpoint in your VPC.'] } }
+};
+const COL = { enc: 'var(--ok)', plain: 'var(--bad)', managed: 'var(--accent)', warn: 'var(--warn)', na: 'var(--muted)' };
+const svg = document.getElementById('svg'), log = document.getElementById('log');
+const scene = el('g', {}, svg), fx = el('g', {}, svg);
+const S = { t: 'apache', tapped: {} };
+
+function box(x, y, w, h, title, sub, fill, stroke) {
+  el('rect', { x, y, width: w, height: h, rx: 10, fill: fill || 'var(--surface)', stroke: stroke || 'var(--border)', 'stroke-width': 1.6 }, scene);
+  el('text', { x: x + 12, y: y + 24, 'font-weight': 700, 'font-size': 14, text: title }, scene);
+  if (sub) el('text', { x: x + 12, y: y + 44, 'font-size': 11, class: 'mono muted', text: sub }, scene);
+}
+
+function render() {
+  scene.innerHTML = '';
+  const t = T[S.t];
+  Object.entries(GEO).forEach(([id, g]) => {
+    const [st] = t.links[id];
+    const blocked = id === 'net' && st === 'enc';
+    el('line', { x1: g[0], y1: g[1], x2: g[2], y2: g[3], stroke: COL[st], 'stroke-width': 3, 'stroke-dasharray': st === 'plain' || st === 'warn' ? '7 5' : st === 'na' || blocked ? '2 5' : '' }, scene);
+    if (blocked) el('text', { x: (g[0] + g[2]) / 2 + 30, y: (g[1] + g[3]) / 2 - 20, 'text-anchor': 'middle', 'font-size': 22, 'font-weight': 700, fill: 'var(--ok)', text: '✕' }, scene);
+  });
+  box(20, 118, 150, 64, 'billing-svc', 'lab VM / app host');
+  box(20, 246, 150, 60, 'Internet host', 'anyone', 'var(--surface-2)');
+  box(380, 42, 170, 64, 'Broker (leader)', 'l07.cdr.voice-0', 'var(--warn-soft)', 'var(--warn)');
+  box(380, 226, 170, 64, 'Broker (follower)', 'replica', 'var(--warn-soft)', 'var(--warn)');
+  box(690, 14, 190, 60, 'Controller quorum', 'KRaft metadata', 'var(--surface-2)');
+  box(690, 110, 190, 60, 'Identity store', t.backend, 'var(--surface-2)');
+  box(690, 226, 190, 64, 'Disk', 'log segments', 'var(--surface-2)');
+  el('text', { x: 196, y: 92, 'font-size': 12, 'font-style': 'italic', class: 'muted', text: t.path }, scene);
+  Object.entries(GEO).forEach(([id, g]) => {
+    const [st, label] = t.links[id];
+    const w = Math.max(96, label.length * 6.4 + 14), b = el('g', {}, scene);
+    el('rect', { x: g[4], y: g[5], width: w, height: 22, rx: 11, fill: 'var(--surface)', stroke: COL[st], 'stroke-width': S.tapped[id] ? 2.5 : 1.4 }, b);
+    el('text', { x: g[4] + w / 2, y: g[5] + 15, 'text-anchor': 'middle', 'font-size': 11, 'font-weight': 600, fill: COL[st], text: (S.tapped[id] ? '◉ ' : '') + label }, b);
+    svgButton(b, `Tap the ${id} link: ${label}`, () => tap(id));
+  });
+  const plain = Object.values(t.links).filter(l => l[0] === 'plain').length;
+  const st = document.getElementById('state');
+  st.textContent = plain ? `${plain} plaintext link${plain > 1 ? 's' : ''}` : 'no plaintext links';
+  st.className = 'pill ' + (plain ? 'bad' : 'ok');
+}
+
+async function tap(id) {
+  const t = T[S.t], [st, label, sees] = t.links[id], g = GEO[id];
+  S.tapped[id] = true;
+  const pkt = el('rect', { x: -9, y: -6, width: 18, height: 12, rx: 3, fill: COL[st] }, fx);
+  await tween(pkt, g[0], g[1], g[2], g[3], 500); pkt.remove();
+  const tag = { enc: '🔒 encrypted', plain: '⚠ plaintext', managed: '☁ Confluent-run', warn: '⚠ exposed', na: '— n/a' }[st];
+  logLine(log, `<b style="color:${COL[st]}">${tag}</b> · <b>${label}</b>: ${sees}`, st === 'plain' || st === 'warn');
+  render();
+}
+
+wireSeg('tSeg', v => { S.t = v; S.tapped = {}; render(); logLine(log, `Switched to <b>${T[v].name}</b>. Tap the links to compare.`, true); });
+document.getElementById('all').onclick = async () => { for (const id of Object.keys(GEO)) await tap(id); };
+render();
+logLine(log, 'Tap the <b>SASL_PLAINTEXT :9092</b> badge on the Apache lab cluster to start.', true);
+
+renderQuiz('quiz', [
+  { q: 'Someone captures traffic between a lab VM and the shared <b>Apache</b> cluster (<code>SASL_PLAINTEXT</code>, SCRAM-SHA-512). What do they get?',
+    options: ['Nothing: SCRAM encrypts the connection',
+      'Only the password',
+      'The username and every record in the clear, but not the password, because SCRAM uses a challenge–response proof',
+      'Nothing, because the topics have prefix ACLs'],
+    answer: 2,
+    explain: 'SCRAM protects the credential, not the session. Without TLS (<code>SASL_SSL</code>), records, keys and headers cross the network in the clear. That is fine for a lab VPC, but not for CDRs with MSISDNs in production.' },
+  { q: 'Your CP brokers use <code>SASL_SSL</code> on every listener. Security asks how the CDRs are protected <i>on disk</i>. The honest answer:',
+    options: ['TLS also encrypts the log segments',
+      'Kafka stores log segments unencrypted. Disk protection comes from volume encryption (such as encrypted EBS), or from encrypting fields in the client before producing.',
+      'Confluent Server encrypts segments with the licence key',
+      '<code>min.insync.replicas=2</code> encrypts the data'],
+    answer: 1,
+    explain: 'TLS is for data in transit only. Self-managed Kafka and Confluent Platform rely on the volume or file system for encryption at rest, plus OS access control on the brokers. Confluent Cloud encrypts at rest for you, and BYOK on Dedicated clusters puts the key in your KMS.' },
+  { q: 'Which statement about a Confluent Cloud <b>Basic</b> cluster is correct?',
+    options: ['Its bootstrap endpoint is public. TLS and a valid API key are what protect it. To have no internet path, use a cluster type with private networking, such as Dedicated with PrivateLink.',
+      'It is only reachable from inside your VPC',
+      'It accepts plaintext connections on port 9092',
+      'It needs your own TLS certificates on the brokers'],
+    answer: 0,
+    explain: 'Basic and Standard clusters use public endpoints, with TLS 1.2+ enforced. Private networking (PrivateLink, VPC peering, Transit Gateway) comes with Enterprise or Dedicated clusters. Either way, Confluent runs the certificates and the links between brokers.' },
+  { q: 'After enabling TLS on a busy self-managed cluster, broker CPU rises noticeably while disk and network stay the same. Why?',
+    options: ['TLS forces <code>acks=all</code>',
+      'Replication factor doubles under TLS',
+      'Log compaction runs more often',
+      'With TLS, brokers can\'t use zero-copy <code>sendfile</code>, so every byte sent to consumers is read into the JVM and encrypted'],
+    answer: 3,
+    explain: 'Without TLS, Kafka can send data from the page cache straight to the socket with <code>sendfile</code>. With TLS, the broker must encrypt in user space. That cost is real. Plan for it rather than turning TLS off.' },
+  { q: 'The Platform lab cluster uses TLS everywhere, but brokers check passwords against <code>ldap://cp-ldap:389</code>. What is the risk, and the fix?',
+    options: ['None: LDAP is always encrypted',
+      'Each login\'s LDAP bind, with the password, crosses the network in the clear. Use <code>ldaps://</code> (636) or StartTLS in production.',
+      'LDAP will be slow. Add more brokers.',
+      'RBAC will stop working. Switch to ACLs.'],
+    answer: 1,
+    explain: 'Client-to-broker TLS protects the password only as far as the broker. The broker then repeats it to LDAP. If that hop is plaintext, anyone who can tap it sees every learner\'s password. The lab accepts this inside a private subnet; production must not.' }
+]);
+</script>
+</body>
+</html>
