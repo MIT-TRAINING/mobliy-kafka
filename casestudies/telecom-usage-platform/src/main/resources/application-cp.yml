@@ -1,0 +1,35 @@
+# Profile "cp": run the same application against the course's shared Confluent
+# Platform cluster on AWS (Confluent Server 8.x, KRaft, TLS, RBAC + LDAP) instead
+# of the local 3-node cluster.
+# Step-by-step guide: CONF-PLATFORM-CLUSTER.md
+#
+# Every value below comes from the files the trainer puts on your VM
+# (infra/confluent/README.md B.7): ~/kafka/confluent.env exports CP and CP_CA,
+# ~/kafka/cp.properties holds your LDAP username and password.
+#
+#   source ~/kafka/confluent.env
+#   CP_KAFKA_USER=l07 CP_KAFKA_PASSWORD='...' TELCO_PREFIX=l07. \
+#   java -jar target/telecom-usage-platform-1.0.0.jar --spring.profiles.active=cp
+#
+# Your role bindings (ResourceOwner) only cover topics and consumer groups that
+# start with your prefix, which is why every name in this application is prefixed.
+#
+# Do NOT run the broker-failure drill (DEMO-SCRIPT part 7) as a learner: only the
+# trainer can stop a broker on the shared cluster.
+spring:
+  kafka:
+    bootstrap-servers: ${CP_BOOTSTRAP:${CP:cp-kafka.lab.internal:9092}}
+    properties:
+      security.protocol: SASL_SSL
+      # PLAIN over TLS: the brokers check the password against LDAP
+      sasl.mechanism: PLAIN
+      sasl.jaas.config: >-
+        org.apache.kafka.common.security.plain.PlainLoginModule required
+        username="${CP_KAFKA_USER}" password="${CP_KAFKA_PASSWORD}";
+      # The course CA (PEM). Broker certificates carry cp-kafka.lab.internal,
+      # so hostname verification stays on.
+      ssl.truststore.type: PEM
+      ssl.truststore.location: ${CP_CA:${user.home}/kafka/cp-ca.pem}
+
+telco:
+  prefix: ${TELCO_PREFIX}

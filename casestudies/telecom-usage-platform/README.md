@@ -192,6 +192,13 @@ contracts Cloud does not accept (RF fixed at 3, no `compression.type`,
 `segment.ms` of at least 10 minutes). Step-by-step guide:
 [`CONF-CLOUD-CLUSTER.md`](CONF-CLOUD-CLUSTER.md).
 
+### On the shared Confluent Platform cluster
+
+Profile `cp` connects to the course's Confluent Platform cluster on AWS over
+`SASL_SSL` (PLAIN, LDAP passwords, course CA) and uses your RBAC prefix. The
+topic designs are unchanged. Step-by-step guide:
+[`CONF-PLATFORM-CLUSTER.md`](CONF-PLATFORM-CLUSTER.md).
+
 ### Configuration
 
 | Property | Default | Meaning |
@@ -257,6 +264,7 @@ casestudies/telecom-usage-platform/
         ├── application.yml            defaults (local cluster)
         ├── application-shared.yml     profile for the shared AWS cluster
         ├── application-ccloud.yml     profile for Confluent Cloud
+        ├── application-cp.yml         profile for the shared Confluent Platform cluster
         └── static/index.html          the demo dashboard
 ```
 
