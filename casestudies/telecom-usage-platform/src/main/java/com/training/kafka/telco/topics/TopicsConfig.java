@@ -24,7 +24,11 @@ import org.springframework.kafka.core.KafkaAdmin;
 public class TopicsConfig {
 
     @Bean
-    KafkaAdmin.NewTopics telcoTopics(TopicCatalog catalog) {
+    KafkaAdmin.NewTopics telcoTopics(TopicCatalog catalog, KafkaAdmin kafkaAdmin) {
+        if (catalog.confluentCloud()) {
+            // Runs before KafkaAdmin creates the topics, and names any setting Cloud refuses
+            CloudTopicPreflight.check(kafkaAdmin.getConfigurationProperties(), catalog.specs());
+        }
         NewTopic[] topics = catalog.specs().stream()
                 .map(spec -> TopicBuilder.name(spec.name())
                         .partitions(spec.partitions())

@@ -217,7 +217,8 @@ dashboard action fails, and with which exception.
 
 | Symptom | Cause / fix |
 | ------- | ----------- |
-| Startup stops with `PolicyViolationException` naming a setting | The `ccloud` profile is not active (check `--spring.profiles.active=ccloud`), or the catalog was edited outside Cloud's limits; the test `confluentCloudCatalogStaysInsideCloudRules` should catch the second |
+| Startup stops with `Confluent Cloud rejected these topic settings` | The startup check lists each refused `topic: key=value`. Change that value in the Cloud branch of `TopicCatalog` (and the limit in `confluentCloudCatalogStaysInsideCloudRules`), rebuild. Check a value by hand with `confluent kafka topic create <topic> --partitions 1 --config key=value --dry-run` |
+| Startup stops with a bare `PolicyViolationException: Request parameters do not satisfy the configured policy` | The `ccloud` profile is not active (check `--spring.profiles.active=ccloud`), so the self-managed designs (RF 2 telemetry, lab compaction values) were sent to Cloud |
 | `SaslAuthenticationException: Authentication failed` | Wrong key or secret, a key for another cluster, or a key less than about 2 minutes old |
 | `TimeoutException` / `Timed out waiting for a node assignment` | 9092 is blocked on the way to Confluent Cloud, or `CCLOUD_BOOTSTRAP` is empty. Test with `confluent kafka topic list` and `nc -vz <host> 9092` |
 | `TopicAuthorizationException` / `GroupAuthorizationException` | Running as a service account without the ACLs in §9, or `TELCO_PREFIX` does not match the ACL prefix |
