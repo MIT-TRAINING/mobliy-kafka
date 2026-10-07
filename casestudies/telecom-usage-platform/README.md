@@ -182,7 +182,8 @@ java -jar target/telecom-usage-platform-1.0.0.jar --spring.profiles.active=share
 ```
 
 Every topic and group then starts with `l07.`. The broker-failure drill needs
-the local cluster: you cannot stop brokers on the shared one.
+the local cluster: you cannot stop brokers on the shared one. Full steps, quotas
+and troubleshooting: [`SHARED-CLUSTER.md`](SHARED-CLUSTER.md).
 
 ### Configuration
 
