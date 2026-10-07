@@ -37,7 +37,8 @@ public class ReplayReader {
         this.catalog = catalog;
     }
 
-    public ReplayStats replay(String topic) {
+    public ReplayStats replay(String name) {
+        String topic = catalog.resolve(name);
         if (!catalog.names().contains(topic)) {
             throw new IllegalArgumentException("Not a topic of this platform: " + topic);
         }

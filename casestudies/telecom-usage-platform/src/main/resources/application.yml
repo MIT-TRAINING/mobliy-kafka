@@ -48,6 +48,10 @@ telco:
   # false = production-like values (hours/days). Never ship lab-mode values.
   lab-mode: true
 
+  # true = adapt the topic contracts to Confluent Cloud's rules (RF fixed at 3, no
+  # compression.type / min.cleanable.dirty.ratio, segment.ms >= 10 min). Set by profile "ccloud".
+  confluent-cloud: false
+
   simulator:
     subscribers: 20          # MSISDNs 966500000001 .. 966500000020
     international-share: 0.12

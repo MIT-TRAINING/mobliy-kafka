@@ -1,0 +1,32 @@
+# Profile "ccloud": run the same application against a Confluent Cloud cluster
+# (SASL_SSL + PLAIN with an API key) instead of the local 3-node cluster.
+# Step-by-step guide: CONF-CLOUD-CLUSTER.md
+#
+# Every value below comes from ~/kafka/ccloud.properties (Module 6 Lab 01 §5.1)
+# or from the Cloud Console (cluster → Clients → Java):
+#
+#   CCLOUD_BOOTSTRAP=pkc-xxxxx.ap-south-1.aws.confluent.cloud:9092 \
+#   CCLOUD_API_KEY=... CCLOUD_API_SECRET='...' TELCO_PREFIX=l07. \
+#   java -jar target/telecom-usage-platform-1.0.0.jar --spring.profiles.active=ccloud
+#
+# The cluster is managed by Confluent: you cannot stop brokers, see the
+# controller quorum or read log directories, so the durability drill
+# (DEMO-SCRIPT part 7) and the storage panel belong to the local cluster.
+spring:
+  kafka:
+    bootstrap-servers: ${CCLOUD_BOOTSTRAP}
+    properties:
+      security.protocol: SASL_SSL
+      sasl.mechanism: PLAIN
+      sasl.jaas.config: >-
+        org.apache.kafka.common.security.plain.PlainLoginModule required
+        username="${CCLOUD_API_KEY}" password="${CCLOUD_API_SECRET}";
+      # Confluent's recommended client settings for Cloud
+      client.dns.lookup: use_all_dns_ips
+      session.timeout.ms: 45000
+
+telco:
+  # Your learner prefix ("l07.") keeps names identical to the Module 6 labs.
+  # On a cluster of your own it may be empty.
+  prefix: ${TELCO_PREFIX:}
+  confluent-cloud: true

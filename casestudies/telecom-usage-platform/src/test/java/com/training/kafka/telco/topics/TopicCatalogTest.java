@@ -56,6 +56,46 @@ class TopicCatalogTest {
     }
 
     @Test
+    void confluentCloudCatalogStaysInsideCloudRules() {
+        for (boolean lab : new boolean[] {true, false}) {
+            TopicCatalog cloud = new TopicCatalog("l07.", lab, true);
+            cloud.specs().forEach(spec -> {
+                // Cloud fixes RF at 3 and rejects these settings with PolicyViolationException
+                assertThat(spec.replicas()).as(spec.name() + " RF").isEqualTo(3);
+                assertThat(spec.configs()).as(spec.name())
+                        .doesNotContainKeys("compression.type", "min.cleanable.dirty.ratio");
+                assertThat(spec.configs().get("min.insync.replicas")).as(spec.name()).isIn("1", "2");
+                String segmentMs = spec.configs().get("segment.ms");
+                if (segmentMs != null) {
+                    assertThat(Long.parseLong(segmentMs)).as(spec.name() + " segment.ms").isGreaterThanOrEqualTo(600_000L);
+                }
+                String segmentBytes = spec.configs().get("segment.bytes");
+                if (segmentBytes != null) {
+                    assertThat(Long.parseLong(segmentBytes)).as(spec.name() + " segment.bytes")
+                            .isBetween(52_428_800L, 1_073_741_824L);
+                }
+                String maxLag = spec.configs().get("max.compaction.lag.ms");
+                if (maxLag != null) {
+                    assertThat(Long.parseLong(maxLag)).as(spec.name() + " max.compaction.lag.ms").isGreaterThanOrEqualTo(21_600_000L);
+                }
+            });
+            // the business contracts survive the move to Cloud
+            assertThat(cloud.specs().stream().filter(s -> s.name().equals(cloud.charges())).findFirst().orElseThrow()
+                    .configs()).containsEntry("min.insync.replicas", "2");
+            assertThat(cloud.specs().stream().filter(s -> s.name().equals(cloud.plan())).findFirst().orElseThrow()
+                    .configs()).containsEntry("cleanup.policy", "compact");
+        }
+    }
+
+    @Test
+    void baseNamesResolveToPrefixedTopics() {
+        TopicCatalog prefixed = new TopicCatalog("l07.", true);
+
+        assertThat(prefixed.resolve("network.telemetry")).isEqualTo("l07.network.telemetry");
+        assertThat(prefixed.resolve("l07.network.telemetry")).isEqualTo("l07.network.telemetry");
+    }
+
+    @Test
     void labModeOnlyChangesTheCompactionTimings() {
         TopicCatalog production = new TopicCatalog("", false);
 

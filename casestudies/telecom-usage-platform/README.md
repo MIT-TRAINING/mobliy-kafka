@@ -185,12 +185,20 @@ Every topic and group then starts with `l07.`. The broker-failure drill needs
 the local cluster: you cannot stop brokers on the shared one. Full steps, quotas
 and troubleshooting: [`SHARED-CLUSTER.md`](SHARED-CLUSTER.md).
 
+### On Confluent Cloud
+
+Profile `ccloud` connects with an API key over `SASL_SSL` and adapts the topic
+contracts Cloud does not accept (RF fixed at 3, no `compression.type`,
+`segment.ms` of at least 10 minutes). Step-by-step guide:
+[`CONF-CLOUD-CLUSTER.md`](CONF-CLOUD-CLUSTER.md).
+
 ### Configuration
 
 | Property | Default | Meaning |
 | -------- | ------- | ------- |
 | `telco.prefix` | *(empty)* | Prepended to every topic and consumer-group name |
 | `telco.lab-mode` | `true` | Short compaction timings for class use |
+| `telco.confluent-cloud` | `false` | Adapt topic contracts to Confluent Cloud's limits (set by profile `ccloud`) |
 | `telco.simulator.subscribers` | `20` | MSISDNs `966500000001` … |
 | `telco.simulator.international-share` | `0.12` | Share of calls and texts that go abroad |
 | `telco.fraud.threshold` / `window-seconds` | `5` / `60` | International calls inside the window that raise an alert |
@@ -248,6 +256,7 @@ casestudies/telecom-usage-platform/
     └── resources
         ├── application.yml            defaults (local cluster)
         ├── application-shared.yml     profile for the shared AWS cluster
+        ├── application-ccloud.yml     profile for Confluent Cloud
         └── static/index.html          the demo dashboard
 ```
 

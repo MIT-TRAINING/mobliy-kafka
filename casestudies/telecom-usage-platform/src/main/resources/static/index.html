@@ -324,6 +324,8 @@ function renderResults(b, f, a, s) {
 
 function renderStorage(list) {
   const brokers = [...new Set(list.flatMap(s => Object.keys(s.bytesByBroker)))].sort();
+  // Managed clusters (Confluent Cloud) do not answer DescribeLogDirs: there is no per-broker disk to show
+  if (!brokers.length) { $('storage').innerHTML = '<div class="note">No log-directory data from the brokers. On Confluent Cloud this is expected: storage is managed and not exposed per broker. Use the Cloud Console (topic &rarr; Overview) for topic size.</div>'; return; }
   $('storage').innerHTML = '<table><tr><th>Topic</th><th>All replicas</th>' + brokers.map(b => `<th>Broker ${b}</th>`).join('') + '<th>Largest partition replica</th></tr>' +
     list.map(s => `<tr><td class="mono">${esc(s.topic)}</td><td><b>${bytes(s.totalBytesAllReplicas)}</b></td>` +
       brokers.map(b => `<td>${bytes(s.bytesByBroker[b] || 0)}</td>`).join('') +
@@ -355,7 +357,8 @@ async function refresh(forceDrill) {
     const ok = r => r.status === 'fulfilled';
     if (ok(cluster)) {
       const c = cluster.value;
-      $('cluster').innerHTML = `cluster <b>${esc(c.clusterId)}</b> &middot; controller <b>${c.activeControllerId}</b><br>` +
+      const ctl = c.activeControllerId < 0 ? 'controllers <b>managed by Confluent</b>' : `controller <b>${c.activeControllerId}</b>`;
+      $('cluster').innerHTML = `cluster <b>${esc(c.clusterId)}</b> &middot; ${ctl}<br>` +
         c.brokers.map(b => `broker ${b.id} ${b.fenced ? '<b style="color:#ff8a80">DOWN</b>' : '<b>up</b>'}`).join(' &middot; ');
     } else { $('cluster').textContent = 'cluster unreachable'; }
     if (ok(topics)) renderTopics(topics.value);

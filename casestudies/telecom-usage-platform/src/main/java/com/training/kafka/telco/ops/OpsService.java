@@ -73,6 +73,16 @@ public class OpsService {
 
     /** kafka-metadata-quorum.sh describe --status, kafka-broker-api-versions.sh */
     public ClusterView cluster() throws Exception {
+        if (catalog.confluentCloud()) {
+            // Confluent Cloud runs the controllers for you: the metadata quorum and fenced brokers
+            // are not exposed to clients. activeControllerId -1 means "managed by Confluent".
+            DescribeClusterResult cluster = admin.describeCluster();
+            List<BrokerView> brokers = await(cluster.nodes()).stream()
+                    .sorted(Comparator.comparingInt(Node::id))
+                    .map(n -> new BrokerView(n.id(), n.host() + ":" + n.port(), false))
+                    .toList();
+            return new ClusterView(await(cluster.clusterId()), -1, brokers);
+        }
         DescribeClusterResult cluster = admin.describeCluster(new DescribeClusterOptions().includeFencedBrokers(true));
         QuorumInfo quorum = await(admin.describeMetadataQuorum().quorumInfo());
         List<BrokerView> brokers = await(cluster.nodes()).stream()
@@ -180,7 +190,8 @@ public class OpsService {
      * forward while the END offset only ever grows. The records still readable are the difference.
      * CLI: kafka-get-offsets.sh --time earliest / --time latest
      */
-    public OffsetsView offsets(String topic) throws Exception {
+    public OffsetsView offsets(String name) throws Exception {
+        String topic = catalog.resolve(name);
         requireOurs(topic);
         TopicDescription description = await(admin.describeTopics(List.of(topic)).allTopicNames()).get(topic);
         List<TopicPartition> partitions = description.partitions().stream()

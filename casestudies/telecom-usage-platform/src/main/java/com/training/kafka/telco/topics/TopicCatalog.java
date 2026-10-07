@@ -6,6 +6,7 @@ import java.util.Map;
 import java.util.stream.IntStream;
 
 import com.training.kafka.telco.model.CdrType;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -42,10 +43,25 @@ public class TopicCatalog {
 
     private final String prefix;
     private final boolean labMode;
+    private final boolean confluentCloud;
 
-    public TopicCatalog(@Value("${telco.prefix:}") String prefix, @Value("${telco.lab-mode:true}") boolean labMode) {
+    public TopicCatalog(String prefix, boolean labMode) {
+        this(prefix, labMode, false);
+    }
+
+    /**
+     * @param confluentCloud true on Confluent Cloud (profile "ccloud"). Cloud fixes the replication
+     *                       factor at 3, does not let you set compression.type or
+     *                       min.cleanable.dirty.ratio, and enforces minimums such as segment.ms >= 10 min.
+     *                       A topic declared outside those rules fails at startup with
+     *                       PolicyViolationException, so the catalog adapts the affected contracts.
+     */
+    @Autowired
+    public TopicCatalog(@Value("${telco.prefix:}") String prefix, @Value("${telco.lab-mode:true}") boolean labMode,
+                        @Value("${telco.confluent-cloud:false}") boolean confluentCloud) {
         this.prefix = prefix;
         this.labMode = labMode;
+        this.confluentCloud = confluentCloud;
     }
 
     // ---------------------------------------------------------------- names
@@ -83,6 +99,15 @@ public class TopicCatalog {
 
     public boolean labMode() {
         return labMode;
+    }
+
+    public boolean confluentCloud() {
+        return confluentCloud;
+    }
+
+    /** Accepts a full topic name or a base name such as "network.telemetry", and adds the prefix if needed. */
+    public String resolve(String name) {
+        return names().contains(name) ? name : prefix + name;
     }
 
     public List<String> names() {
@@ -154,18 +179,7 @@ public class TopicCatalog {
                                 "retention.ms", DAYS_30,
                                 "min.insync.replicas", "2")),
 
-                new TopicSpec(telemetry(), "Telemetry",
-                        "Cell tower measurements, thousands per second.",
-                        "Losing a few points is fine, so acks=1, RF 2 and min.insync.replicas=1 buy speed and disk. "
-                                + "Retention is short in time AND size. compression.type=producer means the broker "
-                                + "stores the producer's lz4 batches as they are.",
-                        3, 2, config(
-                                "cleanup.policy", "delete",
-                                "retention.ms", "3600000",
-                                "retention.bytes", "1073741824",
-                                "segment.bytes", "134217728",
-                                "compression.type", "producer",
-                                "min.insync.replicas", "1")),
+                telemetrySpec(),
 
                 new TopicSpec(audit(), "Audit / compliance",
                         "Who changed what: plan changes, config changes, fraud alerts.",
@@ -186,11 +200,59 @@ public class TopicCatalog {
     }
 
     /**
+     * Telemetry trades durability for speed and disk. On Confluent Cloud the replication factor is
+     * fixed at 3 and compression.type is fixed at "producer" (the value we want anyway), so only
+     * acks=1 and min.insync.replicas=1 remain of the trade-off.
+     */
+    private TopicSpec telemetrySpec() {
+        if (confluentCloud) {
+            return new TopicSpec(telemetry(), "Telemetry",
+                    "Cell tower measurements, thousands per second.",
+                    "Losing a few points is fine, so acks=1 and min.insync.replicas=1 buy speed. CONFLUENT CLOUD: "
+                            + "RF is fixed at 3 and compression.type is fixed at 'producer' by Confluent, so the "
+                            + "RF 2 saving of the self-managed design is not available. Retention is short in time AND size.",
+                    3, 3, config(
+                            "cleanup.policy", "delete",
+                            "retention.ms", "3600000",
+                            "retention.bytes", "1073741824",
+                            "segment.bytes", "134217728",
+                            "min.insync.replicas", "1"));
+        }
+        return new TopicSpec(telemetry(), "Telemetry",
+                "Cell tower measurements, thousands per second.",
+                "Losing a few points is fine, so acks=1, RF 2 and min.insync.replicas=1 buy speed and disk. "
+                        + "Retention is short in time AND size. compression.type=producer means the broker "
+                        + "stores the producer's lz4 batches as they are.",
+                3, 2, config(
+                        "cleanup.policy", "delete",
+                        "retention.ms", "3600000",
+                        "retention.bytes", "1073741824",
+                        "segment.bytes", "134217728",
+                        "compression.type", "producer",
+                        "min.insync.replicas", "1"));
+    }
+
+    /**
      * subscriber.plan holds the CURRENT plan of every subscriber, so it is
      * compacted (Module 3 section 5.5): the latest record per MSISDN is kept
      * forever, older ones are cleaned up, and a null value deletes the subscriber.
      */
     private TopicSpec planSpec() {
+        if (confluentCloud) {
+            // Cloud: min.cleanable.dirty.ratio cannot be set, segment.ms >= 10 min and
+            // max.compaction.lag.ms >= 6 h. Compaction still runs, but not within a minute.
+            return new TopicSpec(plan(), "State / changelog",
+                    "The current plan of every subscriber. A tombstone (null value) removes a subscriber.",
+                    "Compacted: the latest plan per MSISDN is kept, old versions are cleaned. CONFLUENT CLOUD: "
+                            + "segment.ms has a 10-minute minimum and the cleaner is Confluent's, so compaction "
+                            + "takes hours, not a minute. Watch it on the local cluster.",
+                    3, 3, config(
+                            "cleanup.policy", "compact",
+                            "min.insync.replicas", "2",
+                            "segment.ms", labMode ? "600000" : "3600000",
+                            "max.compaction.lag.ms", labMode ? "21600000" : "86400000",
+                            "delete.retention.ms", "86400000"));
+        }
         Map<String, String> configs = labMode
                 ? config(
                         "cleanup.policy", "compact",
