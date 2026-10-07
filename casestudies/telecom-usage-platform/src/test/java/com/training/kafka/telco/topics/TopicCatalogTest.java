@@ -63,7 +63,7 @@ class TopicCatalogTest {
                 // Cloud fixes RF at 3 and rejects these settings with PolicyViolationException
                 assertThat(spec.replicas()).as(spec.name() + " RF").isEqualTo(3);
                 assertThat(spec.configs()).as(spec.name())
-                        .doesNotContainKeys("compression.type", "min.cleanable.dirty.ratio");
+                        .doesNotContainKeys("compression.type", "min.cleanable.dirty.ratio", "max.compaction.lag.ms");
                 assertThat(spec.configs().get("min.insync.replicas")).as(spec.name()).isIn("1", "2");
                 String segmentMs = spec.configs().get("segment.ms");
                 if (segmentMs != null) {
@@ -73,10 +73,6 @@ class TopicCatalogTest {
                 if (segmentBytes != null) {
                     assertThat(Long.parseLong(segmentBytes)).as(spec.name() + " segment.bytes")
                             .isBetween(52_428_800L, 1_073_741_824L);
-                }
-                String maxLag = spec.configs().get("max.compaction.lag.ms");
-                if (maxLag != null) {
-                    assertThat(Long.parseLong(maxLag)).as(spec.name() + " max.compaction.lag.ms").isGreaterThanOrEqualTo(21_600_000L);
                 }
             });
             // the business contracts survive the move to Cloud

@@ -239,18 +239,19 @@ public class TopicCatalog {
      */
     private TopicSpec planSpec() {
         if (confluentCloud) {
-            // Cloud: min.cleanable.dirty.ratio cannot be set, segment.ms >= 10 min and
-            // max.compaction.lag.ms >= 6 h. Compaction still runs, but not within a minute.
+            // Cloud: min.cleanable.dirty.ratio cannot be set, segment.ms >= 10 min, and
+            // max.compaction.lag.ms is refused (PolicyViolationException, even at 6 h).
+            // Compaction still runs on Confluent's schedule, but not within a minute.
             return new TopicSpec(plan(), "State / changelog",
                     "The current plan of every subscriber. A tombstone (null value) removes a subscriber.",
                     "Compacted: the latest plan per MSISDN is kept, old versions are cleaned. CONFLUENT CLOUD: "
-                            + "segment.ms has a 10-minute minimum and the cleaner is Confluent's, so compaction "
+                            + "segment.ms has a 10-minute minimum, max.compaction.lag.ms and the dirty ratio cannot be set, "
+                            + "and the cleaner is Confluent's, so compaction "
                             + "takes hours, not a minute. Watch it on the local cluster.",
                     3, 3, config(
                             "cleanup.policy", "compact",
                             "min.insync.replicas", "2",
                             "segment.ms", labMode ? "600000" : "3600000",
-                            "max.compaction.lag.ms", labMode ? "21600000" : "86400000",
                             "delete.retention.ms", "86400000"));
         }
         Map<String, String> configs = labMode

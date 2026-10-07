@@ -43,7 +43,7 @@ declared outside those limits makes the application stop at startup with
 | Topic / feature | Self-managed design | On Confluent Cloud | Reason |
 | --------------- | ------------------- | ------------------ | ------ |
 | `network.telemetry` | RF 2, `compression.type=producer` | **RF 3**, `compression.type` not set | RF is fixed at 3; `compression.type` is fixed at `producer` by Confluent, the value we wanted anyway |
-| `subscriber.plan` (lab mode) | `segment.ms=30s`, `min.cleanable.dirty.ratio=0.01`, `max.compaction.lag.ms=60s` | `segment.ms=10 min`, `max.compaction.lag.ms=6 h`, no dirty ratio | `segment.ms` minimum is 10 minutes; `min.cleanable.dirty.ratio` cannot be set; compaction runs on Confluent's schedule |
+| `subscriber.plan` (lab mode) | `segment.ms=30s`, `min.cleanable.dirty.ratio=0.01`, `max.compaction.lag.ms=60s` | `segment.ms=10 min`; no dirty ratio, no `max.compaction.lag.ms` | `segment.ms` minimum is 10 minutes; `min.cleanable.dirty.ratio` and `max.compaction.lag.ms` are refused with `PolicyViolationException` (verified: even 6 h is rejected); compaction runs on Confluent's schedule |
 | Every other topic | | **Unchanged** | RF 3, `min.insync.replicas` 1 or 2, retention and segment sizes inside Cloud's limits |
 | Header: controller | Active KRaft controller id | "controllers managed by Confluent" | The metadata quorum is not exposed to clients |
 | Storage panel | Bytes per broker from `DescribeLogDirs` | Explanatory note | Storage is managed and not exposed per broker |
