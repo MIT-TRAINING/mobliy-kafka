@@ -605,8 +605,4 @@ empty), and `*` back on your Cloud context.
 Keep both contexts, `~/kafka/ccloud.properties` and the Cloud topic
 `$ME.cdr.voice`: Module 7 starts from them.
 
-> **Next module:** *Module 7 — Administering Kafka Security*, where you
-> secure both worlds: SASL, SSL and ACLs on Apache Kafka compared with
-> Confluent RBAC, role bindings, API keys and service accounts — replacing
-> the user-owned API key from Lab 01 with a service account that has exactly
-> the rights its application needs.
+**Next:** [Lab 04 — Producing & consuming with Spring Boot on Confluent Cloud](lab-04-spring-boot-produce-consume-confluent-cloud.md)

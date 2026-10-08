@@ -10,23 +10,27 @@ broker IDs. These labs move the same administration onto **Confluent**. You
 start in your own **Confluent Cloud** environment (`env-lNN`): log in with the
 Confluent CLI, find your cluster, create an API key, and then run the whole
 topic lifecycle there with the Confluent CLI, the Cloud Console and the
-Apache Kafka CLI you already know. The last lab moves to the **shared
+Apache Kafka CLI you already know. Lab 03 moves to the **shared
 self-managed Confluent Platform** cluster: Control Center, the Admin REST API
-and RBAC-scoped topic management. Do the labs in order.
+and RBAC-scoped topic management. Labs 04 and 05 run two Spring Boot applications
+that produce and consume, first on Cloud with your API key, then unchanged on
+the Platform cluster with your LDAP user. Do the labs in order.
 
 | # | Lab | Level | Time | What you will do |
 | - | --- | ----- | ---- | ---------------- |
 | 01 | [Confluent CLI, environments & authentication](lab-01-confluent-cli-environments-authentication.md) | Beginner | 55 min | Check your prepared configs, log in to Confluent Cloud, navigate organization → environment → cluster by ID, create and select a cluster API key, build `ccloud.properties`, reach Cloud with `kafka-topics.sh` |
 | 02 | [Managing topics on Confluent Cloud](lab-02-managing-topics-confluent-cloud.md) | Beginner → Intermediate | 70 min | Create topics with explicit settings, hit the Cloud guardrails (RF, `min.insync.replicas`, broker configs), dry-run and apply config changes, produce and consume keyed CDRs, use the Cloud Console, delete safely |
 | 03 | [Control Center & topic management on Confluent Platform](lab-03-control-center-topic-management-platform.md) | Intermediate → Advanced | 85 min | Inspect the shared Confluent Platform cluster with the Apache CLI, tour Control Center, create a topic in the UI and verify it from the CLI, log in to MDS and drive the Admin REST API with the Confluent CLI, prove RBAC prefix scoping, compare Confluent Server with Apache Kafka |
+| 04 | [Producing & consuming with Spring Boot on Confluent Cloud](lab-04-spring-boot-produce-consume-confluent-cloud.md) | Intermediate | 60 min | Walk through the Cloud-ready Spring Boot producer and consumer (external client file, prefixed names), create the topics, publish string and JSON messages, read groups and lag with the CLI and the Cloud Console, see what happens without the topic |
+| 05 | [Producing & consuming with Spring Boot on Confluent Platform (AWS)](lab-05-spring-boot-produce-consume-confluent-platform-aws.md) | Intermediate → Advanced | 65 min | Run the same jars on the shared Platform cluster with `cp.properties`, compare the Cloud and Platform client files, create replicated topics through Admin REST, see RBAC refuse a topic outside `lNN.`, watch the apps in Control Center, diagnose a missing truststore |
 
-Estimated total: **about 3 h 30 min**, including checkpoint questions.
+Estimated total: **about 5 h 35 min**, including checkpoint questions.
 
 > **Trainers:** the environment these labs need (Confluent Cloud
 > subscription, per-learner environments, the Confluent Platform enterprise
 > cluster, LDAP users, RBAC bindings and the config files on every VM) is set
-> up with the kit in [`setup/`](setup/README.md). Run it before day 1 and
-> dry-run all three labs on `lab-l01`.
+> up with the kit in [`infra/confluent/`](../../infra/confluent/README.md). Run it before day 1 and
+> dry-run all five labs on `lab-l01`.
 
 ---
 
@@ -40,9 +44,10 @@ Estimated total: **about 3 h 30 min**, including checkpoint questions.
 | Your learner prefix `lNN` | The credentials e-mail you received | Every topic and group starts with `$ME.` |
 | Endpoint file `~/kafka/confluent.env` | `cat ~/kafka/confluent.env` | Written by the trainer; endpoints only, no secrets |
 | Platform client config `~/kafka/cp.properties` + CA `~/kafka/cp-ca.pem` | `ls -l ~/kafka/` | Your LDAP user for the shared Confluent Platform cluster (Lab 03) |
-| Your LDAP password | The credentials e-mail | Control Center and `confluent login --url` (Lab 03) |
+| Your LDAP password | The credentials e-mail | Control Center and `confluent login --url` (Labs 03, 05) |
 | `jq` | `jq --version` | Reads `-o json` output |
-| A browser on your laptop | — | Cloud Console (Labs 01–02) and Control Center (Lab 03) |
+| A browser on your laptop | — | Cloud Console (Labs 01–02, 04) and Control Center (Lab 03) |
+| Java 17+ and Maven wrapper | `java -version` | Lab 04 builds the Spring Boot apps in [`lab-04/`](lab-04/) with `./mvnw`; Lab 05 reuses the jars |
 
 > **No Docker in this module.** Nothing here runs locally, so there are no
 > ports to free. If your Module 5 cluster is still running, stop it to give
@@ -61,7 +66,7 @@ Estimated total: **about 3 h 30 min**, including checkpoint questions.
 
 > **Studying on your own?** Lab 01 and Lab 02 work in a personal Confluent
 > Cloud trial organization (new organizations get free credit). Follow
-> [`setup/README.md` Part C](setup/README.md#part-c--self-study-your-own-trial-organization)
+> [`infra/confluent/README.md` Part C](../../infra/confluent/README.md#part-c--self-study-your-own-trial-organization)
 > to create an environment and a Basic cluster first. Lab 03 needs a
 > Confluent Platform cluster with RBAC and Control Center.
 
@@ -175,4 +180,4 @@ rm -f ~/kafka/ccloud.properties
 This deletes data and credentials only; your environment and cluster stay,
 and nothing on the shared Confluent Platform cluster except your own `$ME.*`
 topics is ever touched. The trainer deletes the whole Cloud organization at
-the end of the course ([`setup/README.md` Part D](setup/README.md#part-d--teardown)).
+the end of the course ([`infra/confluent/README.md` Part D](../../infra/confluent/README.md#part-d--teardown)).
