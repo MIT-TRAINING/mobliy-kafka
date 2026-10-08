@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Throughput &amp; Latency Metrics</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 8 · Monitoring &amp; Performance Tuning</a>
+    <div class="nav"><span>3 / 5</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 3</div>
+  <h1>Cluster load metrics: throughput and latency indicators</h1>
+  <p class="lede">"Kafka is slow" is not a diagnosis. Every broker splits each request's time into stages: waiting in the
+    request queue, writing locally, waiting for followers, being throttled, and sending the response. The biggest stage
+    names the bottleneck. Push CDR traffic at the <code>l08.cdr.voice</code> leader on <code>cp-broker-1</code>, then
+    <b>break something</b> (a slow disk, a slow follower, a quota) and read which bar grows.</p>
+
+  <div class="card">
+    <div class="sliders">
+      <label><span>Produce rate to this broker <output id="rateOut"></output></span><input type="range" id="rate" min="2" max="80" value="20" aria-label="Produce rate"></label>
+      <label><span>Consumer groups reading <output id="grpOut"></output></span><input type="range" id="grp" min="1" max="3" value="2" aria-label="Consumer groups"></label>
+    </div>
+    <div class="controls">
+      <span class="ctl-label">acks</span>
+      <div class="seg" role="group" aria-label="acks" id="acksSeg"><button data-v="1" aria-pressed="false">1</button><button data-v="all" aria-pressed="true">all</button></div>
+      <span class="ctl-label">linger.ms</span>
+      <div class="seg" role="group" aria-label="linger.ms" id="lingerSeg"><button data-v="0" aria-pressed="true">0</button><button data-v="10" aria-pressed="false">10</button></div>
+    </div>
+    <div class="checks">
+      <label><input type="checkbox" id="cDisk"> cp-broker-1's log disk is slow (a noisy neighbour on the volume)</label>
+      <label><input type="checkbox" id="cFollow"> cp-broker-3 fetches slowly (its network link is degraded)</label>
+      <label><input type="checkbox" id="cQuota"> Quota for <code>User:l08</code>: <code>producer_byte_rate=10485760</code> (10 MB/s)</label>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 330" role="img" aria-label="Produce request latency broken into stages, and broker load gauges"></svg></div>
+    <div class="verdict" id="verdict"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>The metrics behind the picture</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Indicator</th><th>JMX MBean (Apache Kafka, Confluent Platform)</th><th>What a bad value means</th></tr></thead>
+      <tbody>
+        <tr><td>Throughput</td><td><code>kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec</code>, <code>BytesOutPerSec</code>, <code>MessagesInPerSec</code></td><td>Uneven values across brokers mean the partition leaders are unbalanced</td></tr>
+        <tr><td>Request rate</td><td><code>kafka.network:type=RequestMetrics,name=RequestsPerSec,request=Produce</code></td><td>Many small requests: producers aren't batching (<code>linger.ms</code>, <code>batch.size</code>)</td></tr>
+        <tr><td>Request latency</td><td><code>…RequestMetrics,name=TotalTimeMs,request=Produce</code> and its stages <code>RequestQueueTimeMs</code>, <code>LocalTimeMs</code>, <code>RemoteTimeMs</code>, <code>ThrottleTimeMs</code>, <code>ResponseQueueTimeMs</code>, <code>ResponseSendTimeMs</code></td><td>The biggest stage tells you where to look (see below)</td></tr>
+        <tr><td>Thread headroom</td><td><code>kafka.server:type=KafkaRequestHandlerPool,name=RequestHandlerAvgIdlePercent</code>, <code>kafka.network:type=SocketServer,name=NetworkProcessorAvgIdlePercent</code></td><td>Below about 30 % idle, requests start to queue</td></tr>
+        <tr><td>Replication</td><td><code>kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions</code>, <code>IsrShrinksPerSec</code></td><td>A follower can't keep up: latency now, lower durability later</td></tr>
+        <tr><td>Client view</td><td>Producer <code>request-latency-avg</code>, <code>record-queue-time-avg</code>, <code>produce-throttle-time-avg</code>. Consumer <code>records-lag-max</code></td><td>On Confluent Cloud, the Metrics API gives only an average (<code>producer_latency_avg_milliseconds</code>) and throttling (<code>client_limit_milliseconds</code>). Percentiles come from the client</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="grid grid-3" style="margin-top:16px">
+    <div class="card"><h3 style="margin-top:0">Queue time high</h3><p style="color:var(--muted);font-size:14px;margin:0">Request handler threads are busy. Find out <i>why</i>: many tiny produce requests (raise <code>linger.ms</code>), a slow disk making each request take longer, or simply too much load for this broker.</p></div>
+    <div class="card"><h3 style="margin-top:0">Local or remote time high</h3><p style="color:var(--muted);font-size:14px;margin:0">Local: the leader's disk write is slow, so check <code>iostat</code> and volume metrics. Remote: with <code>acks=all</code>, the leader waits for the slowest in-sync follower.</p></div>
+    <div class="card"><h3 style="margin-top:0">Throttle time high</h3><p style="color:var(--muted);font-size:14px;margin:0">Nothing is broken. The broker is delaying responses on purpose because a client is above its quota. On Confluent Cloud the same happens when a cluster reaches its limits (Topic 4).</p></div>
+  </div>
+  <div class="callout"><b>Admin gotcha:</b> averages hide problems. A produce mean of 4 ms can sit next to a p99 of 400 ms when one follower
+    stalls. Alert and tune on the <b>99th percentile</b>, per broker, so you see that the slow requests come from one broker.</div>
+  <div class="callout warn"><b>Production trap:</b> a slow follower first <i>raises</i> <code>acks=all</code> latency. After
+    <code>replica.lag.time.max.ms</code> (30 s by default), the leader drops it from the ISR and latency recovers, so the graph looks fine.
+    But each of those partitions now has one fewer in-sync copy. Watch <code>IsrShrinksPerSec</code> and URP as well as latency.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="02-metrics-api-health-plus.html"><small>← Previous</small>Metrics API &amp; Health+</a>
+    <a class="next" href="04-performance-scaling.html"><small>Next →</small>Performance &amp; scaling</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), log = document.getElementById('log');
+const S = { rate: 20, groups: 2, acks: 'all', linger: 0, disk: false, follow: false, quota: false, slowFor: 0, shrunk: false };
+const STAGES = [
+  ['RequestQueueTimeMs', 'var(--p0)'], ['LocalTimeMs', 'var(--p1)'], ['RemoteTimeMs', 'var(--p2)'],
+  ['ThrottleTimeMs', 'var(--p3)'], ['ResponseQueueTimeMs', 'var(--p4)'], ['ResponseSendTimeMs', 'var(--p5)']
+];
+
+function model() {
+  const batchKB = S.linger ? 64 : 8;
+  const effRate = S.quota ? Math.min(S.rate, 10) : S.rate;
+  const reqs = effRate * 1024 / batchKB;
+  const local = (0.8 + batchKB * 0.02) * (S.disk ? 6 : 1);
+  const u = Math.min(0.97, reqs * local / 1000 / 8);                  // 8 request handler threads
+  const queue = local * u / (1 - u);
+  const out = effRate * S.groups + effRate * 2;                         // consumers + two followers
+  const nu = Math.min(0.95, (effRate + out) / 700);
+  const remote = S.acks === 'all' ? (S.follow && !S.shrunk ? 240 : 3) : 0;
+  const throttle = S.quota && S.rate > 10 ? Math.min(3000, (S.rate / 10 - 1) * 1000) : 0;
+  const p99 = [queue * 2.5, local * 3, remote * 1.3, throttle, 0.2, 0.4 / (1 - nu)];
+  return { reqs, local, u, nu, out, effRate, p99, total: p99.reduce((a, b) => a + b, 0), urp: S.shrunk ? 1 : 0 };
+}
+
+function render() {
+  const m = model();
+  svg.innerHTML = '';
+  el('text', { x: 20, y: 28, 'font-size': 14, 'font-weight': 600, text: 'Produce TotalTimeMs, 99th percentile, cp-broker-1' }, svg);
+  el('text', { x: 880, y: 28, 'text-anchor': 'end', 'font-size': 18, 'font-weight': 700, 'font-family': 'var(--mono)', fill: m.total > 100 ? 'var(--bad)' : m.total > 25 ? 'var(--warn)' : 'var(--ok)', text: m.total.toFixed(1) + ' ms' }, svg);
+  const W = 860, scale = W / Math.max(50, m.total);
+  let x = 20;
+  m.p99.forEach((v, i) => {
+    const w = v * scale;
+    if (w < 0.5) return;
+    el('rect', { x, y: 42, width: w, height: 40, fill: STAGES[i][1] }, svg);
+    if (w > 46) el('text', { x: x + w / 2, y: 67, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 600, fill: '#fff', text: v.toFixed(v < 10 ? 1 : 0) }, svg);
+    x += w;
+  });
+  el('text', { x: 20, y: 98, 'font-size': 10.5, fill: 'var(--muted)', text: '0 ms' }, svg);
+  el('text', { x: 880, y: 98, 'text-anchor': 'end', 'font-size': 10.5, fill: 'var(--muted)', text: Math.max(50, m.total).toFixed(0) + ' ms' }, svg);
+  STAGES.forEach(([n, c], i) => {
+    const lx = 20 + (i % 3) * 290, ly = 120 + Math.floor(i / 3) * 20;
+    el('rect', { x: lx, y: ly - 10, width: 11, height: 11, rx: 2, fill: c }, svg);
+    el('text', { x: lx + 17, y: ly, 'font-size': 12, 'font-family': 'var(--mono)', text: `${n} ${m.p99[i].toFixed(1)}` }, svg);
+  });
+  const gauges = [
+    ['BytesInPerSec', m.effRate.toFixed(1) + ' MB/s', m.effRate / 80, false],
+    ['BytesOutPerSec', m.out.toFixed(1) + ' MB/s', m.out / 400, false],
+    ['RequestsPerSec (Produce)', Math.round(m.reqs) + ' /s', m.reqs / 10240, false],
+    ['RequestHandlerAvgIdlePercent', Math.round((1 - m.u) * 100) + ' %', 1 - m.u, true],
+    ['NetworkProcessorAvgIdlePercent', Math.round((1 - m.nu) * 100) + ' %', 1 - m.nu, true],
+    ['UnderReplicatedPartitions', String(m.urp), m.urp ? 1 : 0, false]
+  ];
+  gauges.forEach(([n, v, f, idle], i) => {
+    const gx = 20 + (i % 2) * 440, gy = 175 + Math.floor(i / 2) * 50;
+    const bad = idle ? f < 0.3 : i === 5 ? f > 0 : false;
+    el('text', { x: gx, y: gy, 'font-size': 12, 'font-family': 'var(--mono)', text: n }, svg);
+    el('text', { x: gx + 420, y: gy, 'text-anchor': 'end', 'font-size': 12, 'font-weight': 700, fill: bad ? 'var(--bad)' : 'var(--text)', text: v }, svg);
+    el('rect', { x: gx, y: gy + 7, width: 420, height: 10, rx: 5, fill: 'var(--surface-2)' }, svg);
+    el('rect', { x: gx, y: gy + 7, width: 420 * Math.min(1, Math.max(0.01, f)), height: 10, rx: 5, fill: bad ? 'var(--bad)' : idle && f < 0.5 ? 'var(--warn)' : 'var(--accent)' }, svg);
+  });
+  const big = m.p99.indexOf(Math.max(...m.p99));
+  let msg, cls;
+  if (m.total < 25) { msg = 'Healthy: no stage dominates.'; cls = 'ok'; }
+  else if (big === 3) { msg = `Throttled: <code>User:l08</code> sends ${S.rate} MB/s against a 10 MB/s quota, so the broker holds each response back. Nothing is broken. Raise the quota or slow the producer.`; cls = 'warn'; }
+  else if (big === 0) { msg = `Request queue: handler threads are only ${Math.round((1 - m.u) * 100)} % idle. ${S.disk ? 'The slow disk makes every request hold a thread longer.' : S.linger ? 'Too much load for this broker: spread leaders across more brokers.' : 'Too many tiny requests: set <code>linger.ms</code> so producers batch.'}`; cls = 'bad'; }
+  else if (big === 1) { msg = 'Local time: the leader\'s own disk write is slow. Check the volume (iostat, cloud volume metrics).'; cls = 'bad'; }
+  else if (big === 2) { msg = 'Remote time: with <code>acks=all</code> the leader waits for cp-broker-3, the slowest in-sync follower.'; cls = 'bad'; }
+  else { msg = 'Response send: the network threads are busy.'; cls = 'warn'; }
+  document.getElementById('verdict').innerHTML = `<span class="pill ${cls}">${cls === 'ok' ? 'OK' : 'bottleneck'}</span> ${msg}`;
+  document.getElementById('rateOut').textContent = S.rate + ' MB/s';
+  document.getElementById('grpOut').textContent = ['billing', 'billing + analytics', 'billing + analytics + audit'][S.groups - 1];
+  return m;
+}
+
+function changed(text) { const m = render(); logLine(log, `${text} → p99 ${m.total.toFixed(1)} ms, handler idle ${Math.round((1 - m.u) * 100)} %`); }
+
+const rate = document.getElementById('rate'), grp = document.getElementById('grp');
+rate.oninput = () => { S.rate = +rate.value; render(); };
+rate.onchange = () => changed(`Produce rate ${S.rate} MB/s`);
+grp.oninput = () => { S.groups = +grp.value; render(); };
+grp.onchange = () => changed(`${S.groups} consumer group(s) reading`);
+wireSeg('acksSeg', v => { S.acks = v; changed(`acks=${v}`); });
+wireSeg('lingerSeg', v => { S.linger = +v; changed(`linger.ms=${v}: average batch ${v === '0' ? '8' : '64'} KB`); });
+document.getElementById('cDisk').onchange = e => { S.disk = e.target.checked; changed(S.disk ? 'cp-broker-1 disk slow' : 'Disk healthy again'); };
+document.getElementById('cQuota').onchange = e => { S.quota = e.target.checked; changed(S.quota ? 'Quota producer_byte_rate=10 MB/s for User:l08' : 'Quota removed'); };
+document.getElementById('cFollow').onchange = e => {
+  S.follow = e.target.checked; S.slowFor = 0;
+  if (!S.follow && S.shrunk) { S.shrunk = false; changed('cp-broker-3 caught up and rejoined the ISR'); return; }
+  changed(S.follow ? 'cp-broker-3 fetching slowly: still in the ISR for now' : 'cp-broker-3 healthy');
+};
+setInterval(() => {
+  if (!S.follow || S.shrunk) return;
+  S.slowFor += 5;
+  if (S.slowFor >= 30) { S.shrunk = true; changed('<b>ISR shrink</b>: cp-broker-3 more than replica.lag.time.max.ms (30 s) behind, removed from the ISR of l08.cdr.voice-0. Latency recovers, durability drops'); }
+  else logLine(log, `cp-broker-3 has been behind for ${S.slowFor} s (removed from the ISR at 30 s)`);
+}, 1000);
+render();
+logLine(log, 'cp-broker-1 leads l08.cdr.voice-0 (RF 3, acks=all). Change the load, then break something.');
+
+renderQuiz('quiz', [
+  { q: 'Produce p99 is 180 ms. <code>RequestQueueTimeMs</code> is most of it, and <code>RequestHandlerAvgIdlePercent</code> is 3 %. Disks are fine. Producers use <code>linger.ms=0</code>. What is the most likely fix?',
+    options: ['Replace the disks', 'Switch to <code>acks=1</code>', 'Raise <code>replica.lag.time.max.ms</code>', 'Set <code>linger.ms</code> (and a suitable <code>batch.size</code>) so producers send fewer, larger requests'],
+    answer: 3,
+    explain: 'Queue time means requests wait for a free handler thread. With <code>linger.ms=0</code>, each request carries a tiny batch, so the threads spend their time on overhead. Larger batches cut the request rate. In the simulation, linger.ms=10 drops the requests per second by about 8×.' },
+  { q: 'With <code>acks=all</code>, <code>RemoteTimeMs</code> dominates produce latency. What does it measure?',
+    options: ['Time to write the batch to the leader\'s disk', 'Time the leader waits for in-sync followers to fetch the data', 'Time the request waits for a handler thread', 'The network time from the producer to the broker'],
+    answer: 1,
+    explain: 'With <code>acks=all</code>, the request stays in the broker\'s "remote" stage until every ISR member has the records. One slow follower slows every <code>acks=all</code> producer of those partitions.' },
+  { q: 'You make cp-broker-3 fetch slowly. Produce latency jumps, then about 30 seconds later it returns to normal without anyone doing anything. What happened?',
+    options: ['The producer switched to <code>acks=1</code> automatically', 'The leader moved to cp-broker-3', 'cp-broker-3 fell behind for longer than <code>replica.lag.time.max.ms</code> and left the ISR. Latency recovered, but those partitions now have one fewer in-sync copy.', 'Kafka added a fourth replica'],
+    answer: 2,
+    explain: 'The ISR shrink protects latency at the cost of durability. That is why "latency is fine again" is not the end of the incident: URP and <code>IsrShrinksPerSec</code> show the problem that remains.' },
+  { q: 'An MQ administrator wants to reduce latency by sending every message as its own request (<code>linger.ms=0</code>, small batches). On a busy broker, what is the effect?',
+    options: ['More, smaller requests: higher request rate and handler load. At high traffic, latency can get worse, not better.',
+      'Lower latency in every case',
+      'Fewer bytes on the network',
+      'Better consumer lag'],
+    answer: 0,
+    explain: 'Batching is how Kafka reaches high throughput. A few milliseconds of <code>linger.ms</code> usually lowers p99 under load, because each request does more work for the same per-request overhead.' },
+  { q: '<code>ThrottleTimeMs</code> is high for produce requests from <code>User:l08</code>, and every other stage is small. What is going on?',
+    options: ['The disk is full', 'A follower is lagging', 'The broker is enforcing a client quota (such as <code>producer_byte_rate</code>) and delaying responses on purpose, so the client slows to its quota', 'The topic has too few partitions'],
+    answer: 2,
+    explain: 'Quotas don\'t reject data. They delay responses so the client\'s average rate falls to the limit. The client sees it as <code>produce-throttle-time-avg</code>. On Confluent Cloud, reaching a cluster\'s limits throttles clients the same way.' }
+]);
+</script>
+</body>
+</html>

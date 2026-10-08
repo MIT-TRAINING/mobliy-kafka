@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Metrics API &amp; Health+</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 8 · Monitoring &amp; Performance Tuning</a>
+    <div class="nav"><span>2 / 5</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 2</div>
+  <h1>Confluent Metrics API and Health+</h1>
+  <p class="lede">On Confluent Cloud you can't scrape a broker. Confluent publishes your cluster's metrics through the
+    <b>Metrics API</b>, and you query them with a Cloud API key. On self-managed Confluent Platform, it works the other way round:
+    the brokers send telemetry <i>out</i> to <b>Health+</b>, which watches the cluster for you. Health+ is now being retired (see below),
+    but its successor works the same way. Build a query for your Basic cluster <code>lkc-4n8vq</code> and read the answer, then
+    switch to Health+ and find the three ways its alerts can fail to reach you.</p>
+
+  <div class="card">
+    <div class="controls">
+      <div class="seg" role="group" aria-label="Mode" id="modeSeg">
+        <button data-v="api" aria-pressed="true">Metrics API · Cloud</button><button data-v="hp" aria-pressed="false">Health+ (legacy) · Platform</button>
+      </div>
+    </div>
+    <div id="apiCtl">
+      <div class="controls">
+        <select id="metric" aria-label="Metric"></select>
+        <span class="ctl-label">group by</span><select id="group" aria-label="Group by"></select>
+        <div class="seg" role="group" aria-label="Granularity" id="granSeg">
+          <button data-v="PT1M" aria-pressed="true">PT1M</button><button data-v="PT5M" aria-pressed="false">PT5M</button><button data-v="PT1H" aria-pressed="false">PT1H</button>
+        </div>
+        <div class="seg" role="group" aria-label="Interval" id="ivSeg">
+          <button data-v="60" aria-pressed="true">last hour</button><button data-v="360" aria-pressed="false">last 6 h</button>
+        </div>
+      </div>
+      <div class="controls">
+        <span class="ctl-label">Credentials</span>
+        <div class="seg" role="group" aria-label="Credentials" id="keySeg">
+          <button data-v="cloud" aria-pressed="true">Cloud API key</button><button data-v="kafka" aria-pressed="false">Kafka API key (lkc-4n8vq)</button>
+        </div>
+        <button class="primary" id="runQ">Send query</button>
+      </div>
+    </div>
+    <div id="hpCtl" hidden>
+      <div class="checks" style="margin:12px 0">
+        <label><input type="checkbox" id="hTel"> <code>confluent.telemetry.enabled=true</code> on every broker</label>
+        <label><input type="checkbox" id="hKey"> <code>confluent.telemetry.api.key</code> / <code>.api.secret</code> set to a Cloud API key</label>
+        <label><input type="checkbox" id="hNat" checked> Outbound HTTPS (443) allowed through the NAT gateway</label>
+      </div>
+      <div class="scen" role="group" aria-label="Problems">
+        <button data-e="disk">Broker 2 disk 90 % full</button>
+        <button data-e="urp">Partitions under-replicated for 20 min</button>
+        <button data-e="down">Broker 3 stops</button>
+      </div>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 300" role="img" aria-label="Metrics API query path and result chart, or Health+ telemetry path"></svg></div>
+    <div class="req" id="req">
+      <div><h3>Request</h3><pre class="code" id="reqBody"></pre></div>
+      <div><h3>Response</h3><pre class="code" id="resBody">Send the query to see the response.</pre></div>
+    </div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Metrics API vs Health+</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th></th><th>Metrics API (Confluent Cloud)</th><th>Health+ (Confluent Platform)</th></tr></thead>
+      <tbody>
+        <tr><td>Direction</td><td>You pull: <code>POST …/v2/metrics/cloud/query</code></td><td>Brokers push telemetry to Confluent Cloud over HTTPS</td></tr>
+        <tr><td>Credentials</td><td>Cloud API key (resource <code>cloud</code>), owner allowed to view metrics, e.g. <code>MetricsViewer</code></td><td>Cloud API key in <code>confluent.telemetry.api.key</code> / <code>.api.secret</code></td></tr>
+        <tr><td>What you get</td><td>Time series: <code>received_bytes</code>, <code>sent_bytes</code>, <code>retained_bytes</code>, <code>request_count</code>, <code>active_connection_count</code>, <code>consumer_lag_offsets</code>, …</td><td>Alerts on known problems, cluster dashboards in Confluent Cloud, and diagnostics that Confluent Support can use when you open a case</td></tr>
+        <tr><td>Your own tools</td><td><code>GET …/v2/metrics/cloud/export?resource.kafka.id=lkc-4n8vq</code> returns Prometheus format, so your Prometheus or Datadog can scrape it</td><td>Keep Control Center or your own Prometheus for detail: Health+ is a safety net, not a full monitoring stack</td></tr>
+        <tr><td>Freshness</td><td>Points are usually queryable about 3 minutes after the fact. <code>PT1M</code> works for intervals up to 6 hours</td><td>Sent by the same Telemetry Reporter that feeds Control Center</td></tr>
+        <tr><td>Status in 2026</td><td>Current</td><td>Deprecated: no new deployments from Confluent Platform 8.1, sunset on 31 December 2026. The successor is <b>Unified Stream Manager</b> (USM)</td></tr>
+        <tr><td>Sent or stored</td><td>Metrics about your cluster only, kept for a limited time</td><td>Metrics and configuration metadata, never message contents</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Admin gotcha:</b> <code>received_bytes</code> and <code>sent_bytes</code> are <i>delta</i> counts: each point is the bytes
+    in that time bucket. With <code>PT1M</code>, 360 000 000 means 360 MB in that minute, or 6 MB/s. Change the granularity to
+    <code>PT5M</code> and the same traffic shows five times larger values. Divide by the bucket length before you compare.</div>
+  <div class="callout warn"><b>Plan for the sunset:</b> the course's Platform cluster runs 8.3, a <i>new deployment</i> in Health+ terms, so
+    Health+ is shown here as an overview only. The replacement, <b>Unified Stream Manager</b>, runs an agent in your network that streams
+    operational data to Confluent Cloud, so Platform and Cloud clusters appear in one Cloud UI. It needs Confluent Platform 7.9.6+ or 8.1+ and private
+    networking to Confluent Cloud. The egress problem below applies to it as well.</div>
+  <div class="callout warn"><b>Production trap:</b> the lab's Platform cluster sits in private subnets. Health+ only works if the brokers
+    can reach Confluent Cloud on 443 through the NAT gateway (<code>infra/confluent/README.md</code> opens that egress for Module 8).
+    If a firewall change later closes it, the cluster keeps running and alerts just stop arriving. Add a check that the
+    cluster still appears as reporting in Health+, so a silent channel is noticed.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="01-control-center-alerting.html"><small>← Previous</small>Control Center monitoring &amp; alerting</a>
+    <a class="next" href="03-throughput-latency-metrics.html"><small>Next →</small>Cluster load metrics: throughput &amp; latency</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), log = document.getElementById('log');
+const LKC = 'lkc-4n8vq', END = Date.UTC(2026, 9, 8, 21, 0);
+const iso = t => new Date(t).toISOString().replace('.000', '');
+const TOPICS = { 'l08.cdr.voice': 1, 'l08.cdr.sms': .25, 'l08.cdr.data': .55 };
+const M = {
+  received_bytes: { delta: true, groups: ['', 'metric.topic'], base: 360e6, unit: 'bytes' },
+  sent_bytes: { delta: true, groups: ['', 'metric.topic'], base: 720e6, unit: 'bytes' },
+  received_records: { delta: true, groups: ['', 'metric.topic'], base: 720e3, unit: 'records' },
+  retained_bytes: { delta: false, groups: ['', 'metric.topic'], base: 42e9, unit: 'bytes' },
+  request_count: { delta: true, groups: ['', 'metric.type'], base: 54e3, unit: 'requests' },
+  active_connection_count: { delta: false, groups: [''], base: 46, unit: 'connections' },
+  consumer_lag_offsets: { delta: false, groups: ['', 'metric.consumer_group_id', 'metric.topic'], base: 30e3, unit: 'offsets' }
+};
+const LABELS = {
+  'metric.topic': TOPICS,
+  'metric.type': { Produce: .45, Fetch: .5, Metadata: .05 },
+  'metric.consumer_group_id': { 'l08.billing': .8, 'l08.analytics': .2 }
+};
+const S = { mode: 'api', metric: 'received_bytes', group: 'metric.topic', gran: 'PT1M', iv: 60, key: 'cloud', result: null,
+  tel: false, hkey: false, nat: true };
+const metricSel = document.getElementById('metric'), groupSel = document.getElementById('group');
+Object.keys(M).forEach(k => metricSel.add(new Option('io.confluent.kafka.server/' + k, k)));
+
+function fillGroups() {
+  groupSel.innerHTML = '';
+  M[S.metric].groups.forEach(g => groupSel.add(new Option(g || '(none)', g)));
+  if (!M[S.metric].groups.includes(S.group)) S.group = M[S.metric].groups[1] || '';
+  groupSel.value = S.group;
+}
+
+function body() {
+  const b = { aggregations: [{ metric: 'io.confluent.kafka.server/' + S.metric }],
+    filter: { field: 'resource.kafka.id', op: 'EQ', value: LKC }, granularity: S.gran, intervals: [iso(END - S.iv * 60000) + '/' + iso(END)] };
+  if (S.group) b.group_by = [S.group];
+  b.limit = 25;
+  return b;
+}
+function showReq() {
+  document.getElementById('reqBody').textContent =
+    `curl -s -u "$CLOUD_KEY:$CLOUD_SECRET" \\\n  -H 'Content-Type: application/json' -d @query.json \\\n  https://api.telemetry.confluent.cloud/v2/metrics/cloud/query\n\n# query.json\n` + JSON.stringify(body(), null, 2);
+}
+
+function query() {
+  const m = M[S.metric], step = { PT1M: 1, PT5M: 5, PT1H: 60 }[S.gran], span = S.iv;
+  const n = Math.max(1, Math.floor(span / step)), groups = S.group ? LABELS[S.group] : { '': 1 };
+  const end = END;
+  const series = Object.entries(groups).map(([g, share]) => ({ g, vals: Array.from({ length: n }, (_, i) => {
+    const t = (i + .5) / n, wave = S.metric === 'retained_bytes' ? 1 + .02 * t : 1 + .25 * Math.sin(t * Math.PI * (span / 60) * .5) + .05 * Math.sin(i * 1.7);
+    return Math.round(m.base * share * wave * (m.delta ? step : 1));
+  }) }));
+  const data = [];
+  series[0].vals.forEach((_, i) => series.forEach(s => {
+    const row = { timestamp: new Date(end - (n - i) * step * 60000).toISOString().replace('.000', ''), value: s.vals[i] };
+    if (S.group) row[S.group] = s.g;
+    data.push(row);
+  }));
+  return { series, data, n, step };
+}
+
+async function run() {
+  showReq(); draw();
+  const tok = el('circle', { r: 8, fill: 'var(--accent)' }, svg);
+  await tween(tok, 110, 70, 450, 70, 600);
+  if (S.key === 'kafka') {
+    tok.setAttribute('fill', 'var(--bad)'); await sleep(250); tok.remove();
+    S.result = null; draw();
+    document.getElementById('resBody').textContent = 'HTTP/1.1 401 Unauthorized\n\nA Kafka API key is scoped to lkc-4n8vq and only works against\nthe cluster\'s bootstrap endpoint. The Metrics API is a Cloud\nresource: create the key with  --resource cloud.';
+    logLine(log, '<b>401 Unauthorized</b>: a Kafka cluster API key is not accepted by the Metrics API. Use a Cloud API key.', true);
+    return;
+  }
+  await tween(tok, 450, 70, 790, 70, 600); tok.remove();
+  S.result = query(); draw();
+  const shown = S.result.data.slice(0, 3).map(r => '    ' + JSON.stringify(r)).join(',\n');
+  document.getElementById('resBody').textContent = `HTTP/1.1 200 OK\n\n{\n  "data": [\n${shown},\n    …  ${S.result.data.length} points in total\n  ]\n}`;
+  const m = M[S.metric], v = S.result.series[0].vals[S.result.n - 1];
+  logLine(log, `200 OK: ${S.result.data.length} points, ${S.result.series.length} series of ${S.result.n} × ${S.gran}. ` +
+    (m.delta ? `Each point is a <b>delta</b>: ${fmtNum(v)} ${m.unit} per ${S.gran} bucket = ${fmtNum(v / (S.result.step * 60))} ${m.unit}/s.` : `Gauge: each point is the value at that time (${fmtNum(v)} ${m.unit}).`), true);
+}
+
+function box(x, y, w, h, a, b, stroke) {
+  el('rect', { x, y, width: w, height: h, rx: 10, fill: 'var(--surface-2)', stroke: stroke || 'var(--border)', 'stroke-width': 1.5 }, svg);
+  el('text', { x: x + w / 2, y: y + h / 2 - (b ? 3 : -4), 'text-anchor': 'middle', 'font-size': 13, 'font-weight': 700, text: a }, svg);
+  if (b) el('text', { x: x + w / 2, y: y + h / 2 + 14, 'text-anchor': 'middle', 'font-size': 11, fill: 'var(--muted)', text: b }, svg);
+}
+function arrow(x1, y1, x2, y2, color, dash) {
+  el('line', { x1, y1, x2, y2, stroke: color || 'var(--border)', 'stroke-width': 2, 'stroke-dasharray': dash || '' }, svg);
+}
+
+function draw() {
+  svg.innerHTML = '';
+  if (S.mode === 'api') {
+    box(20, 40, 180, 60, 'Your laptop / VM', 'curl, Prometheus, Datadog');
+    box(350, 40, 200, 60, 'api.telemetry.confluent.cloud', 'checks the key and the role', S.key === 'kafka' ? 'var(--bad)' : null);
+    box(700, 40, 180, 60, LKC, 'Basic · ap-south-1 · env-l08');
+    arrow(200, 70, 350, 70); arrow(550, 70, 700, 70);
+    const r = S.result, cb = { x: 60, y: 130, w: 800, h: 130 };
+    el('line', { x1: cb.x, y1: cb.y + cb.h, x2: cb.x + cb.w, y2: cb.y + cb.h, stroke: 'var(--border)' }, svg);
+    if (!r) { el('text', { x: 450, y: 200, 'text-anchor': 'middle', fill: 'var(--muted)', 'font-size': 13, text: S.key === 'kafka' ? 'No data: request rejected' : 'Send the query to plot the result' }, svg); return; }
+    const max = Math.max(...r.series.flatMap(s => s.vals)) * 1.1;
+    el('text', { x: cb.x - 6, y: cb.y + 6, 'text-anchor': 'end', 'font-size': 10.5, fill: 'var(--muted)', text: fmtNum(max) }, svg);
+    el('text', { x: cb.x - 6, y: cb.y + cb.h, 'text-anchor': 'end', 'font-size': 10.5, fill: 'var(--muted)', text: '0' }, svg);
+    r.series.forEach((s, i) => {
+      if (r.n === 1) el('circle', { cx: cb.x + cb.w / 2, cy: cb.y + cb.h - s.vals[0] / max * cb.h, r: 6, fill: PCOLORS[i] }, svg);
+      else el('path', { d: seriesPath(s.vals, cb, max), fill: 'none', stroke: PCOLORS[i], 'stroke-width': 2.5 }, svg);
+      el('text', { x: cb.x + i * 200, y: 288, 'font-size': 12, fill: PCOLORS[i], text: '■ ' + (s.g || 'all') }, svg);
+    });
+    el('text', { x: 860, y: 288, 'text-anchor': 'end', 'font-size': 11, fill: 'var(--muted)', text: `${r.n} point${r.n > 1 ? 's' : ''} per series · ${S.gran}` }, svg);
+    return;
+  }
+  // Health+
+  ['cp-broker-1', 'cp-broker-2', 'cp-broker-3'].forEach((b, i) => box(20, 30 + i * 62, 150, 50, b, S.tel ? 'telemetry reporter on' : 'telemetry off', S.tel ? 'var(--ok)' : null));
+  box(250, 100, 140, 56, 'NAT gateway', 'egress 443', S.nat ? 'var(--ok)' : 'var(--bad)');
+  box(470, 90, 200, 76, 'Confluent Cloud', 'Health+ · checks the API key', S.hkey ? 'var(--accent)' : null);
+  box(740, 40, 140, 50, 'trainer e-mail', 'notifications');
+  box(740, 170, 140, 50, 'Confluent Support', 'diagnostics for cases');
+  [55, 117, 179].forEach(y => arrow(170, y, 250, 128, S.tel ? 'var(--ok)' : 'var(--border)', S.tel ? '' : '4 4'));
+  arrow(390, 128, 470, 128, S.tel && S.nat ? 'var(--ok)' : 'var(--border)', S.tel && S.nat ? '' : '4 4');
+  const live = S.tel && S.nat && S.hkey;
+  arrow(670, 115, 740, 65, live ? 'var(--ok)' : 'var(--border)', live ? '' : '4 4');
+  arrow(670, 145, 740, 195, live ? 'var(--ok)' : 'var(--border)', live ? '' : '4 4');
+  el('text', { x: 20, y: 250, 'font-size': 12, fill: 'var(--muted)', text: 'Private subnets 10.20.x.x · cp-broker-1..3 + cp-services' }, svg);
+  el('text', { x: 20, y: 272, 'font-size': 12, fill: live ? 'var(--ok)' : 'var(--bad)', 'font-weight': 600,
+    text: live ? 'Telemetry arriving: Health+ can alert you.' : !S.tel ? 'Nothing leaves the brokers: telemetry is disabled.' : !S.nat ? 'Telemetry blocked at the NAT gateway.' : 'Telemetry rejected: no valid Cloud API key.' }, svg);
+  el('text', { x: 20, y: 292, 'font-size': 11, fill: 'var(--muted)', text: 'Sent: metrics and configuration metadata. Never message contents (CDRs, MSISDNs).' }, svg);
+}
+
+async function event(kind) {
+  const what = { disk: 'cp-broker-2 log volume at 90 %', urp: '12 partitions under-replicated for 20 minutes', down: 'cp-broker-3 offline, reported by the other two brokers' }[kind];
+  const from = { disk: 117, urp: 55, down: 179 }[kind];
+  const tok = el('circle', { r: 8, fill: 'var(--warn)' }, svg);
+  if (!S.tel) { await tween(tok, 95, from, 175, from, 400); tok.remove(); logLine(log, `${what}: <b>no alert</b>. Telemetry is off, so nothing reached Health+.`, true); return; }
+  await tween(tok, 170, from, 320, 128, 500);
+  if (!S.nat) { tok.setAttribute('fill', 'var(--bad)'); await sleep(300); tok.remove(); logLine(log, `${what}: <b>no alert</b>. The NAT gateway blocks outbound 443, so the telemetry never left the VPC.`, true); return; }
+  await tween(tok, 320, 128, 570, 128, 500);
+  if (!S.hkey) { tok.setAttribute('fill', 'var(--bad)'); await sleep(300); tok.remove(); logLine(log, `${what}: <b>no alert</b>. Confluent Cloud rejected the telemetry: no valid Cloud API key on the brokers.`, true); return; }
+  await tween(tok, 570, 128, 810, 65, 500); tok.remove();
+  logLine(log, `<b>Health+ notification</b> → trainer e-mail: ${what}.`, true);
+}
+
+wireSeg('modeSeg', v => {
+  S.mode = v;
+  document.getElementById('apiCtl').hidden = v !== 'api'; document.getElementById('req').hidden = v !== 'api';
+  document.getElementById('hpCtl').hidden = v !== 'hp';
+  draw(); logLine(log, v === 'api' ? 'Metrics API: you pull metrics from Confluent Cloud.' : 'Health+: brokers push telemetry out to Confluent Cloud. Enable it, then trigger a problem.');
+});
+metricSel.onchange = () => { S.metric = metricSel.value; fillGroups(); S.result = null; showReq(); draw(); };
+groupSel.onchange = () => { S.group = groupSel.value; S.result = null; showReq(); draw(); };
+wireSeg('granSeg', v => { S.gran = v; S.result = null; showReq(); draw(); });
+wireSeg('ivSeg', v => { S.iv = v; S.result = null; showReq(); draw(); });
+wireSeg('keySeg', v => { S.key = v; S.result = null; showReq(); draw(); logLine(log, v === 'cloud' ? 'Using a Cloud API key (created with --resource cloud).' : `Using the Kafka API key for ${LKC}.`); });
+document.getElementById('runQ').onclick = run;
+[['hTel', 'tel', 'Telemetry reporter'], ['hKey', 'hkey', 'Cloud API key on brokers'], ['hNat', 'nat', 'NAT egress 443']].forEach(([id, k, name]) => {
+  document.getElementById(id).onchange = e => { S[k] = e.target.checked; draw(); logLine(log, `${name}: ${S[k] ? 'on' : 'off'}`); };
+});
+document.querySelectorAll('[data-e]').forEach(b => b.onclick = () => event(b.dataset.e));
+fillGroups(); showReq(); draw();
+logLine(log, `Query ${LKC}: pick a metric, then Send query.`);
+
+renderQuiz('quiz', [
+  { q: 'A PT1M query for <code>received_bytes</code> on <code>l08.cdr.voice</code> returns <code>360000000</code> for one point. What is the ingress rate for that minute?',
+    options: ['360 MB/s', '36 MB/s', '6 MB/s', 'It cannot be known without the partition count'],
+    answer: 2,
+    explain: '<code>received_bytes</code> is a delta: the bytes received in that bucket. 360 MB ÷ 60 s = 6 MB/s. With PT5M the same traffic would show 1.8 GB per point, so always divide by the bucket length.' },
+  { q: 'Your Metrics API call returns <b>401 Unauthorized</b>, but the same key and secret produce to <code>lkc-4n8vq</code> without errors. Why?',
+    options: ['It is a Kafka API key scoped to the cluster. The Metrics API needs a Cloud API key (<code>--resource cloud</code>) whose owner can view metrics.',
+      'The Metrics API is only available on Dedicated clusters',
+      'The query needs <code>group_by</code>',
+      'The cluster is in a different region from the API'],
+    answer: 0,
+    explain: 'API keys are scoped to one resource (Module 7, Topic 2). A key for <code>lkc-…</code> authenticates Kafka clients only. Create a Cloud API key, ideally owned by a service account with <code>MetricsViewer</code>, for monitoring tools.' },
+  { q: 'In 2026 you want Health+ for a newly installed Confluent Platform 8.3 cluster. What is the catch?',
+    options: ['It needs an inbound firewall rule so Confluent can scrape the brokers',
+      'Health+ is deprecated: it is discontinued for new deployments from Platform 8.1 and sunsets on 31 December 2026. Plan for Unified Stream Manager instead.',
+      'It reads the CDR payloads, so it needs legal approval',
+      'It replaces Control Center, which must be uninstalled first'],
+    answer: 1,
+    explain: 'Health+ was push-based: the telemetry reporter sent metrics and metadata, never message contents, outbound over HTTPS with a Cloud API key, so no inbound port was needed. USM keeps that outbound model. Control Center, or your own Prometheus, is still where you look at details.' },
+  { q: 'You want your existing Prometheus and Grafana to show Confluent Cloud cluster metrics next to the Apache cluster. What do you configure?',
+    options: ['A JMX exporter on the Confluent Cloud brokers',
+      'Health+ on the Cloud cluster',
+      'Port 7071 open to <code>lkc-4n8vq</code>',
+      'A Prometheus scrape job for the Metrics API <code>export</code> endpoint, with a Cloud API key as basic-auth credentials'],
+    answer: 3,
+    explain: 'You have no access to Confluent Cloud brokers, so JMX is not an option. The <code>/v2/metrics/cloud/export</code> endpoint returns Prometheus text format for the resources you name, such as <code>resource.kafka.id=lkc-4n8vq</code>.' },
+  { q: 'An MQ administrator asks: "Where on the Cloud cluster do I see under-replicated partitions and broker disk usage?" Best answer?',
+    options: ['Nowhere directly: Confluent runs the brokers, replication and disks. You watch your own usage (throughput, retained bytes, connections, lag) and the cluster limits.',
+      'In the broker\'s JMX on port 9999',
+      'Through <code>kafka-log-dirs.sh</code> against the bootstrap server',
+      'In <code>retained_bytes</code> grouped by broker'],
+    answer: 0,
+    explain: 'On a managed service, broker health is Confluent\'s job and is not exposed per broker. The Metrics API gives you the metrics for your workload. Health+ and broker-level metrics matter on self-managed Platform, where the brokers are yours.' }
+]);
+</script>
+</body>
+</html>

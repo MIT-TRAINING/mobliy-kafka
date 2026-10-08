@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JMX &amp; Prometheus Comparison</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 8 · Monitoring &amp; Performance Tuning</a>
+    <div class="nav"><span>5 / 5</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 5</div>
+  <h1>Comparing Confluent monitoring with Apache Kafka JMX and Prometheus</h1>
+  <p class="lede">Apache Kafka publishes hundreds of JMX MBeans and leaves the rest to you. The course's Apache cluster runs a JMX
+    exporter on every broker (<code>:7071</code>), Prometheus scrapes it, and Grafana draws it. Control Center bundles that pipeline,
+    and on Confluent Cloud there is no broker to scrape at all. <b>Pick a question</b> an on-call engineer asks, and follow it
+    through all three stacks. Then break the scrape and see what Prometheus tells you.</p>
+
+  <div class="card">
+    <div class="scen" role="group" aria-label="Monitoring questions" id="qs"></div>
+    <div class="checks" style="margin-top:12px">
+      <label><input type="checkbox" id="cut"> Security group no longer allows the Prometheus scrape of <code>:7071</code> on broker 12</label>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 330" role="img" aria-label="Three monitoring pipelines: Apache JMX and Prometheus, Control Center, and the Confluent Cloud Metrics API"></svg></div>
+    <div class="legend"><span><i style="background:var(--warn)"></i>you install and run it</span><span><i style="background:var(--accent)"></i>bundled or run by Confluent</span><span><i style="background:var(--ok)"></i>answers this question</span><span><i style="background:var(--bad)"></i>not available here</span></div>
+    <div class="grid grid-3" style="margin-top:12px" id="cols"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Side by side</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th></th><th>Apache Kafka + JMX exporter + Prometheus</th><th>Control Center (Platform)</th><th>Metrics API (Cloud)</th></tr></thead>
+      <tbody>
+        <tr><td>Source</td><td>Every broker's JMX MBeans, as rules in <code>/opt/jmx/kafka.yml</code> turn them into Prometheus metrics</td><td>Brokers' telemetry, stored in Control Center's own Prometheus</td><td>Confluent's metrics about your cluster</td></tr>
+        <tr><td>Coverage</td><td>Anything that has an MBean, plus host metrics from <code>node_exporter</code> (<code>:9100</code>)</td><td>Curated: brokers, topics, consumer groups, alerts</td><td>Your workload only: throughput, storage, requests, connections, lag</td></tr>
+        <tr><td>Consumer lag</td><td>Not a broker MBean: <code>kafka-consumer-groups.sh</code>, a lag exporter, or the consumer's <code>records-lag-max</code></td><td>Built in, per partition</td><td><code>consumer_lag_offsets</code></td></tr>
+        <tr><td>Dashboards, alerts</td><td>You build them in Grafana and Prometheus or Alertmanager</td><td>Built in</td><td>Bring your own (Grafana, Datadog) via the <code>export</code> endpoint</td></tr>
+        <tr><td>You operate</td><td>Exporter, Prometheus, Grafana, alert routing, retention, upgrades</td><td>Control Center (one service, with its Prometheus and Alertmanager)</td><td>An API key and your dashboard tool</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Admin takeaway:</b> the Prometheus names come from the exporter's rules, not from Kafka. In the lab,
+    <code>kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions</code> becomes
+    <code>kafka_server_replicamanager_underreplicatedpartitions_value</code>. Change the rules and every dashboard and alert that uses
+    the old names breaks without an error. Keep <code>kafka.yml</code> under version control with your dashboards.</div>
+  <div class="callout warn"><b>Monitoring gotcha:</b> a missing series is not the same as a zero. If broker 12's scrape fails, its URP
+    series disappears and <code>sum(…) &gt; 0</code> stays quiet. Always add <code>up == 0</code> (or <code>absent(…)</code>) alerts, so a
+    broken monitoring path pages you too.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="04-performance-scaling.html"><small>← Previous</small>Performance &amp; scaling</a>
+    <a class="next" href="index.html"><small>Done →</small>Back to Module 8 overview</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), log = document.getElementById('log');
+const Q = {
+  bytes: { name: 'Bytes in per broker',
+    a: { ok: 3, mbean: 'kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec', how: 'sum by (instance) (kafka_server_brokertopicmetrics_bytesinpersec_oneminuterate{topic=""})', note: 'The broker-wide series has no topic label. Per-topic series share the same name, so filter them or you count twice.' },
+    c: { ok: 2, how: 'Brokers view: production and consumption throughput per broker' },
+    k: { ok: 1, how: 'io.confluent.kafka.server/received_bytes', note: 'Per cluster or per topic. There is no per-broker view: brokers are Confluent\'s.' } },
+  urp: { name: 'Under-replicated partitions',
+    a: { ok: 3, mbean: 'kafka.server:type=ReplicaManager,name=UnderReplicatedPartitions', how: 'sum(kafka_server_replicamanager_underreplicatedpartitions_value) > 0' },
+    c: { ok: 2, how: 'Cluster overview and the topic view show under-replicated partitions; add an alert on them' },
+    k: { ok: 0, how: 'Not exposed', note: 'Replication is part of the service Confluent runs and covers with its SLA.' } },
+  minisr: { name: 'Under-min-ISR partitions',
+    a: { ok: 3, mbean: 'kafka.server:type=ReplicaManager,name=UnderMinIsrPartitionCount', how: 'sum(kafka_server_replicamanager_underminisrpartitioncount_value) > 0', note: 'acks=all producers are being rejected with NotEnoughReplicas. Page at once.' },
+    c: { ok: 2, how: 'The same broker metric is in Control Center\'s Prometheus; alert on it' },
+    k: { ok: 0, how: 'Not exposed', note: 'You would see it only as produce errors in your clients.' } },
+  p99: { name: 'Produce p99 latency',
+    a: { ok: 3, mbean: 'kafka.network:type=RequestMetrics,name=TotalTimeMs,request=Produce', how: 'kafka_network_requestmetrics_totaltimems_99thpercentile{request="Produce"}', note: 'The lab rules export Count, Mean and 99thPercentile for each request type.' },
+    c: { ok: 2, how: 'Brokers view: request latency for produce and fetch' },
+    k: { ok: 1, how: 'io.confluent.kafka.server/producer_latency_avg_milliseconds', note: 'An average, not a per-broker p99. Take percentiles from the producer\'s own metrics.' } },
+  handler: { name: 'Request handler saturation',
+    a: { ok: 3, mbean: 'kafka.server:type=KafkaRequestHandlerPool,name=RequestHandlerAvgIdlePercent', how: 'kafka_server_kafkarequesthandlerpool_requesthandleravgidlepercent_oneminuterate < 0.3' },
+    c: { ok: 2, how: 'Broker metric in Control Center\'s Prometheus' },
+    k: { ok: 1, how: 'cluster_load_percent (Dedicated)', note: 'One number for the whole cluster\'s load. Elastic types show throttling at the client instead.' } },
+  lag: { name: 'Consumer lag of l08.billing',
+    a: { ok: 0, mbean: 'No broker MBean', how: 'kafka-consumer-groups.sh --bootstrap-server … --command-config ~/kafka/apache.properties --describe --group l08.billing', note: 'Or run a lag exporter, or scrape the consumer\'s own JMX (records-lag-max).' },
+    c: { ok: 2, how: 'Clients → Consumer Lag → l08.billing, per partition, plus a consumer-group trigger', note: 'The brokers compute lag themselves (confluent.consumer.lag.emitter.enabled=true), so it is there even when the consumer is down.' },
+    k: { ok: 1, how: 'io.confluent.kafka.server/consumer_lag_offsets, group_by metric.consumer_group_id' } },
+  disk: { name: 'Disk space left',
+    a: { ok: 3, mbean: 'Host metric (node_exporter :9100)', how: 'node_filesystem_avail_bytes / node_filesystem_size_bytes', note: 'Per topic: kafka_log_log_size from the kafka.log rules.' },
+    c: { ok: 2, how: 'Broker pages show disk usage', note: 'The trigger list has no disk metric, so alert on disk from node_exporter or your volume monitoring.' },
+    k: { ok: 1, how: 'io.confluent.kafka.server/retained_bytes', note: 'Your data, against the cluster type\'s storage limit. The disks themselves are Confluent\'s.' } },
+  down: { name: 'Is a broker down?',
+    a: { ok: 3, mbean: 'Prometheus scrape status', how: 'up{instance=~".*:7071"} == 0', note: 'A failed scrape means the broker OR the exporter OR the network is down. Check URP to tell them apart.' },
+    c: { ok: 2, how: 'Brokers view lists offline brokers; Cluster triggers include cluster down and offline partitions' },
+    k: { ok: 0, how: 'Not your concern', note: 'Confluent replaces brokers. Watch your client errors and active_connection_count.' } }
+};
+const ROWS = [
+  { k: 'a', name: 'Apache lab', boxes: [['Broker JVM', 'JMX MBeans', 0], ['JMX exporter', ':7071 · kafka.yml', 1], ['Prometheus', 'trainer VM', 1], ['Grafana · alerts', 'dashboards you build', 1]] },
+  { k: 'c', name: 'Platform lab', boxes: [['Broker', 'telemetry reporter', 0], ['Prometheus', 'cp-services:9090', 2], ['Control Center', ':9021 · alerts', 1]] },
+  { k: 'k', name: 'Confluent Cloud', boxes: [['Brokers', 'run by Confluent', 2], ['Metrics API', 'api.telemetry…', 2], ['Your tool', 'curl, Grafana, Datadog', 1]] }
+];
+const S = { q: 'urp', cut: false };
+const qs = document.getElementById('qs');
+Object.entries(Q).forEach(([k, v]) => {
+  const b = document.createElement('button'); b.textContent = v.name; b.dataset.q = k; b.setAttribute('aria-pressed', k === S.q);
+  b.onclick = () => { S.q = k; qs.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b)); render();
+    logLine(log, `<b>${v.name}</b>: Apache ${v.a.ok ? 'yes' : 'not from the brokers'} · Control Center ${v.c.ok ? 'yes' : 'no'} · Cloud ${v.k.ok ? 'yes' : 'no'}`); };
+  qs.appendChild(b);
+});
+
+function render() {
+  svg.innerHTML = '';
+  const q = Q[S.q];
+  ROWS.forEach((row, r) => {
+    const y = 20 + r * 105, info = q[row.k];
+    el('text', { x: 10, y: y + 36, 'font-size': 13, 'font-weight': 700, text: row.name }, svg);
+    const w = row.boxes.length === 4 ? 150 : 205, gap = row.boxes.length === 4 ? 30 : 28;
+    row.boxes.forEach(([a, b, who], i) => {
+      const x = 130 + i * (w + gap);
+      let reach = info.ok > 0;
+      if (row.k === 'a' && S.cut && i >= 2) reach = false;
+      const fail = (row.k === 'a' && S.cut && info.ok && i === 2) || (!info.ok && i === 0);
+      const stroke = fail ? 'var(--bad)' : reach ? 'var(--ok)' : who === 1 ? 'var(--warn)' : who === 2 ? 'var(--accent)' : 'var(--border)';
+      el('rect', { x, y, width: w, height: 60, rx: 10, fill: 'var(--surface-2)', stroke, 'stroke-width': reach || fail ? 2.5 : 1.5, 'stroke-dasharray': fail ? '5 4' : '' }, svg);
+      if (who) el('rect', { x: x + 8, y: y + 8, width: 8, height: 8, rx: 2, fill: who === 1 ? 'var(--warn)' : 'var(--accent)' }, svg);
+      el('text', { x: x + w / 2, y: y + 27, 'text-anchor': 'middle', 'font-size': 13, 'font-weight': 600, text: a }, svg);
+      el('text', { x: x + w / 2, y: y + 45, 'text-anchor': 'middle', 'font-size': 11, fill: 'var(--muted)', text: b }, svg);
+      if (i) el('line', { x1: x - gap, y1: y + 30, x2: x, y2: y + 30, stroke: reach && !fail ? 'var(--ok)' : 'var(--border)', 'stroke-width': 2, 'stroke-dasharray': reach && !fail ? '' : '4 4' }, svg);
+    });
+    const runs = row.boxes.filter(b => b[2] === 1).length;
+    const status = row.k === 'a' && S.cut && S.q !== 'lag' ? 'scrape failing: up == 0' : info.ok ? '✓ answers it' : '✕ not available';
+    el('text', { x: 130, y: y + 80, 'font-size': 11.5, fill: status.startsWith('✓') ? 'var(--ok)' : 'var(--bad)', 'font-weight': 600, text: status }, svg);
+    el('text', { x: 890, y: y + 80, 'text-anchor': 'end', 'font-size': 11.5, fill: 'var(--muted)', text: `components you run: ${runs}` }, svg);
+  });
+  const col = (title, info, extra) => `<div class="detail"><h3>${title}</h3>${extra || ''}<dl class="kv"><dt>${info.ok ? 'Use' : 'Status'}</dt><dd>${info.how}</dd></dl>${info.note ? `<p>${info.note}</p>` : ''}</div>`;
+  document.getElementById('cols').innerHTML =
+    col('Apache lab', q.a, `<dl class="kv"><dt>Source</dt><dd>${q.a.mbean}</dd></dl>`) + col('Control Center', q.c) + col('Confluent Cloud', q.k);
+}
+document.getElementById('cut').onchange = e => {
+  S.cut = e.target.checked; render();
+  logLine(log, S.cut ? '<b>Scrape of broker 12:7071 failing</b>. Its series vanish, so sum(URP) &gt; 0 stays quiet. Only an <code>up == 0</code> alert notices.' : 'Scrape restored: broker 12 series are back.', S.cut);
+};
+render();
+logLine(log, 'Pick a question to follow it through the three stacks.');
+
+renderQuiz('quiz', [
+  { q: 'On the course\'s Apache cluster, how do broker metrics reach Prometheus?',
+    options: ['Brokers push them to Prometheus over the Kafka protocol',
+      'A JMX exporter Java agent on each broker serves them on <code>:7071</code> using the rules in <code>/opt/jmx/kafka.yml</code>, and Prometheus scrapes it',
+      'Prometheus reads <code>server.log</code>',
+      'Through the Confluent Metrics API'],
+    answer: 1,
+    explain: 'The lab\'s <code>kafka.service</code> sets <code>KAFKA_OPTS=-javaagent:/opt/jmx/jmx_prometheus_javaagent.jar=7071:/opt/jmx/kafka.yml</code>. The agent reads the MBeans in the broker JVM, renames them according to the rules, and exposes them in Prometheus text format to be scraped.' },
+  { q: 'Why isn\'t consumer lag for <code>l08.billing</code> among the broker JMX metrics you scrape?',
+    options: ['Brokers don\'t publish per-group lag as an MBean. Lag is committed offsets compared with log-end offsets, so you need <code>kafka-consumer-groups.sh</code>, a lag exporter, or the consumer\'s own <code>records-lag-max</code>.',
+      'The exporter rules filter it out',
+      'Lag is only available on Confluent Cloud',
+      'It needs <code>acks=all</code>'],
+    answer: 0,
+    explain: 'This is one of the biggest gaps of a JMX-only setup. Control Center and the Metrics API (<code>consumer_lag_offsets</code>) compute lag for you; with plain Apache Kafka you add a tool that does it.' },
+  { q: 'A Grafana panel sums <code>kafka_server_brokertopicmetrics_bytesinpersec_oneminuterate</code> and shows twice the real traffic. Why?',
+    options: ['Replication doubles bytes in', 'The scrape interval is too short', 'The exporter creates a broker-wide series with no topic label <i>and</i> per-topic series under the same name. Filter with <code>{topic=""}</code> or sum only the per-topic series.', 'JMX counts every byte twice'],
+    answer: 2,
+    explain: 'The lab rules map both MBeans (with and without <code>topic=</code>) to one metric name. Summing everything adds the total to the sum of its parts. Knowing your exporter rules is part of running this stack.' },
+  { q: 'An MQ administrator wants to attach their JMX console to the Confluent Cloud brokers. What do you tell them?',
+    options: ['Open port 9999 in the cluster settings', 'Use the Kafka API key as JMX credentials', 'Enable Health+ on the Cloud cluster first', 'That isn\'t possible: the brokers aren\'t exposed. Use the Metrics API (or its Prometheus <code>export</code> endpoint) and your clients\' own metrics.'],
+    answer: 3,
+    explain: 'On a managed service there is no broker JVM to connect to. The Metrics API gives you workload metrics, and your clients\' JMX gives you latency and throttling as your application sees it.' },
+  { q: 'Prometheus shows <code>up == 0</code> for broker 12\'s <code>:7071</code> target, but producers and consumers work normally. What is the most likely cause?',
+    options: ['The monitoring path is broken (exporter not loaded, or the security group blocks 7071), not Kafka itself. Fix it quickly: while it lasts, broker 12\'s alerts can\'t fire.',
+      'Broker 12 has crashed',
+      'Broker 12 is the active controller',
+      'The topic has too few partitions'],
+    answer: 0,
+    explain: 'A failed scrape only says Prometheus can\'t read the exporter. If clients are fine and URP is 0, the broker is alive. Still treat it as urgent, because that broker is unmonitored until it is fixed.' }
+]);
+</script>
+</body>
+</html>

@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control Center Alerting</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .controls input[type="range"] { width: 160px; }
+  .controls output { font-family: var(--mono); font-weight: 600; min-width: 64px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 8 · Monitoring &amp; Performance Tuning</a>
+    <div class="nav"><span>1 / 5</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 1</div>
+  <h1>Control Center monitoring and alerting</h1>
+  <p class="lede">Control Center shows you the cluster, but at 03:00 nobody is looking at it. Alerts have to page you, and a
+    bad alert either wakes you for a rebalance that fixes itself or stays quiet while billing falls behind. The clock below
+    runs one simulated minute per tick for <code>l08.cdr.voice</code> and the <code>l08.billing</code> consumer group.
+    <b>Inject incidents</b>, then tune the alert until it catches the two real problems and ignores the three that heal themselves.</p>
+
+  <div class="card">
+    <div class="scen" role="group" aria-label="Incidents">
+      <button data-i="slow">billing-svc slows down</button>
+      <button data-i="broker">Broker 2 stops</button>
+      <button data-i="spike">Evening CDR spike (4 min)</button>
+      <button data-i="pause">Consumer rebalance pause (1 min)</button>
+      <button data-i="restart">Rolling restart of broker 1 (2 min)</button>
+      <button data-i="recover" class="primary">Fix everything</button>
+      <button id="run">Pause clock</button>
+    </div>
+    <div class="controls">
+      <span class="ctl-label">Alert on</span>
+      <select id="metric" aria-label="Alert metric">
+        <option value="lag">Consumer lag · l08.billing</option>
+        <option value="urp">Under-replicated partitions</option>
+        <option value="bytes">Production (bytes in)</option>
+      </select>
+      <span class="ctl-label">above</span>
+      <input type="range" id="thr" aria-label="Threshold"><output id="thrOut"></output>
+      <span class="ctl-label">buffer</span>
+      <div class="seg" role="group" aria-label="Buffer" id="forSeg">
+        <button data-v="0" aria-pressed="true">0 s</button><button data-v="2" aria-pressed="false">120 s</button><button data-v="5" aria-pressed="false">300 s</button>
+      </div>
+      <div class="seg" role="group" aria-label="Notify" id="actSeg">
+        <button data-v="Email" aria-pressed="false">Email</button><button data-v="Slack" aria-pressed="true">Slack</button><button data-v="PagerDuty" aria-pressed="false">PagerDuty</button>
+      </div>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 350" role="img" aria-label="Control Center style charts for throughput, under-replicated partitions and consumer lag, and the alert pipeline"></svg></div>
+    <div class="stats">
+      <div class="stat"><b id="sClock">18:00</b><span>cluster time</span></div>
+      <div class="stat"><b id="sReal">0</b><span>pages for real problems</span></div>
+      <div class="stat"><b id="sNoise">0</b><span>pages for self-healing events</span></div>
+      <div class="stat"><b id="sMiss">0</b><span>real problems missed (10 min)</span></div>
+    </div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>What deserves an alert</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Signal</th><th>Rule of thumb</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>Offline partitions</td><td>&gt; 0, page immediately</td><td>No leader: producers and consumers of those partitions are down right now</td></tr>
+        <tr><td>Under-min-ISR partitions</td><td>&gt; 0, page immediately</td><td><code>acks=all</code> producers get <code>NotEnoughReplicas</code>, so CDRs are being rejected</td></tr>
+        <tr><td>Under-replicated partitions</td><td>&gt; 0 <b>for longer than a broker restart</b></td><td>Every rolling restart causes a few minutes of URPs. Only a lasting value means a dead or stuck broker</td></tr>
+        <tr><td>Consumer lag</td><td>Above what the group can drain in a few minutes, held for a few minutes</td><td>Rebalances and traffic bursts cause short lag spikes. Lag that keeps growing means the consumer can't keep up</td></tr>
+        <tr><td>Throughput, disk, connections</td><td>Ticket or dashboard, not a page</td><td>These are capacity signals: plan for them during the day (Topic 4)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="grid grid-2" style="margin-top:16px">
+    <div class="card"><h3 style="margin-top:0">How Control Center 2.x alerts</h3>
+      <p style="color:var(--muted);font-size:14px;margin:0">Since Confluent Platform 8.0, Control Center is a separate product. On the lab's
+        <code>cp-services</code> node it runs with its own <b>Prometheus</b> (<code>:9090</code>), which stores the brokers' metrics and checks the
+        alert conditions, and <b>Alertmanager</b> (<code>:9093</code>), which sends the notifications. Under <b>Alerts</b> you create a <b>trigger</b>
+        (component type, metric, condition, value and a <b>buffer</b> in seconds) and one or more <b>actions</b> (email, Slack webhook,
+        PagerDuty webhook). A true condition is <span class="lamp pending">PENDING</span> until it has held for the buffer, then
+        <span class="lamp firing">FIRING</span>. The brokers compute consumer lag themselves
+        (<code>confluent.consumer.lag.emitter.enabled=true</code>), so no client instrumentation is needed.</p></div>
+    <div class="card"><h3 style="margin-top:0">Reading lag correctly</h3>
+      <p style="color:var(--muted);font-size:14px;margin:0">Lag is <i>log-end offset − committed offset</i>, per partition. 720 000 records
+        sounds alarming, but at 12 000 CDR/s produced and 20 000/s consumed, billing clears it in 720 000 ÷ 8 000 ≈ 90 s. Check
+        whether lag is <b>growing</b> before you compare it with a threshold. Control Center shows lag per partition under the
+        consumer group, so you can also see whether a single partition is stuck.</p></div>
+  </div>
+  <div class="callout"><b>Admin gotcha:</b> if the trigger is <code>lag &gt; 50k</code> with a 0-second buffer, every rebalance pages you. Within a week the team
+    mutes the channel, and then a real slowdown also goes unnoticed. Set the threshold above normal bursts, add a buffer of a few minutes, and
+    count your pages per week as a health metric of the alerting itself.</div>
+  <div class="callout warn"><b>Production trap:</b> in the lab, Control Center, its Prometheus and its Alertmanager all run on one node.
+    If <code>cp-services</code> stops, no alert fires, so the dashboard just shows no problems. Watch the watcher: add an outside
+    check (an uptime probe of <code>:9021</code>, or an always-firing heartbeat alert that pages you when it <i>stops</i> arriving).</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="index.html"><small>← Back</small>Module overview</a>
+    <a class="next" href="02-metrics-api-health-plus.html"><small>Next →</small>Metrics API &amp; Health+</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), log = document.getElementById('log');
+const N = 30, P0 = 12000, C0 = 20000;           // CDR/s produced, billing-svc capacity CDR/s
+const RULES = {
+  lag:   { min: 10000, max: 2000000, step: 10000, def: 50000, fmt: v => fmtNum(v), label: 'lag(l08.billing)' },
+  urp:   { min: 0, max: 40, step: 1, def: 0, fmt: v => String(v), label: 'URP' },
+  bytes: { min: 1, max: 20, step: .5, def: 10, fmt: v => v + ' MB/s', label: 'bytes in' }
+};
+const S = {
+  t: 0, lag: 0, hist: { bytes: [], urp: [], lag: [] },
+  slow: false, broker: false, spike: 0, pause: 0, restart: 0, slowAge: 0, brokerAge: 0, caught: {},
+  metric: 'lag', thr: 50000, forMin: 0, action: 'Slack',
+  alert: 'inactive', trueFor: 0, real: 0, noise: 0, miss: 0, running: true
+};
+const thr = document.getElementById('thr'), thrOut = document.getElementById('thrOut'), metricSel = document.getElementById('metric');
+const clock = t => { const m = 18 * 60 + t; return String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0'); };
+
+function setRange() {
+  const r = RULES[S.metric];
+  Object.assign(thr, { min: r.min, max: r.max, step: r.step }); thr.value = S.thr; thrOut.textContent = r.fmt(S.thr);
+}
+
+function value(metric) {
+  return metric === 'lag' ? S.lag : S.hist[metric][S.hist[metric].length - 1] || 0;
+}
+
+function step() {
+  const P = (S.spike > 0 ? 22000 : P0) * (0.97 + Math.random() * 0.06);
+  const C = S.pause > 0 ? 0 : S.slow ? 7000 : C0;
+  const consumed = Math.min(C, P + S.lag / 60);
+  S.lag = Math.max(0, S.lag + (P - consumed) * 60);
+  const urp = S.broker ? 48 : S.restart > 0 ? 48 : 0;
+  const push = (k, v) => { S.hist[k].push(v); if (S.hist[k].length > N) S.hist[k].shift(); };
+  push('bytes', +(P * 500 / 1e6).toFixed(1)); push('urp', urp); push('lag', S.lag);
+  S.t++;
+  ['spike', 'pause', 'restart'].forEach(k => { if (S[k] > 0 && --S[k] === 0) logLine(log, `${clock(S.t)} ${k === 'spike' ? 'CDR spike over' : k === 'pause' ? 'Rebalance finished, billing-svc consuming again' : 'Broker 1 back, replicas catching up'}`); });
+  if (S.slow) S.slowAge++; if (S.broker) S.brokerAge++;
+  [['slow', S.slowAge, 'billing-svc slowdown'], ['broker', S.brokerAge, 'Broker 2 outage']].forEach(([k, age, name]) => {
+    if (S[k] && age === 10 && !S.caught[k]) { S.miss++; logLine(log, `<b>${clock(S.t)} MISSED</b>: ${name} has lasted 10 minutes and nobody was paged`, true); }
+  });
+  evaluate();
+  render();
+}
+
+function evaluate() {
+  const v = value(S.metric), on = v > S.thr;
+  const expr = `${RULES[S.metric].label} = ${RULES[S.metric].fmt(S.metric === 'bytes' ? v : Math.round(v))}`;
+  if (!on) {
+    if (S.alert === 'firing') { notify(`RESOLVED ${expr}`, false); }
+    S.alert = 'inactive'; S.trueFor = 0; return;
+  }
+  S.trueFor++;
+  if (S.alert !== 'firing' && S.trueFor > S.forMin) {
+    S.alert = 'firing';
+    const real = (S.metric === 'lag' && S.slow) || (S.metric === 'urp' && S.broker);
+    if (real) { S.real++; S.caught[S.metric === 'lag' ? 'slow' : 'broker'] = true; } else S.noise++;
+    notify(`FIRING ${expr} &gt; ${RULES[S.metric].fmt(S.thr)} (${real ? 'real problem' : 'would have healed itself'})`, true);
+  } else if (S.alert === 'inactive') { S.alert = 'pending'; logLine(log, `${clock(S.t)} pending: ${expr}, buffer ${S.forMin * 60} s not reached yet`); }
+}
+
+function notify(text, firing) {
+  logLine(log, `<b>${clock(S.t)} ${S.action}</b> ← Alertmanager: ${text}`, firing);
+  const tok = el('circle', { r: 8, fill: firing ? 'var(--bad)' : 'var(--ok)' }, fx);
+  tween(tok, 775, 290, 845, 290, 500).then(() => tok.remove());
+}
+
+const fx = el('g', {});
+function render() {
+  [...svg.children].forEach(c => c !== fx && c.remove());
+  const panels = [
+    { k: 'bytes', title: 'Production (bytes in)', unit: v => v.toFixed(1) + ' MB/s', max: v => Math.max(12, v * 1.1), color: 'var(--p0)' },
+    { k: 'urp', title: 'Under-replicated partitions', unit: v => String(v), max: () => 60, color: 'var(--warn)' },
+    { k: 'lag', title: 'Consumer lag · l08.billing', unit: v => fmtNum(v), max: v => Math.max(1e5, v * 1.1), color: 'var(--p2)' }
+  ];
+  panels.forEach((p, i) => {
+    const x = 20 + i * 295, box = { x: x + 8, y: 55, w: 254, h: 140 };
+    const data = S.hist[p.k], cur = data[data.length - 1] || 0;
+    const sel = S.metric === p.k;
+    el('rect', { x, y: 15, width: 270, height: 195, rx: 10, fill: 'var(--surface)', stroke: sel ? 'var(--accent)' : 'var(--border)', 'stroke-width': sel ? 2 : 1 }, svg);
+    el('text', { x: x + 10, y: 36, 'font-size': 13, 'font-weight': 600, text: p.title }, svg);
+    el('text', { x: x + 260, y: 36, 'text-anchor': 'end', 'font-size': 13, 'font-family': 'var(--mono)', fill: p.color, text: p.unit(cur) }, svg);
+    let max = p.max(Math.max(0, ...data));
+    if (sel) max = Math.max(max, S.thr * 1.3);
+    el('line', { x1: box.x, y1: box.y + box.h, x2: box.x + box.w, y2: box.y + box.h, stroke: 'var(--border)' }, svg);
+    if (data.length > 1) el('path', { d: seriesPath(data, { ...box, w: box.w * (data.length - 1) / (N - 1) }, max), fill: 'none', stroke: p.color, 'stroke-width': 2.5 }, svg);
+    if (sel) {
+      const ty = box.y + box.h - Math.min(1, S.thr / max) * box.h;
+      el('line', { x1: box.x, y1: ty, x2: box.x + box.w, y2: ty, stroke: 'var(--bad)', 'stroke-dasharray': '5 4' }, svg);
+      el('text', { x: box.x + box.w, y: ty - 4, 'text-anchor': 'end', 'font-size': 11, fill: 'var(--bad)', text: 'alert > ' + RULES[p.k].fmt(S.thr) }, svg);
+    }
+    el('text', { x: x + 10, y: 204, 'font-size': 10.5, fill: 'var(--muted)', text: clock(Math.max(0, S.t - N + 1)) }, svg);
+    el('text', { x: x + 260, y: 204, 'text-anchor': 'end', 'font-size': 10.5, fill: 'var(--muted)', text: clock(S.t) }, svg);
+  });
+  // alert pipeline
+  const lampC = { inactive: 'var(--muted)', pending: 'var(--warn)', firing: 'var(--bad)' }[S.alert];
+  const boxes = [
+    [20, 150, 'Brokers', 'telemetry reporter'],
+    [195, 255, 'Prometheus · :9090', `${RULES[S.metric].label} > ${RULES[S.metric].fmt(S.thr)} · buffer ${S.forMin * 60}s`],
+    [475, 125, S.alert.toUpperCase(), S.alert === 'pending' ? `${S.trueFor} / ${S.forMin + 1} min` : 'alert state'],
+    [625, 150, 'Alertmanager · :9093', 'routes, groups, repeats'],
+    [805, 80, S.action, 'on-call']
+  ];
+  boxes.forEach(([x, w, a, b], i) => {
+    el('rect', { x, y: 255, width: w, height: 70, rx: 10, fill: i === 2 && S.alert !== 'inactive' ? lampC : 'var(--surface-2)', stroke: i === 2 ? lampC : 'var(--border)', 'stroke-width': 1.5 }, svg);
+    const light = i === 2 && S.alert !== 'inactive';
+    el('text', { x: x + w / 2, y: 285, 'text-anchor': 'middle', 'font-size': 13, 'font-weight': 700, fill: light ? '#fff' : i === 2 ? lampC : 'var(--text)', text: a }, svg);
+    el('text', { x: x + w / 2, y: 305, 'text-anchor': 'middle', 'font-size': 11, 'font-family': i === 1 ? 'var(--mono)' : 'inherit', fill: light ? '#fff' : 'var(--muted)', text: b }, svg);
+    if (i) el('line', { x1: boxes[i - 1][0] + boxes[i - 1][1], y1: 290, x2: x, y2: 290, stroke: 'var(--border)', 'stroke-width': 2 }, svg);
+  });
+  el('text', { x: 20, y: 345, 'font-size': 11, fill: 'var(--muted)', text: 'cp-services.lab.internal: Control Center :9021 · Prometheus :9090 · Alertmanager :9093' }, svg);
+  svg.appendChild(fx);
+  document.getElementById('sClock').textContent = clock(S.t);
+  document.getElementById('sReal').textContent = S.real;
+  document.getElementById('sNoise').textContent = S.noise;
+  document.getElementById('sMiss').textContent = S.miss;
+}
+
+document.querySelectorAll('.scen [data-i]').forEach(b => b.onclick = () => {
+  const i = b.dataset.i, at = clock(S.t);
+  if (i === 'slow') { if (!S.slow) { S.slow = true; S.slowAge = 0; S.caught.slow = false; } logLine(log, `${at} billing-svc slowed to 7 000 CDR/s (a slow database call): lag will grow until fixed`, true); }
+  if (i === 'broker') { if (!S.broker) { S.broker = true; S.brokerAge = 0; S.caught.broker = false; } logLine(log, `${at} Broker 2 stopped: leaders moved to brokers 1 and 3, all 48 partitions under-replicated`, true); }
+  if (i === 'spike') { S.spike = 4; logLine(log, `${at} Evening CDR spike: 22 000 CDR/s for 4 minutes`); }
+  if (i === 'pause') { S.pause = 1; logLine(log, `${at} l08.billing rebalancing: no fetches for 1 minute`); }
+  if (i === 'restart') { S.restart = 2; logLine(log, `${at} Rolling restart: broker 1 down for 2 minutes`); }
+  if (i === 'recover') { S.slow = S.broker = false; S.spike = S.pause = S.restart = 0; logLine(log, `${at} Fixed: billing-svc back at 20 000 CDR/s, broker 2 restarted. Lag drains and URPs clear.`, true); }
+});
+metricSel.onchange = () => { S.metric = metricSel.value; S.thr = RULES[S.metric].def; S.alert = 'inactive'; S.trueFor = 0; setRange(); render(); logLine(log, `Alert rule now watches ${metricSel.selectedOptions[0].text}`); };
+thr.oninput = () => { S.thr = +thr.value; thrOut.textContent = RULES[S.metric].fmt(S.thr); render(); };
+thr.onchange = () => logLine(log, `Threshold set to ${RULES[S.metric].fmt(S.thr)}`);
+wireSeg('forSeg', v => { S.forMin = +v; render(); logLine(log, `Buffer ${v * 60} s: the condition must hold that long before the trigger fires`); });
+wireSeg('actSeg', v => { S.action = v; render(); logLine(log, `Notifications now go to ${v}`); });
+let timer = setInterval(step, 700);
+document.getElementById('run').onclick = e => {
+  S.running = !S.running;
+  if (S.running) timer = setInterval(step, 700); else clearInterval(timer);
+  e.target.textContent = S.running ? 'Pause clock' : 'Resume clock';
+};
+setRange(); render();
+logLine(log, '18:00 Cluster healthy: 12 000 CDR/s in, billing-svc consuming up to 20 000 CDR/s. Inject an incident.');
+
+renderQuiz('quiz', [
+  { q: 'Your trigger is <code>lag(l08.billing) &gt; 50k</code> with a 0-second buffer, and it pages during every consumer rebalance. What is the best fix?',
+    options: ['Delete the lag alert and check the dashboard each morning',
+      'Raise the threshold above what the group drains within a few minutes, and set a buffer of a few minutes',
+      'Alert on bytes in instead, because it is smoother',
+      'Add partitions to <code>l08.cdr.voice</code> so the lag is spread out'],
+    answer: 1,
+    explain: 'A rebalance pause creates a short lag spike that drains on its own. A threshold above normal bursts plus a buffer (120 s in the simulation) ignores it, but still fires within minutes when lag keeps growing because the consumer really is too slow.' },
+  { q: 'Your only alert is <code>bytes in &gt; 10 MB/s</code>. At 18:05, billing-svc slows down to 7 000 CDR/s. What happens?',
+    options: ['It fires immediately', 'It fires after its buffer', 'It fires when lag reaches 10 MB', 'It never fires: production hasn\'t changed, and the problem is on the consuming side'],
+    answer: 3,
+    explain: 'Throughput measures what producers send. A slow consumer doesn\'t change it at all. Alert on the symptom of the failure you care about: for a slow consumer, that is lag, not bytes in.' },
+  { q: 'Each rolling restart briefly makes every partition under-replicated. You want URP alerts to page only for a broker that is really gone. Which rule fits?',
+    options: ['URP &gt; 0 with a buffer longer than a broker restart normally takes (say 300 s), plus immediate pages on under-min-ISR and offline partitions',
+      'URP &gt; 100 with no buffer', 'No URP alert: replication repairs itself', 'URP &gt; 0 with no buffer, sent by email only'],
+    answer: 0,
+    explain: 'A restart heals within minutes, and a dead broker doesn\'t. The buffer separates them. The conditions that hurt producers right away (under-min-ISR, offline partitions) still page without a delay.' },
+  { q: 'A trigger\'s condition has been true for 60 seconds, and its buffer is 120 seconds. What state is the alert in?',
+    options: ['Inactive', 'Firing', 'Pending', 'Resolved'],
+    answer: 2,
+    explain: 'In Prometheus, which Control Center 2.x uses for alerts, a true condition first makes the alert pending. It becomes firing, and Alertmanager notifies you, only once the condition has held for the whole buffer. If it clears first, nothing is sent.' },
+  { q: 'Lag on <code>l08.billing</code> is 720 000 records. Producers write 12 000 CDR/s and billing-svc can consume 20 000 CDR/s. Roughly how long until the lag is gone?',
+    options: ['About 36 seconds', 'About 90 seconds', 'About 60 seconds', 'Never: lag only resets on restart'],
+    answer: 1,
+    explain: 'The consumer only gains on the backlog with its spare capacity: 20 000 − 12 000 = 8 000 CDR/s. 720 000 ÷ 8 000 = 90 s. This is why a lag number means little without the produce rate and the consumer\'s headroom.' }
+]);
+</script>
+</body>
+</html>

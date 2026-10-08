@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka Module 8 Visualizations</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .topics { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: 24px; }
+  .topic { display: block; text-decoration: none; color: var(--text); transition: border-color .15s, transform .15s; }
+  .topic:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .topic .num { font-family: var(--mono); color: var(--accent); font-size: 13px; font-weight: 600; }
+  .topic h3 { margin: 6px 0; }
+  .topic p { margin: 0 0 10px; color: var(--muted); font-size: 15px; }
+  .topic .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  ol.hands { margin: 0; padding-left: 20px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <span>Apache Kafka &amp; Confluent Kafka Administration</span>
+    <div class="nav"><a href="../module-07/index.html">← Module 7</a><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Module 8</div>
+  <h1>Monitoring &amp; Performance Tuning with Confluent Kafka</h1>
+  <p class="lede">Interactive visualizations for each Module 8 topic. Each page has a hands-on simulation you can
+    play with, followed by a 5-question self-quiz with explanations.</p>
+  <p style="color:var(--muted);font-size:14px;margin:4px 0 0"><b style="color:var(--text)">Objective:</b> Monitor and tune
+    Confluent Kafka clusters for performance using Confluent's administration tooling.</p>
+
+  <div class="topics">
+    <a class="card topic" href="01-control-center-alerting.html">
+      <div class="num">01</div><h3>Control Center monitoring &amp; alerting</h3>
+      <p>Watch a live cluster dashboard, set an alert on consumer lag, under-replicated partitions or throughput, then inject incidents and tune the threshold and duration until it pages for real problems only.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="02-metrics-api-health-plus.html">
+      <div class="num">02</div><h3>Metrics API &amp; Health+</h3>
+      <p>Build a Confluent Cloud Metrics API query and read the response, then switch on Health+ telemetry for the Platform cluster and see which problems reach you.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="03-throughput-latency-metrics.html">
+      <div class="num">03</div><h3>Cluster load metrics: throughput &amp; latency</h3>
+      <p>Push CDR traffic at a broker, slow a disk or a follower, and use the breakdown of produce latency to find which part of the broker is the bottleneck.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="04-performance-scaling.html">
+      <div class="num">04</div><h3>Performance &amp; scaling in Confluent-managed clusters</h3>
+      <p>Play a 24-hour CDR traffic day against an elastic Cloud cluster, a Dedicated cluster and the Platform lab. Scale, compress and batch until the evening peak isn't throttled.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="05-jmx-prometheus-comparison.html">
+      <div class="num">05</div><h3>Compared with Apache Kafka JMX &amp; Prometheus</h3>
+      <p>Pick a monitoring question and follow it through the lab's JMX exporter, Prometheus and Grafana, through Control Center, and through the Metrics API. See which parts you have to build and run yourself.</p>
+      <div class="tags"><span class="pill">explorer</span><span class="pill">5-question quiz</span></div>
+    </a>
+  </div>
+
+  <h2>Hands-on for this module</h2>
+  <div class="card">
+    <ol class="hands">
+      <li>Monitor the shared Confluent Kafka cluster via Control Center and the Metrics API</li>
+      <li>Set up an alert and analyze consumer lag</li>
+    </ol>
+  </div>
+</div>
+</body>
+</html>

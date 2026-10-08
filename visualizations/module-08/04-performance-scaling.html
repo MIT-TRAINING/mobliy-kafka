@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Performance &amp; Scaling</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 8 · Monitoring &amp; Performance Tuning</a>
+    <div class="nav"><span>4 / 5</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 4</div>
+  <h1>Performance considerations and scaling in Confluent-managed clusters</h1>
+  <p class="lede">CDR traffic is low at night, rises in the morning and peaks around 21:00. Each cluster type handles that peak
+    differently: an elastic Cloud cluster scales itself up to a cap and then throttles, a Dedicated cluster has the capacity
+    you bought, and on Confluent Platform a new broker only helps once partitions move to it. <b>Play the day</b>, then
+    change capacity, compression or the cluster type until the evening peak is handled.</p>
+
+  <div class="card">
+    <div class="controls">
+      <div class="seg" role="group" aria-label="Cluster type" id="typeSeg">
+        <button data-v="elastic" aria-pressed="true">Cloud elastic (Standard)</button><button data-v="ded" aria-pressed="false">Cloud Dedicated</button><button data-v="cp" aria-pressed="false">Platform lab</button>
+      </div>
+    </div>
+    <div class="sliders">
+      <label><span>Evening peak, uncompressed <output id="peakOut"></output></span><input type="range" id="peak" min="40" max="400" step="10" value="300" aria-label="Evening peak ingress"></label>
+    </div>
+    <div class="controls">
+      <span class="ctl-label">compression.type</span>
+      <div class="seg" role="group" aria-label="Compression" id="compSeg">
+        <button data-v="none" aria-pressed="true">none</button><button data-v="lz4" aria-pressed="false">lz4</button><button data-v="zstd" aria-pressed="false">zstd</button>
+      </div>
+      <button id="minus">−1 unit</button><button id="plus">+1 unit</button>
+      <button class="primary" id="play">Play the day</button>
+      <span class="pill" id="state"></span>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 330" role="img" aria-label="24-hour ingress curve against cluster capacity, with capacity units"></svg></div>
+    <div class="stats">
+      <div class="stat"><b id="sClock">00:00</b><span>time of day</span></div>
+      <div class="stat"><b id="sPeak">0 %</b><span>peak load</span></div>
+      <div class="stat"><b id="sBad">0 min</b><span>throttled or saturated</span></div>
+      <div class="stat"><b id="sCost">0</b><span>unit-hours (cost)</span></div>
+    </div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>How each cluster type scales</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th></th><th>Cloud elastic (Basic, Standard, Enterprise)</th><th>Cloud Dedicated</th><th>Confluent Platform (lab)</th></tr></thead>
+      <tbody>
+        <tr><td>Capacity unit</td><td>eCKU, added and removed automatically</td><td>CKU, which you choose</td><td>Brokers (and their disks, CPU and network)</td></tr>
+        <tr><td>Scaling up</td><td>Automatic, up to the cluster type's maximum</td><td><code>confluent kafka cluster update lkc-… --cku 3</code>. The expansion takes time and moves data</td><td>Add a broker. Self-Balancing (<code>confluent.balancer.enable=true</code> in the lab) then moves partitions to it</td></tr>
+        <tr><td>What you watch</td><td>Throughput against the type's limits; <code>client_limit_milliseconds</code> in the Metrics API, throttle time at the clients</td><td><code>cluster_load_percent</code> in the Metrics API</td><td>Broker metrics (Topic 3): handler idle %, disk, network</td></tr>
+        <tr><td>At the limit</td><td>Clients are throttled: higher latency, no errors</td><td>Above about 80 % load, expect rising latency and throttling</td><td>Queues build, latency rises, disks fill</td></tr>
+        <tr><td>You pay for</td><td>eCKU-hours actually used, plus data</td><td>CKUs provisioned, used or not</td><td>The hardware, all day</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="color:var(--muted);font-size:13px">The Cloud figures follow Confluent's published limits: Standard 25 MBps ingress per eCKU, up to 250 MBps per cluster, and Dedicated 60 MBps
+    ingress per CKU. They change over time, so check the cluster-types page for your region. The 80 MB/s per Platform broker is illustrative: size your own brokers from load tests.</p>
+  <div class="grid grid-2">
+    <div class="card"><h3 style="margin-top:0">Levers that cost nothing</h3><p style="color:var(--muted);font-size:14px;margin:0">
+      <code>compression.type=lz4</code> or <code>zstd</code> on the producer shrinks bytes on the network, on disk and in replication.
+      Text-like CDRs compress well. <code>linger.ms</code> and <code>batch.size</code> give larger batches, which compress better and mean fewer requests (Topic 3).</p></div>
+    <div class="card"><h3 style="margin-top:0">Partitions limit parallelism</h3><p style="color:var(--muted);font-size:14px;margin:0">
+      Adding capacity doesn't help a consumer group that has run out of partitions. With 6 partitions, a 7th billing-svc instance sits idle.
+      Plan partition counts for the peak consumer count, and stay under the cluster type's partition limit.</p></div>
+  </div>
+  <div class="callout"><b>Admin takeaway:</b> scale for the peak, not the average. In this simulation the daily average is about a third of
+    the 21:00 peak. Capacity sized on the average is throttled every evening, exactly when billing traffic matters most.</div>
+  <div class="callout warn"><b>Capacity gotcha:</b> scaling a Dedicated cluster or rebalancing a Platform cluster takes time, because
+    partitions and data have to move. Scale before the peak. Starting an expansion at 20:45 doesn't help the 21:00 peak.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="03-throughput-latency-metrics.html"><small>← Previous</small>Cluster load metrics: throughput &amp; latency</a>
+    <a class="next" href="05-jmx-prometheus-comparison.html"><small>Next →</small>Compared with Apache Kafka JMX &amp; Prometheus</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), log = document.getElementById('log');
+const TYPES = {
+  elastic: { unit: 'eCKU', per: 25, min: 1, max: 10, lag: 0 },
+  ded: { unit: 'CKU', per: 60, min: 1, max: 8, lag: 8 },        // 8 ticks = 2 h expansion
+  cp: { unit: 'broker', per: 80, min: 3, max: 6, lag: 6 }        // 6 ticks = 1.5 h rebalance
+};
+const COMP = { none: 1, lz4: 0.5, zstd: 0.35 };
+const TICKS = 96;                                                   // 15-minute steps
+const S = { type: 'elastic', peak: 300, comp: 'none', units: 2, pending: [], t: 0, hist: [], playing: false, bad: 0, cost: 0, peakLoad: 0 };
+const shape = h => Math.min(1, 0.12 + 0.5 * Math.exp(-(((h - 10) / 2.5) ** 2)) + 0.88 * Math.exp(-(((h - 21) / 1.8) ** 2)));
+const load = t => S.peak * COMP[S.comp] * shape(t / 4);
+const clock = t => String(Math.floor(t / 4) % 24).padStart(2, '0') + ':' + String((t % 4) * 15).padStart(2, '0');
+const T = () => TYPES[S.type];
+
+function reset() {
+  S.t = 0; S.hist = []; S.bad = 0; S.cost = 0; S.peakLoad = 0; S.pending = [];
+  S.units = S.type === 'cp' ? 3 : 2;
+  render();
+}
+
+function tick() {
+  const ty = T(), L = load(S.t);
+  S.pending = S.pending.filter(p => { if (--p.left > 0) return true; S.units = Math.min(ty.max, S.units + p.d);
+    logLine(log, `${clock(S.t)} ${S.type === 'cp' ? 'Self-Balancing finished moving partitions: the new broker now carries load' : 'CKU expansion complete'}`, true); return false; });
+  if (S.type === 'elastic') {
+    const want = Math.max(ty.min, Math.min(ty.max, Math.ceil(L / (ty.per * 0.8))));
+    if (want !== S.units) { logLine(log, `${clock(S.t)} autoscale ${S.units} → ${want} eCKU`); S.units = want; }
+  }
+  const cap = S.units * ty.per, pct = L / cap * 100;
+  S.peakLoad = Math.max(S.peakLoad, pct);
+  S.cost += S.units / 4;
+  if (pct > 100) {
+    S.bad += 15;
+    if (!S.hist.length || S.hist[S.hist.length - 1].pct <= 100)
+      logLine(log, `<b>${clock(S.t)} ${S.type === 'elastic' ? 'THROTTLED' : 'SATURATED'}</b>: ${L.toFixed(0)} MB/s against ${cap} MB/s. ${S.type === 'elastic' ? 'At the eCKU maximum, so producers see throttle time.' : 'p99 latency climbing, consumers falling behind.'}`, true);
+  }
+  S.hist.push({ L, cap, pct });
+  S.t++;
+  render();
+  if (S.t >= TICKS) stop(`Day over: peak load ${S.peakLoad.toFixed(0)} %, ${S.bad} min throttled or saturated, ${S.cost.toFixed(0)} unit-hours.`);
+}
+
+let timer = null;
+function stop(msg) { clearInterval(timer); timer = null; S.playing = false; document.getElementById('play').textContent = 'Play the day'; if (msg) logLine(log, msg, true); }
+
+function render() {
+  svg.innerHTML = '';
+  const ty = T(), box = { x: 60, y: 20, w: 820, h: 200 };
+  const curve = Array.from({ length: TICKS }, (_, t) => load(t));
+  const capNow = S.units * ty.per;
+  const max = Math.max(...curve, capNow, ty.max * ty.per * (S.type === 'elastic' ? 1 : 0)) * 1.1;
+  const yOf = v => box.y + box.h - v / max * box.h, xOf = t => box.x + t * box.w / (TICKS - 1);
+  [0, 6, 12, 18, 23.75].forEach(h => el('text', { x: xOf(h * 4), y: box.y + box.h + 16, 'text-anchor': 'middle', 'font-size': 11, fill: 'var(--muted)', text: h === 23.75 ? '24:00' : String(h).padStart(2, '0') + ':00' }, svg));
+  [0, max / 2, max].forEach(v => el('text', { x: box.x - 6, y: yOf(v) + 4, 'text-anchor': 'end', 'font-size': 11, fill: 'var(--muted)', text: v.toFixed(0) }, svg));
+  el('text', { x: 10, y: 14, 'font-size': 11, fill: 'var(--muted)', text: 'MB/s in' }, svg);
+  el('line', { x1: box.x, y1: box.y + box.h, x2: box.x + box.w, y2: box.y + box.h, stroke: 'var(--border)' }, svg);
+  if (S.type === 'elastic') {
+    const capMax = ty.max * ty.per;
+    el('line', { x1: box.x, y1: yOf(capMax), x2: box.x + box.w, y2: yOf(capMax), stroke: 'var(--bad)', 'stroke-dasharray': '6 4' }, svg);
+    el('text', { x: box.x + box.w, y: yOf(capMax) - 5, 'text-anchor': 'end', 'font-size': 11, fill: 'var(--bad)', text: `autoscale maximum: ${ty.max} eCKU` }, svg);
+  }
+  el('path', { d: seriesPath(curve, box, max), fill: 'none', stroke: 'var(--muted)', 'stroke-width': 1.5, 'stroke-dasharray': '4 4' }, svg);
+  S.hist.forEach((h, t) => { if (h.pct > 100) el('rect', { x: xOf(t) - box.w / TICKS / 2, y: box.y, width: box.w / TICKS, height: box.h, fill: 'var(--bad)', opacity: .15 }, svg); });
+  if (S.hist.length > 1) {
+    const sub = { ...box, w: (S.hist.length - 1) * box.w / (TICKS - 1) };
+    el('path', { d: seriesPath(S.hist.map(h => h.cap), sub, max), fill: 'none', stroke: 'var(--ok)', 'stroke-width': 2 }, svg);
+    el('path', { d: seriesPath(S.hist.map(h => h.L), sub, max), fill: 'none', stroke: 'var(--p0)', 'stroke-width': 3 }, svg);
+  } else {
+    el('line', { x1: box.x, y1: yOf(capNow), x2: box.x + box.w, y2: yOf(capNow), stroke: 'var(--ok)', 'stroke-width': 2, opacity: .6 }, svg);
+  }
+  el('line', { x1: xOf(Math.min(S.t, TICKS - 1)), y1: box.y, x2: xOf(Math.min(S.t, TICKS - 1)), y2: box.y + box.h, stroke: 'var(--accent)' }, svg);
+  // legend + units
+  [['var(--p0)', 'ingress after compression'], ['var(--ok)', 'capacity'], ['var(--muted)', 'rest of the day (forecast)']].forEach(([c, n], i) => {
+    el('rect', { x: 60 + i * 200, y: 252, width: 12, height: 4, fill: c }, svg);
+    el('text', { x: 78 + i * 200, y: 258, 'font-size': 12, text: n }, svg);
+  });
+  const L = load(Math.min(S.t, TICKS - 1)), cap = S.units * ty.per;
+  for (let i = 0; i < ty.max; i++) {
+    const on = i < S.units, pend = !on && i < S.units + S.pending.reduce((a, p) => a + p.d, 0);
+    const fillPct = on ? Math.min(1, Math.max(0, (L - i * ty.per) / ty.per)) : 0;
+    const x = 60 + i * 82;
+    el('rect', { x, y: 275, width: 72, height: 40, rx: 8, fill: 'var(--surface-2)', stroke: on ? (L > cap ? 'var(--bad)' : 'var(--ok)') : 'var(--border)', 'stroke-dasharray': on ? '' : '4 3', 'stroke-width': 1.5 }, svg);
+    if (fillPct) el('rect', { x, y: 315 - 40 * fillPct, width: 72, height: 40 * fillPct, rx: 8, fill: L > cap ? 'var(--bad)' : 'var(--ok)', opacity: .35 }, svg);
+    el('text', { x: x + 36, y: 300, 'text-anchor': 'middle', 'font-size': 11, fill: on ? 'var(--text)' : 'var(--muted)', text: pend ? 'adding…' : `${ty.unit} ${i + 1}` }, svg);
+  }
+  el('text', { x: 880, y: 258, 'text-anchor': 'end', 'font-size': 11, fill: 'var(--muted)', text: `${ty.per} MB/s ingress per ${ty.unit}${S.type === 'cp' ? ' (illustrative)' : ' (published limit)'}` }, svg);
+  const pct = L / cap * 100;
+  const st = document.getElementById('state');
+  st.className = 'pill ' + (pct > 100 ? 'bad' : pct > 80 ? 'warn' : 'ok');
+  st.textContent = `${S.units} ${ty.unit}${S.units > 1 ? 's' : ''} · load ${pct.toFixed(0)} %`;
+  document.getElementById('peakOut').textContent = S.peak + ' MB/s';
+  document.getElementById('sClock').textContent = clock(Math.min(S.t, TICKS));
+  document.getElementById('sPeak').textContent = S.peakLoad.toFixed(0) + ' %';
+  document.getElementById('sBad').textContent = S.bad + ' min';
+  document.getElementById('sCost').textContent = S.cost.toFixed(0);
+  const manual = S.type !== 'elastic';
+  ['plus', 'minus'].forEach(id => { const b = document.getElementById(id); b.disabled = !manual; b.textContent = (id === 'plus' ? '+1 ' : '−1 ') + ty.unit; });
+}
+
+wireSeg('typeSeg', v => { stop(); S.type = v; reset();
+  logLine(log, { elastic: 'Cloud elastic cluster: eCKUs scale automatically between 1 and the type\'s maximum.', ded: 'Cloud Dedicated: you choose the CKUs. Adding one takes about 2 simulated hours.', cp: 'Platform lab: 3 brokers. A new broker carries load once Self-Balancing has moved partitions (about 1.5 simulated hours).' }[v], true); });
+wireSeg('compSeg', v => { S.comp = v; render(); logLine(log, `compression.type=${v}: the peak is now ${(S.peak * COMP[v]).toFixed(0)} MB/s on the wire and on disk (illustrative ratio for CDR JSON)`); });
+const peak = document.getElementById('peak');
+peak.oninput = () => { S.peak = +peak.value; render(); };
+peak.onchange = () => logLine(log, `Evening peak set to ${S.peak} MB/s uncompressed`);
+document.getElementById('plus').onclick = () => {
+  const ty = T(), total = S.units + S.pending.reduce((a, p) => a + p.d, 0);
+  if (total >= ty.max) return logLine(log, `Already at the simulation's maximum of ${ty.max} ${ty.unit}s`);
+  S.pending.push({ d: 1, left: ty.lag });
+  logLine(log, `${clock(S.t)} ${S.type === 'cp' ? `Broker ${S.units + 1 + S.pending.length - 1} added: empty until Self-Balancing moves partitions to it` : `Expansion to ${total + 1} CKU started (confluent kafka cluster update … --cku ${total + 1})`}`, true);
+  render();
+};
+document.getElementById('minus').onclick = () => {
+  const ty = T();
+  if (S.units <= ty.min) return logLine(log, `Minimum is ${ty.min} ${ty.unit}${ty.min > 1 ? 's' : ''}${S.type === 'cp' ? ' (RF 3 needs 3 brokers)' : ''}`);
+  S.units--; render(); logLine(log, `${clock(S.t)} Down to ${S.units} ${ty.unit}s`);
+};
+document.getElementById('play').onclick = () => {
+  if (S.playing) return stop('Paused');
+  if (S.t >= TICKS) reset();
+  S.playing = true; document.getElementById('play').textContent = 'Pause';
+  timer = setInterval(tick, 120);
+};
+reset();
+logLine(log, 'A CDR day: quiet at night, a morning rise, and a peak around 21:00. Press Play the day.');
+
+renderQuiz('quiz', [
+  { q: 'An elastic Confluent Cloud cluster reaches its maximum eCKUs during the 21:00 CDR peak. What do producers experience?',
+    options: ['Throttling: higher produce latency and throttle time, but no rejected records', 'Records are silently dropped', 'The cluster becomes Dedicated automatically', '<code>TopicAuthorizationException</code>'],
+    answer: 0,
+    explain: 'Beyond its limits, Confluent Cloud slows clients by delaying responses, the same mechanism as a quota (Topic 3). Clients see <code>produce-throttle-time-avg</code> rise. It also shows as <code>client_limit_milliseconds</code> in the Metrics API. Choose a cluster type whose limits cover the peak.' },
+  { q: 'Your Dedicated cluster\'s <code>cluster_load_percent</code> reaches 95 % every evening. When should you expand it?',
+    options: ['At 20:45, just before the peak', 'Never: Dedicated clusters autoscale', 'Ahead of time, for example in the morning, because the expansion takes time and moves data', 'Only after customers complain'],
+    answer: 2,
+    explain: 'CKU expansions are not instant. In the simulation, a CKU started at 20:45 arrives after the peak. Plan from the trend in the Metrics API and expand well before you need it.' },
+  { q: 'You add a 4th broker to the Platform lab cluster during the peak. For the next hour or so, almost nothing changes. Why?',
+    options: ['The broker needs a licence first', 'Producers must be restarted', 'KRaft has to elect it as controller', 'A new broker has no partitions. It helps only after partitions move to it, which Self-Balancing does gradually because it copies data.'],
+    answer: 3,
+    explain: 'Load follows partition leaders. Self-Balancing (<code>confluent.balancer.enable=true</code> in the lab) or <code>kafka-reassign-partitions.sh</code> (Module 5) has to move replicas first, and that moves data, adding load while it runs.' },
+  { q: 'Which change cuts the bytes the cluster must handle without buying capacity?',
+    options: ['Raising <code>replication.factor</code>', 'Setting <code>compression.type=lz4</code> or <code>zstd</code> on producers', 'Setting <code>acks=0</code>', 'Adding consumer groups'],
+    answer: 1,
+    explain: 'Compressed batches stay compressed on the network, on disk and during replication. Text-like CDRs compress well. Replication factor and extra consumer groups add bytes, and <code>acks=0</code> risks losing data while saving very little.' },
+  { q: 'Billing has 6 partitions on <code>l08.cdr.voice</code>. You scale billing-svc from 6 to 12 instances and add CKUs, but lag doesn\'t improve. Why?',
+    options: ['CKUs only add storage', 'Twelve instances overload the coordinator', 'Lag only improves after a broker restart', 'A consumer group can use at most one consumer per partition. Six instances are idle, so you need more partitions.'],
+    answer: 3,
+    explain: 'Each partition is read by at most one consumer in a group. Extra consumers sit idle, and broker capacity doesn\'t change that. Size partition counts for the peak consumer parallelism you need (Module 4).' }
+]);
+</script>
+</body>
+</html>
