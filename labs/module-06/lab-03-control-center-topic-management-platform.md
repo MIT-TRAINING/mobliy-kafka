@@ -153,8 +153,10 @@ kafka-topics.sh --bootstrap-server $CP --command-config $CFG --list
 ```
 
 **Expected:** no output from the health filter (silence is healthy, as in
-Module 5), and a list that contains **only** your own `lNN.*` topics — empty
-for now. The other learners' topics exist; RBAC hides them from you.
+Module 5), and a list of the cluster's internal topics (`_confluent-…`,
+`_schemas`, `connect-cluster-…`) plus any topics other learners have created
+— none of yours yet. Your cluster-wide `SystemAdmin` role lets you see and
+manage every topic; by course rule you change only your own `lNN.*`.
 
 ---
 
@@ -538,13 +540,15 @@ your MDS login.
 </details>
 
 <details>
-<summary>3. Control Center shows you only <code>lNN.cdr.data</code> and <code>lNN.cdr.roaming</code>, but the trainer sees 40 topics. Is Control Center broken?</summary>
+<summary>3. Control Center lists 40 topics, but opening another learner's topic shows no messages or settings, and the Consumers page lists only your groups. Is Control Center broken?</summary>
 
 No. Control Center makes its admin calls with **your** identity, and the
-Confluent Server authorizer returns only resources your role bindings cover —
-`ResourceOwner` on `Topic:lNN.` and `Group:lNN.`. The trainer's broader role
-shows everything. The same filtering explains why `kafka-topics.sh --list`
-returned only your topics in Part 1.3.
+Confluent Server authorizer checks each operation against your role bindings.
+`Operator` on the cluster grants `Describe` on every topic, so names and
+partitions are visible. Reading messages, topic settings and consumer groups
+need `ResourceOwner` on `Topic:lNN.` and `Group:lNN.` (or a cluster-wide role
+such as `SystemAdmin`, which learners on the course cluster hold). The trainer's `SystemAdmin` role shows everything. The same
+rules explain what `kafka-topics.sh --list` returned in Part 1.3.
 </details>
 
 <details>

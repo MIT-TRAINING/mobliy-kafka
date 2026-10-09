@@ -1,0 +1,12 @@
+{
+  "type": "record",
+  "name": "CdrVoice",
+  "namespace": "com.examples.telco",
+  "doc": "One voice call detail record (CDR)",
+  "fields": [
+    {"name": "callId",      "type": "string", "doc": "Unique call ID"},
+    {"name": "caller",      "type": "string", "doc": "Calling number (MSISDN)"},
+    {"name": "callee",      "type": "string", "doc": "Called number"},
+    {"name": "durationSec", "type": "int",    "doc": "Call length in seconds"}
+  ]
+}
