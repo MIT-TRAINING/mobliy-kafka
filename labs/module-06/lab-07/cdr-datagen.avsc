@@ -1,0 +1,11 @@
+{
+  "type": "record",
+  "name": "CdrDatagen",
+  "namespace": "com.examples.telco",
+  "fields": [
+    {"name": "callId", "type": {"type": "long", "arg.properties": {"range": {"min": 100000, "max": 999999}}}},
+    {"name": "caller", "type": {"type": "string", "arg.properties": {"options": ["9198450001", "9198450002", "9198450003", "9198450004", "9198450005"]}}},
+    {"name": "callee", "type": {"type": "string", "arg.properties": {"options": ["9198451111", "9198452222", "447700900123", "971500900456"]}}},
+    {"name": "durationSec", "type": {"type": "int", "arg.properties": {"range": {"min": 5, "max": 600}}}}
+  ]
+}

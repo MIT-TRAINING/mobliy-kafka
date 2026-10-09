@@ -30,7 +30,7 @@ and keys differ; the shapes do not.
 ## Part 1 — Check your prepared environment (8 min)
 
 The trainer prepared three files on your VM before the course (see
-[`setup/README.md` Part B.7](setup/README.md#b7-distribute-client-files-to-the-lab-vms)).
+[`infra/confluent/README.md` Part B.7](../../infra/confluent/README.md#b7-distribute-client-files-to-the-lab-vms)).
 Open a terminal and look at them:
 
 ```bash
