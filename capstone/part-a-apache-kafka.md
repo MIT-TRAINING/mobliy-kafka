@@ -1,351 +1,259 @@
-# Capstone Part A — Building on Apache Kafka
+# Capstone Part A — Operating TelcoPulse on Apache Kafka
 
 > **Back to:** [Capstone overview](README.md) · **Next:** [Part B — Confluent Kafka](part-b-confluent-kafka.md)
-> **Phases:** A1 (after Module 2) · A2 (after Module 3) · A3 (after Module 4) · A4 (after Module 5)
+> **Phases:** P1 (after Module 2) · P2 (after Module 3) · P3 (after Module 4) · P4 (after Module 5)
 
-In Part A you design the platform, build it on your own 3-node cluster, move
-it to the shared Apache Kafka cluster on AWS, write the applications, and
-prove it survives failures. Requirement IDs (`BR-…`, `NFR-…`) refer to
-[§4 of the overview](README.md#4-requirements).
+In Part A you take over the platform as it runs today, on **Apache Kafka**.
+You review its design, turn the topic contracts into code, prove what
+survives a failure, set the standards for the applications, and write the
+runbooks for scaling and for broker loss. Requirement IDs (`BR-…`, `NFR-…`,
+`SLO-…`) are defined in [§4 of the overview](README.md#4-requirements).
 
 Every phase has the same shape:
 
-- **Goal** — what you are trying to achieve.
-- **Requirements** — what must be true when you finish (`A1.1`, `A1.2`, …).
-- **Acceptance criteria** — how the trainer checks it. Each needs evidence.
-- **Questions to answer** — put the answers in your design doc or runbook.
-- **Stretch** — optional, for extra credit.
+| Block | Content |
+| ----- | ------- |
+| **Goal** | The outcome in one paragraph, and why the business needs it |
+| **Environment** | Where you work and what you may do there |
+| **Tasks** | What to achieve, with the requirement IDs it serves. *How* is yours to decide |
+| **Acceptance** | Checks that must pass. Each has a verifiable command or observable result |
+| **Evidence** | What to keep in `evidence/phase-N/` |
+| **Toolbox** | The labs and guide sections to reread. Not step-by-step instructions |
+| **Clean-up** | What to remove before the phase is done |
 
-Environment variables used below (define them in every terminal):
-
-```bash
-APACHE=apache-kafka.lab.internal:9092   # shared Apache Kafka cluster
-CFG=~/kafka/apache.properties           # your SASL/SCRAM settings
-ME=lNN                                  # your learner prefix
-```
+Work from `~/capstone` on your VM. `lNN` is your learner ID and `$ME` its prefix
+(`lNN`), as in the labs.
 
 ---
 
-## Phase A1 — Design & local cluster
+## Phase 1 — Design review and staging cluster
 
-| | |
-| --- | --- |
-| **Opens after** | Module 2 |
-| **Modules applied** | 1 (messaging concepts, architecture, KRaft), 2 (installation, CLI, topic admin) |
-| **Environment** | Your VM: a 3-node KRaft cluster in Docker |
-| **Effort** | 2–3 hours |
+**Opens after Module 2 · about 1.5 h · serves BR-1, BR-2, NFR-1**
 
 ### Goal
 
-Turn the business problem into a Kafka design, and stand up a cluster you
-fully control to try it on.
+Before you change anything, understand what you are taking over. Review the
+topic design the developers shipped, record how each of your four clusters is
+really configured (not how a README says it is), and build the two things you
+will use in every later phase: a staging cluster you may break, and a health
+check you can trust.
 
-### Requirements
+### Environment
 
-**A1.1 — Messaging design note.** One page in `docs/design.md`:
+Own VM. The **staging cluster** is the Module 2 three-node KRaft cluster
+([`labs/module-02/docker-compose.yml`](../labs/module-02/docker-compose.yml)).
+Read-only on the shared clusters in this phase.
 
-- Why Kafka rather than a queue (IBM MQ or similar) for this platform. Use
-  BR-10 and BR-05 in the argument; be specific about what a queue would and
-  would not give you.
-- Which topics are **pub-sub** (several independent consumer groups) and
-  where a **queue-like** consumer group is used. Name the groups.
+### Tasks
 
-**A1.2 — Topic catalog.** For each of the 8 topics in
-[§3.3](README.md#33-topic-catalog-names-are-fixed-settings-are-yours), a table
-row with: key, partitions, replication factor, `min.insync.replicas`,
-`cleanup.policy`, retention, compression, and **the requirement IDs that
-drove each choice**. Partition counts must support NFR-01.
+| ID | Task | Serves |
+| -- | ---- | ------ |
+| **T1.1** | **Topic design review.** For each of the eight TelcoPulse topics, write down: data class, key, partitions, RF, `min.insync.replicas`, retention, cleanup policy, producers, consumer groups. Then challenge it. Is each partition count justified by consumer parallelism and by the production inputs ([overview §4.4](README.md#44-workload-profiles))? What breaks if one subscriber is very busy? Which settings are lab-only? List **at least five** findings, each marked *risk*, *question for developers* or *acceptable*, and ranked | BR-1, BR-2 |
+| **T1.2** | **Naming and ownership convention** (one page). A topic name pattern, an owner per data class, a data classification, a rule for who may create topics, and how a new application requests one. State why topic auto-creation is off on both shared clusters | BR-4, BR-6 |
+| **T1.3** | **KRaft decision note** (one page, for a manager). What does each of your clusters use for metadata? What changes for an operator compared with a ZooKeeper-based cluster (processes, ports, failure of the metadata layer, upgrades)? Confirm the live facts with commands on the shared Apache and Confluent clusters | BR-9 |
+| **T1.4** | **Cluster inventory.** One table covering the staging cluster, the shared Apache cluster, the Confluent Platform cluster and your Confluent Cloud cluster: version, node roles and count, listener and authentication mechanism, authorisation model, default replication settings, and **what you may and may not do**. Every cell comes from a command, not from documentation. Note the command in the cell | NFR-5 |
+| **T1.5** | **Staging cluster up.** Start it, run TelcoPulse with the `local` profile, and confirm that the eight topics exist exactly as the catalog declares | BR-1 |
+| **T1.6** | **Health check.** One script, `health-check.sh <local\|shared\|cp>`, that prints a PASS / WARN / FAIL line per check and exits non-zero on any FAIL. It must check at least: reachable and authenticated; expected broker count; controller quorum has a leader and the expected voters; no offline (unavailable) partitions; no under-replicated or under-min-ISR partitions among **your** topics; the eight required topics exist; every consumer group of yours is in a sane state | NFR-1, BR-9 |
+| **T1.7** | **Environment kit.** `env.sh` that sets `BS`, `CFG` and `ME` per target without containing a secret (it points to the config file). A short `docs/cli-cheatsheet.md` with the dozen commands you expect to use most, per target | NFR-1, NFR-4 |
 
-**A1.3 — Partitioning rules.** Explain in your own words:
+### Acceptance
 
-- How the key gives you BR-02.
-- Which topics the charging engine reads **together** and why their
-  partition counts and keys must line up (**co-partitioning**). What breaks
-  if someone later adds partitions to only one of them?
+| ID | Check |
+| -- | ----- |
+| **A1.1** | `health-check.sh` prints all-PASS on the staging, shared Apache and Confluent Platform clusters while TelcoPulse runs |
+| **A1.2** | With **one staging broker stopped**, the script reports a WARN or FAIL that **names the cause** (a missing broker or under-replicated partitions), and exits non-zero on FAIL. With the broker back, it returns to PASS within two minutes |
+| **A1.3** | With a deliberately wrong password in a copy of the config file, the script reports an authentication FAIL and does not hang longer than 30 seconds |
+| **A1.4** | The inventory in T1.4 has no empty cell and no cell without a command or output reference |
+| **A1.5** | `docs/p1-topic-review.md` has at least five ranked findings; at least two are *risk* items with a proposed change |
 
-**A1.4 — Local cluster.** A 3-node KRaft cluster on your VM in Docker
-Compose. You may start from the Module 2 compose file, but your copy must:
+### Evidence
 
-- Have **every** setting explained by a comment in your own words.
-- Disable automatic topic creation.
-- Use cluster defaults that suit the money topics (RF, `min.insync.replicas`).
-- Be reachable both from containers and from your VM.
+`evidence/phase-1/`: the three documents, `health-check.sh` output for each target (PASS case and the two failure cases), the inventory with its commands, and the output of `kafka-topics.sh --describe` for the eight topics on the staging cluster.
 
-**A1.5 — Topic creation script.** `scripts/create-topics.sh` creates all 8
-topics with the settings from A1.2. It takes the bootstrap server, a
-`--command-config` file and the prefix as parameters, and is **safe to
-re-run** (a second run does not fail and does not change anything).
+### Toolbox
 
-**A1.6 — Contracts by hand.** Using only the Kafka CLI:
+[Module 1 labs](../labs/module-01/README.md), [Module 2 labs](../labs/module-02/README.md), the Module 3 guide on topic design, and the case study's [topic design](../casestudies/telecom-usage-platform/README.md#4-topic-design-module-3-section-41) and
+[design decisions](../casestudies/telecom-usage-platform/README.md#8-design-decisions-worth-discussing).
 
-- Produce 10 subscriber profiles and 20 usage events **with keys**, following
-  the JSON contracts in [§3.4](README.md#34-event-contracts).
-- Show that all events for one MSISDN landed in one partition.
-- Read `usage` with **two different consumer groups** and show both get every
-  event (BR-10); then start two members in **one** group and show they split
-  the partitions.
+### Clean-up
 
-### Acceptance criteria
-
-- [ ] `docker compose ps` shows 3 healthy nodes; the KRaft quorum shows 3 voters and a leader.
-- [ ] `kafka-topics.sh --describe` output for all 8 topics matches your catalog table.
-- [ ] Running `create-topics.sh` twice in a row succeeds both times with no changes the second time.
-- [ ] Console output proving one-key-one-partition for at least two MSISDNs.
-- [ ] `kafka-consumer-groups.sh --describe` output for two groups on `usage` (pub-sub) and for one group with two members (partitions split).
-- [ ] `docs/design.md` has A1.1–A1.3 with requirement IDs.
-
-### Questions to answer
-
-1. Your cluster runs combined broker+controller nodes. Why would production separate them? What does KRaft remove compared with ZooKeeper?
-2. Which of your topics would you **never** give RF = 1, even in a test environment? Why?
-3. A colleague proposes keying `usage` by `cellId` "to balance load". What requirement breaks?
-
-### Stretch
-
-- Add a `scripts/describe-platform.sh` that prints a one-screen health summary of your topics (partitions, leaders, ISR size per topic).
+Keep the staging cluster running for Phase 2; stop the app.
 
 ---
 
-## Phase A2 — Topic contracts & durability
+## Phase 2 — Topic contracts and durability
 
-| | |
-| --- | --- |
-| **Opens after** | Module 3 |
-| **Modules applied** | 3 (broker/topic configuration, segments, retention, compaction, `acks`, `min.insync.replicas`, storage) |
-| **Environment** | Shared Apache cluster (your `$ME.*` topics) + your local cluster for anything that needs broker control |
-| **Effort** | 2–3 hours |
+**Opens after Module 3 · about 2 h · serves BR-1, BR-2, BR-4, SLO-1**
 
 ### Goal
 
-Make each topic's configuration a **contract** the business can rely on, and
-prove with experiments that the contracts hold.
+Turn the topic design into a **contract the cluster enforces**, prove each
+promise with an experiment, and size the storage the contracts imply. The
+business wants to know three things: what happens to an acknowledged record
+when a broker dies, how long data survives when billing is down, and how much
+disk that costs.
 
-### Requirements
+### Environment
 
-**A2.1 — Platform on the shared cluster.** Run your `create-topics.sh`
-against `$APACHE` with `$CFG`. Record which broker-level defaults your topics
-inherit and which you override at topic level (`kafka-configs --describe`
-shows the source of each value).
+The **shared Apache cluster** with your `lNN.` prefix: you may create topics,
+alter their configuration and read their offsets and sizes. You may **not**
+stop a broker there. Destructive tests run on the **staging cluster**.
 
-**A2.2 — Retention contracts.** Topic-level settings implement BR-06, BR-07,
-BR-09 and BR-11. For the KPI topic, also choose a segment size/time so that
-1-hour retention can actually be enforced (explain why segment settings
-matter for retention).
+### Tasks
 
-**A2.3 — Compaction in action.** On `subscribers` or `balance`:
+| ID | Task | Serves |
+| -- | ---- | ------ |
+| **T2.1** | **Catalog v2.** Check version 1 of the topic design ([overview §4.4](README.md#44-workload-profiles)) against BR-1, BR-2 and BR-4. Where it falls short, change it. For **every** non-default value in v2, write the reason and the requirement it serves. Treat settings that exist only for classroom speed as lab-mode and say what the production value should be | BR-1, BR-2, BR-4 |
+| **T2.2** | **Topics as code.** `config/topics.yaml` (or CSV) holds the v2 catalog. `scripts/apply-topics.sh` makes the cluster match it: creates missing topics, corrects drift on listed settings, **never deletes**, and has a `--diff` mode that only reports. Decide who owns the truth, your file or the application's own startup logic (TelcoPulse also creates and corrects its topics), and document how you stop them fighting | NFR-1, BR-4 |
+| **T2.3** | **Retention proof.** On the shared cluster, prove that time-based deletion works on a topic you created for the purpose: log start offset moves forward, and you can explain **how long it took and why**, using the broker's retention-check interval, the segment settings and the rule that only closed segments are deleted. Restore or delete the topic afterwards | BR-2 |
+| **T2.4** | **Compaction proof.** On a compacted topic, show the record count falling while the latest value of each key survives, and a tombstone removing a key after its retention. Explain what the compaction settings trade off (disk against CPU and I/O) | BR-4 |
+| **T2.5** | **Durability matrix** on the **staging** cluster, for a topic with RF 3. Test `acks` ∈ {0, 1, all} × `min.insync.replicas` ∈ {1, 2} in three cluster states: all brokers up, one broker stopped, two brokers stopped. For each cell record: do sends succeed, which error appears, and how many *acknowledged* records are missing afterwards. Finish with a table that tells a developer which combination to use for billing and which for telemetry, and what each costs | BR-1, SLO-1 |
+| **T2.6** | **Storage sizing.** From the production inputs ([overview §4.4](README.md#44-workload-profiles)), calculate for each topic the disk needed across the cluster: rate × record size × compression ratio × retention × RF, plus headroom. State your compression assumption and measure it: produce a known number of records with the app's codec and read the size from the brokers. Compare your estimate with the measured size of your own topics on the shared cluster | BR-5 |
 
-- Produce several versions of the same keys, including a **tombstone**
-  (deleting a subscriber).
-- Use topic-level settings to make compaction run within minutes on your
-  topic, observe it, then **restore** production-appropriate values.
-- Show the before/after: what a new consumer reading from the beginning sees.
+### Acceptance
 
-**A2.4 — Durability matrix.** On your **local** cluster, measure what happens
-to writes for each combination below, with all 3 brokers up and with **one**
-and **two** brokers stopped. Record: did the write succeed, what error, could
-data be lost?
+| ID | Check |
+| -- | ----- |
+| **A2.1** | `apply-topics.sh --diff` on a clean state prints "no drift". After you change one setting by hand with `kafka-configs.sh`, it **reports exactly that setting**. Running without `--diff` fixes it. Running twice changes nothing |
+| **A2.2** | `kafka-topics.sh --describe` on the shared cluster shows the v2 values for all eight topics. No topic violates BR-2 (retention ≥ 2 × 72 h) or BR-4 (charges ≥ 30 d, audit ≥ 90 d) |
+| **A2.3** | The retention proof shows two `kafka-get-offsets.sh` readings (earliest) taken before and after deletion, with timestamps, and an explanation that matches the measured delay |
+| **A2.4** | The durability matrix has all 18 cells filled with observed results. The `acks=1`, one-broker-down and `min.insync.replicas=2` cells and the `acks=all` cells **with two brokers down** are explained in terms of ISR |
+| **A2.5** | The sizing worksheet's estimate for your measured topics is within **±30 %** of the observed size, or the difference is explained |
+| **A2.6** | `docs/p2-contract-guide.md` (one page for developers) states which `acks` and idempotence setting each topic class requires and what error the application will see if the contract is not met |
 
-| Producer `acks` | Topic `min.insync.replicas` |
-| --------------- | --------------------------- |
-| `0` | 2 |
-| `1` | 2 |
-| `all` | 1 |
-| `all` | 2 |
+### Evidence
 
-From the matrix, state which combination each topic uses and why (BR-08, BR-09).
+`evidence/phase-2/`: `topics.yaml`, the `--diff` runs, the retention and compaction readings, the matrix (with raw command output for at least the six cells that matter most), the sizing worksheet and the developer guide.
 
-**A2.5 — Storage sizing.** In `docs/capacity-plan.md`, estimate the disk
-needed **per broker** for production (§4.3 volumes) for `usage`, `charges`,
-`balance` and `network.kpi`, given your RF, retention and an assumed
-compression ratio (state your assumption, then measure a real ratio in A3 and
-update the estimate). Show the formula.
+### Toolbox
 
-### Acceptance criteria
+[Module 3 labs](../labs/module-03/README.md) (retention, segments, `acks` and `min.insync.replicas`), the Module 3 guide, the case study's
+[`TopicCatalog`](../casestudies/telecom-usage-platform/src/main/java/com/training/kafka/telco/topics/TopicCatalog.java)
+and `OpsService` (each method names its CLI equivalent).
 
-- [ ] `kafka-configs --describe --all` excerpts for every topic, showing the overrides and their source (`DYNAMIC_TOPIC_CONFIG` vs defaults).
-- [ ] Compaction evidence: dumped segments or consumer output before and after, including the tombstone disappearing.
-- [ ] The durability matrix table with the actual error names you saw (e.g. `NOT_ENOUGH_REPLICAS…`).
-- [ ] A worked storage estimate with numbers and units.
-- [ ] Your topics are back on production-appropriate settings at the end of the phase.
+### Clean-up
 
-### Questions to answer
-
-1. With RF 3 and `min.insync.replicas` 2, how many brokers can fail before (a) money writes stop, (b) acknowledged money data can be lost?
-2. Why is `acks=all` with `min.insync.replicas=1` not enough for BR-08?
-3. `balance` is compacted. Why must it **not** also be time-retained at 7 days? Is `compact,delete` ever right here?
-4. Where on a broker do your topic's segments live, and which files make up one segment?
-
-### Stretch
-
-- Measure the effect of `compression.type` on one day's simulated `usage` size (`kafka-log-dirs.sh`) for `none`, `lz4` and `zstd`.
+Delete experiment topics on the shared cluster. Bring the staging cluster back to three healthy brokers.
 
 ---
 
-## Phase A3 — The charging pipeline
+## Phase 3 — Client operations
 
-| | |
-| --- | --- |
-| **Opens after** | Module 4 |
-| **Modules applied** | 4 (producer tuning, consumer groups, offsets, rebalancing, delivery semantics, error handling) |
-| **Environment** | VS Code on your VM; develop against your local cluster, then run against the shared Apache cluster |
-| **Effort** | 5–6 hours |
+**Opens after Module 4 · about 1.5 h · serves BR-1, BR-3, BR-9**
 
 ### Goal
 
-Build components C1–C6 from [§3.1](README.md#31-components-you-will-build)
-and prove BR-01 to BR-06 hold — including when things crash.
+Applications do not run themselves. As the platform team you set the
+standard for how clients are configured, you operate their consumer groups
+when something goes wrong, and you must be able to say honestly what delivery
+guarantee the billing path gives. You do this without editing application
+code.
 
-### Functional requirements
+### Environment
 
-**C1 Subscriber loader**
+Shared Apache cluster, `shared` profile of TelcoPulse, your `lNN.` prefix.
+Offset operations on **your** groups only.
 
-- **A3.1** Loads N subscribers (configurable, default 500) into `subscribers`, spread across all three plans and all regions, and gives each an opening top-up (e.g. 50 SAR) on `topups`.
+### Tasks
 
-**C2 Network event simulator**
+| ID | Task | Serves |
+| -- | ---- | ------ |
+| **T3.1** | **Client configuration standard.** For three client classes, **billing** (must not lose or reorder), **telemetry** (cheap, loss-tolerant) and **fraud** (low latency), write the required producer and consumer settings: `acks`, idempotence, retries and `delivery.timeout.ms`, `linger.ms`, `batch.size`, compression, `max.in.flight`, `enable.auto.commit`, `auto.offset.reset`, session and poll timeouts, assignor. Give each value a reason and the symptom you would see if a team set it wrongly. Check that TelcoPulse follows the standard, and list every deviation | BR-1, BR-3 |
+| **T3.2** | **Consumer-group runbook.** Operate the `billing` group on the shared cluster: read state, members, per-partition lag and which member owns what; add a second instance and show the rebalance; stop one cleanly and kill one hard and compare what the group does and how long it takes. Then write the **offset operations** you will allow in production: reset to a timestamp, shift by N, skip one poisoned offset, full replay. Each needs a **dry run first**, a stated precondition (group stopped) and a rollback note | BR-3, BR-9 |
+| **T3.3** | **Delivery-semantics audit.** Which guarantee does the billing path give today: at-most-once, at-least-once or exactly-once? Prove it. Force a duplicate (kill the app between processing and commit, or force a rebalance) and show **how a downstream system would detect it** (the case study derives `chargeId` from topic, partition and offset). State what you would require from the developers to reach effectively-once billing, as a change request, not as code | BR-1 |
+| **T3.4** | **Error-handling findings.** Send a record the application cannot parse. Record what TelcoPulse does with it (the case study counts and skips). Is that acceptable for billing? Propose the production pattern (retry, dead-letter topic, alert) and the topic design it needs | BR-1, BR-9 |
+| **T3.5** | **Throughput check from the operator's side.** With the Kafka perf tools (not the app), measure produce throughput and latency for two producer settings of your choice on a scratch topic, inside your quota, and recommend one for each client class | SLO-3 |
 
-- **A3.2** Produces usage events and top-ups at a configurable **rate** (events/s) for a configurable **duration** (or until `Ctrl+C`), following the contracts exactly.
-- **A3.3** Configurable mix: % top-ups, % roaming. Realistic units (calls 10–600 s, data 1–200 MB).
-- **A3.4** A `bad-every=N` option sends every Nth usage event as one of: malformed JSON, missing `msisdn`, an MSISDN that is not a subscriber.
-- **A3.5** Producer settings are configurable at start-up without recompiling, and the chosen settings are logged.
+### Acceptance
 
-**C3 Cell KPI feed** (may be part of C2)
+| ID | Check |
+| -- | ----- |
+| **A3.1** | `docs/p3-client-standard.md` covers all three classes and **every** listed setting, with a reason. The deviations list is present (empty is allowed only with proof that you checked) |
+| **A3.2** | The runbook shows a rebalance triggered by adding a member and the group's state through it, with timestamps for the clean leave and for the hard kill |
+| **A3.3** | An offset reset is **refused** while the group is active, then succeeds after you stop it, and you show the **dry-run output before** the execute |
+| **A3.4** | A duplicated charge is shown with two records that share the detection key, and the audit states the delivery guarantee in one sentence |
+| **A3.5** | The unparseable record test names the exact log line or counter that shows it was skipped |
 
-- **A3.6** One sample per cell per second for at least 30 cells, with producer settings that match BR-09 — deliberately different from the money producers.
+### Evidence
 
-**C4 Online charging engine** — the heart of the capstone
+`evidence/phase-3/`: the standard, the runbook with command output, the audit with the duplicate pair, the error-handling findings and the perf measurements.
 
-- **A3.7** Runs as a **consumer group**; you can start 1 to 6 instances (NFR-01). Each instance has a unique, stable instance number.
-- **A3.8** Prices usage with the tariffs in [§3.5](README.md#35-tariffs-halalas), debits/credits the balance, and emits `charges`, `balance` and `notifications` as specified.
-- **A3.9** Keeps balances **in memory** for the partitions it owns. On start-up and on every rebalance, it **rebuilds** them for newly assigned partitions from `balance` — not from `usage` (BR-05).
-- **A3.10** Sends bad records to `usage.dlt` with the reason and origin in headers, and carries on (BR-06).
-- **A3.11** Charges **exactly once** (BR-01): reading input, writing all outputs, and committing input offsets must be one atomic unit. A crash at any moment must not produce a duplicate or missing charge, nor a wrong balance.
-- **A3.12** Has a switch to run **at-least-once** instead, so you can demonstrate the difference.
-- **A3.13** Refuses to start, with a clear message, if the topics it reads together are **not co-partitioned** (check with the Admin API).
-- **A3.14** Logs partitions assigned/revoked, where each partition starts, and a periodic throughput summary (NFR-06). Shuts down gracefully (NFR-05).
+### Toolbox
 
-**C5 Notification service**
+[Module 4 labs](../labs/module-04/README.md) (producer tuning, consumer groups, delivery semantics), the Module 4 guide, the case study's `BillingConsumer` and `ListenerControl` (stop or slow a consumer to build lag).
 
-- **A3.15** Its own consumer group on `notifications`; prints one "SMS" line per notification. Must never print notifications from aborted transactions.
+### Clean-up
 
-**C6 Reconciliation tool**
-
-- **A3.16** Reads `usage`, `topups`, `charges`, `balance` and `usage.dlt` to the end and reports:
-  - valid usage events, charges, DLT records;
-  - **duplicates**: usage events with more than one charge;
-  - **missing**: valid usage events with no charge and not in the DLT;
-  - **balance mismatches**: subscribers whose latest balance ≠ top-ups − charged amounts;
-  - total revenue in SAR.
-- **A3.17** Exits non-zero if any duplicate, missing or mismatch is found, so it can be used in scripts.
-
-### Non-functional requirements for this phase
-
-- NFR-03 and NFR-04: the connection file is the **only** thing that changes between your local cluster and the shared cluster.
-- Measure and record the producer's batching and compression metrics (`batch-size-avg`, `records-per-request-avg`, `compression-rate-avg`, throttle time) for at least two `linger.ms`/`batch.size` settings. Pick one and justify it against BR-04.
-
-### Required experiments
-
-| # | Experiment | Expected result |
-| - | ---------- | --------------- |
-| E1 | Seed, simulate 2 min at 20 events/s with 3 charging instances, stop the simulator, wait for lag 0, reconcile | Clean reconciliation |
-| E2 | Start with 1 instance, scale to 3, then stop one with `Ctrl+C` | Partition movement visible in logs and `--describe --members`; clean reconciliation |
-| E3 | **At-least-once mode**: `kill -9` an instance mid-run, restart it, reconcile | You find (and can explain) duplicates and balance mismatches |
-| E4 | **Exactly-once mode**: repeat E3 at least three times | Zero duplicates, zero missing, zero mismatches every time |
-| E5 | Simulate with `bad-every=50` | Charging never stalls; every bad record is in the DLT with a reason; reconciliation clean |
-| E6 | Stop all charging instances for 2 minutes while the simulator runs, then start them | Lag grows, then recovers; record the catch-up time |
-
-### Acceptance criteria
-
-- [ ] All 6 components build and run against the **shared Apache cluster** under your prefix.
-- [ ] Evidence for E1–E6: commands, relevant log excerpts, consumer-group describes and reconciliation output.
-- [ ] A short explanation (half a page) of **why** E3 produced duplicates and **what** in your code prevents them in E4.
-- [ ] The producer tuning table and your chosen settings.
-- [ ] Code review readiness: you can explain the transaction boundaries, the rebalance listener and the state-rebuild logic line by line.
-
-### Questions to answer
-
-1. In E3, which exact window between which two operations caused the duplicates?
-2. Why must consumers of `charges` and `notifications` use `read_committed`? What would they see otherwise?
-3. What would happen to balances if two instances owned the same partition for a moment? Which mechanism prevents that "zombie" from writing?
-4. Why does the charging engine rebuild balances from `balance` rather than replaying `usage`? What topic setting makes that fast?
-5. The notification service is at-least-once. Is that acceptable against BR-11? Why?
-
-### Stretch
-
-- Add a p99 "event-to-charge" latency measurement (event `ts` → charge `ts`) and report it at 20 and 50 events/s (BR-04).
-- Implement the charging engine with Kafka Streams as a second variant and compare.
+Stop all your TelcoPulse instances. Delete scratch topics. Leave `lNN.billing` in a clean, stopped state.
 
 ---
 
-## Phase A4 — Operations & high availability
+## Phase 4 — Operations and high availability
 
-| | |
-| --- | --- |
-| **Opens after** | Module 5 |
-| **Modules applied** | 5 (adding/removing brokers, partition reassignment, ISR, leader election, broker failure, rolling restart, capacity planning) |
-| **Environment** | Shared Apache cluster (reassignment plans for your topics) + local cluster (failures, adding a broker) |
-| **Effort** | 2–3 hours |
+**Opens after Module 5 · about 2.5 h · serves BR-1, BR-5, SLO-1, SLO-4, SLO-5**
 
 ### Goal
 
-Show that the platform keeps charging correctly through the operations an
-administrator performs every month — and plan for Hajj.
+Plan capacity for the peak, then prove the cluster stays up and loses nothing
+when you move partitions, lose a broker, or restart every node. This is where
+a platform team earns trust: with numbers and tested runbooks, not
+reassurance.
 
-### Requirements
+### Environment
 
-**A4.1 — Hajj capacity plan.** Extend `docs/capacity-plan.md` for the peak
-in [§4.3](README.md#43-production-volumes-for-sizing-and-capacity-planning-only):
-broker count, partitions per topic, network in/out per broker, disk per
-broker with headroom, and the number of charging instances. State every
-assumption (per-partition throughput, per-broker limits, replication traffic).
-Explain why partition counts must be decided **before** the season, not during.
+- **Shared Apache cluster:** read-only at cluster level. You inspect, **generate** and **verify** reassignment plans. The **trainer executes** them, because executing needs cluster `Alter`.
+- **Staging cluster:** full control. You execute every operation and break brokers on purpose.
+- The trainer also stops a real broker on the shared cluster once, as a class demo. You watch it from your own TelcoPulse run.
 
-**A4.2 — Reassignment plan (shared cluster).** For your `usage` and
-`charges` topics, generate a reassignment plan that moves replicas off one
-broker, review it, and verify it after the trainer executes it. Include a
-throttle value and justify it.
+### Tasks
 
-**A4.3 — Broker failure under load (local cluster).** With the simulator and
-3 charging instances running in exactly-once mode against your local cluster:
+| ID | Task | Serves |
+| -- | ---- | ------ |
+| **T4.1** | **Capacity plan.** From the production and telemetry inputs ([overview §4.4](README.md#44-workload-profiles)), compute for the peak: ingress and egress MB/s per topic class, disk per broker over the retention windows including replication, partitions per broker, and the number of brokers needed so that **losing one broker still leaves 70 % disk and the SLOs intact (N+1)**. Show formulas and every assumption. Compare with the 4-broker shared cluster: where would it run out first, and when? | BR-5 |
+| **T4.2** | **Where do my replicas live?** Map the replicas and leaders of all your topics to the brokers and racks (availability zones) of the shared cluster. Does any partition lose all replicas if one zone fails? Does rack awareness work as intended? | BR-1 |
+| **T4.3** | **Reassignment plan, reviewed.** Generate a plan that **drains broker 11** of your replicas. Review it against the cluster's racks, and reject or fix it if it concentrates replicas in one rack or leaves RF unchanged but placement worse. Produce three files: the plan, the **rollback plan** (current state), and a **verify** command. Hand all three to the trainer and watch the execution. Record how long it ran, what throttle was in force, and the clean-up the move leaves behind | BR-5 |
+| **T4.4** | **Throttled reassignment on staging, under load.** While a producer runs at `acks=all`, raise the RF of one topic and spread its leaders, with a replication throttle. Show the throttle configs appear and, after `--verify`, disappear. Show a move that stalls because the throttle is below the write rate, and fix it | BR-5, SLO-1 |
+| **T4.5** | **Failure drills on staging**, under live `acks=all` traffic with an idempotent producer: (a) graceful stop of a broker, (b) `kill -9` of a broker, (c) loss of the **active controller**. For each: time to leader re-election, number of failed sends, under-replicated duration, recovery after restart, and anything unexpected. Check the result against SLO-1 and SLO-5 | BR-1, SLO-5 |
+| **T4.6** | **Rolling-restart runbook and script.** Restart all three staging brokers one at a time with **no failed sends**. The script has a **health gate** between nodes (it does not continue until under-replicated partitions are zero), a stop timeout long enough for a clean shutdown, and a preferred-leader election at the end. The runbook states what to do when the gate does not clear | SLO-4, BR-9 |
+| **T4.7** | **Upgrade and change policy** (one page). What do you check before upgrading brokers (feature levels, client compatibility, KRaft controller version)? In what order do you upgrade? When do you refuse a change request? What is the rollback? | BR-9 |
 
-- Stop the broker that leads the most `usage` partitions. Record leader
-  election, ISR shrink, any client errors and how long they lasted.
-- Bring it back; record ISR expansion and whether leadership returns.
-- Reconcile.
+### Acceptance
 
-**A4.4 — Rolling restart runbook.** A step-by-step procedure in
-`docs/runbook.md` to restart all brokers one at a time (e.g. for a config
-change or upgrade) with **no** charging interruption beyond client retries.
-Include the pre-checks and "do not continue if…" conditions. Execute it on your
-local cluster with load running.
+| ID | Check |
+| -- | ----- |
+| **A4.1** | The capacity plan states the broker count and shows that with **one broker lost** disk stays at or below 70 % and per-broker throughput stays inside a stated limit |
+| **A4.2** | `docs/p4-replica-map.md` shows leaders and replicas per rack and names any partition at risk from a zone loss |
+| **A4.3** | `kafka-reassign-partitions.sh --verify --preserve-throttles` on the shared cluster shows the trainer's execution **completed**, and after the move none of your partitions has a replica on broker 11 |
+| **A4.4** | The staging reassignment evidence shows throttle configs present during the move and **absent** after `--verify`; a stalled move is shown and corrected |
+| **A4.5** | The three failure drills have a measurement table. SLO-5 is met or the miss is explained. The controller-loss drill shows a new leader in the quorum |
+| **A4.6** | The rolling-restart script, run from a clean shell, completes with **zero failed sends** (producer log or perf-test summary attached) and with a health gate that visibly waited at least once |
+| **A4.7** | Your notes from the trainer's shared-cluster failure demo show what your TelcoPulse dashboard displayed and how long the cluster took to recover |
 
-**A4.5 — Add a broker.** Add a 4th node to your local cluster and rebalance
-your topics onto it. Document the steps and the before/after replica
-distribution.
+### Evidence
 
-### Acceptance criteria
+`evidence/phase-4/`: capacity worksheet, replica map, the three reassignment files and their verify output, the drill measurements, `rolling-restart.sh` with its run log, the upgrade note.
 
-- [ ] Capacity plan with numbers, formulas and assumptions.
-- [ ] Reassignment JSON (proposed and final) and `--verify` output.
-- [ ] Broker-failure timeline: what you did, what the cluster did, what the clients logged, with timestamps.
-- [ ] Reconciliation is **clean** after A4.3, A4.4 and A4.5.
-- [ ] Runbook reviewed by another learner (name them and note one improvement they suggested).
+### Toolbox
 
-### Questions to answer
+[Module 5 labs](../labs/module-05/README.md) (reassignment, throttles, failure and rolling restart), the Module 5 guide (§5 reassignment, §6 rolling restarts, §7 capacity planning), [`infra/cluster/PLAN.md`](../infra/cluster/PLAN.md) for the shared cluster's racks and sizes.
 
-1. During the broker failure, did any producer request fail permanently? Which producer settings decided that?
-2. What is an under-replicated partition, and which metric/command shows it? When should it page someone?
-3. Why can't you simply add partitions to `usage` for Hajj on the day? (Hint: A1.3.)
-4. Clean vs unclean leader election: which setting, what risk, which topics (if any) could ever allow it?
+### Clean-up
 
-### Stretch
-
-- Simulate a whole-rack (AZ) loss with `broker.rack` on your local cluster and show replica placement protected you.
+Remove throttles, delete scratch topics, bring the staging cluster back to three healthy brokers. **Keep** your plan, rollback and verify files until the trainer confirms all learners' moves are done.
 
 ---
 
-## End of Part A checkpoint
+## End of Part A: the gate to Part B
 
-Before Module 6, your `README.md` should show all A1–A4 criteria ticked with
-evidence, and the trainer will run your reconciliation tool against your
-shared-cluster topics. Part B moves this exact platform to Confluent Kafka —
-the less you hard-coded, the easier it will be.
+Before Phase 5 you should hold, in `~/capstone`:
+
+- a reviewed topic catalog (v2) applied to the shared Apache cluster by script (P2),
+- a health check that works on three targets (P1),
+- tested durability contracts, a client standard and an offset runbook (P2, P3),
+- a capacity plan, a verified reassignment, and a rolling-restart runbook that has been run (P4).
+
+Part B reuses all of it: the health check and the topic script grow a Confluent
+target, the durability and client standards become the migration's acceptance
+criteria, and the runbooks are what you follow during the game day.
+
+Next: [Part B — Confluent Kafka](part-b-confluent-kafka.md).
