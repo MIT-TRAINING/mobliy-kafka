@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Managed Connectors</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 10 · Ecosystem, Migration &amp; DR</a>
+    <div class="nav"><span>1 / 5</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 1</div>
+  <h1>Confluent managed connectors: source and sink</h1>
+  <p class="lede">A <b>source</b> connector brings data into Kafka from another system. A <b>sink</b> connector takes it
+    out to another system. Both run as <b>tasks</b> on Connect workers. On Cloud, Confluent runs the workers and bills you
+    per task-hour. On Platform, you or your platform team run them. Create the Datagen source (it stands in for the
+    mediation feed) and an archive sink. Then raise the sink's <code>tasks.max</code> until it keeps up, inject a fault
+    and fix it, and watch what the bill does.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Deployment</span>
+      <div class="seg" role="group" aria-label="Deployment" id="depSeg"><button data-v="cloud" aria-pressed="true">Confluent Cloud (fully managed)</button><button data-v="cp" aria-pressed="false">Platform (self-managed Connect)</button></div>
+    </div>
+    <div class="controls">
+      <span class="ctl-label">Act on</span>
+      <div class="seg" role="group" aria-label="Connector to act on" id="tgtSeg"><button data-v="src" aria-pressed="true">source: Datagen</button><button data-v="sink" aria-pressed="false">sink: S3 archive</button></div>
+      <button class="primary" id="bCreate">Create</button>
+      <button id="bPause">Pause</button>
+      <button id="bResume">Resume</button>
+      <button id="bRestart">Restart failed task</button>
+      <button class="danger" id="bDelete">Delete</button>
+    </div>
+    <div class="sliders">
+      <label><span>Sink <code>tasks.max</code> <output id="oTasks">1</output></span><input type="range" id="tasks" min="1" max="6" value="1" aria-label="Sink tasks.max"></label>
+      <label><span>Inject a fault</span>
+        <select id="fault" aria-label="Fault to inject"><option value="none">none</option><option value="topic">source writes to a topic that doesn't exist</option><option value="creds">archive credentials revoked (sink)</option></select></label>
+      <label><span>Fix the cause</span><button id="bFix">Fix it</button></label>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 340" role="img" aria-label="Source connector, topic partitions and sink connector with task states"></svg></div>
+    <div class="stats">
+      <div class="stat"><b id="sClock">00:00</b><span>simulated time</span></div>
+      <div class="stat"><b id="sIn">0</b><span>CDRs into Kafka</span></div>
+      <div class="stat"><b id="sOut">0</b><span>CDRs archived</span></div>
+      <div class="stat"><b id="sLag">0</b><span>sink consumer lag</span></div>
+      <div class="stat"><b id="sBill">0.0</b><span id="sBillL">task-hours billed</span></div>
+    </div>
+    <div class="grid grid-2">
+      <div><pre class="code" id="cfg" aria-label="Connector configuration"></pre></div>
+      <div class="term" id="term" aria-live="polite"><div class="term-empty">Commands for each action appear here.</div></div>
+    </div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Fully managed or self-managed</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Concern</th><th>Confluent Cloud managed connector</th><th>Self-managed Connect on Platform</th></tr></thead>
+      <tbody>
+        <tr><td>Plugin</td><td>Pick it from Confluent's catalog (<code>confluent connect plugin list</code>). Nothing to install</td><td>A JAR installed on <b>every</b> worker. No plugin, no connector</td></tr>
+        <tr><td>Workers</td><td>Confluent runs, patches and scales them</td><td>You run them (lab: one worker on <code>cp-services.lab.internal:8083</code>)</td></tr>
+        <tr><td>How you manage it</td><td><code>confluent connect cluster create | list | describe | pause | resume | delete</code>, or the Cloud Console</td><td>Connect REST API: <code>POST /connectors</code>, <code>GET /connectors/&lt;name&gt;/status</code>, <code>PUT …/pause</code>, <code>POST …/tasks/0/restart</code></td></tr>
+        <tr><td>Configuration</td><td>Catalog names (<code>DatagenSource</code>, <code>S3_SINK</code>) and one <code>output.data.format</code> choice</td><td>Full class names and explicit converters (<code>value.converter</code>)</td></tr>
+        <tr><td>Credentials</td><td>A Kafka API key and secret go into the connector config and Confluent stores them</td><td>The worker's own Kafka principal; keep external passwords out of the plain config (config providers)</td></tr>
+        <tr><td>Access control</td><td>EnvironmentAdmin in your own <code>env-lNN</code></td><td>RBAC: <code>ResourceOwner</code> on connectors starting with <code>lNN.</code></td></tr>
+        <tr><td>Networking</td><td>Cloud's workers must reach your database or bucket over the internet or private networking</td><td>Workers sit inside your network, next to your systems</td></tr>
+        <tr><td>Cost</td><td>Per <b>task-hour</b> while the connector exists, plus data throughput</td><td>Your servers. Shared workers mean a forgotten connector takes capacity from everyone</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid grid-2">
+    <div class="card">
+      <h3 style="margin-top:0">Source connectors in a telecom shop</h3>
+      <p style="color:var(--muted);margin:0">Mediation CDR files, the subscriber database (JDBC, or change data capture with
+        Debezium), network probes over MQTT, legacy queues (IBM MQ source). The connector owns the read position in that
+        system and writes records to a topic you created first.</p>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Sink connectors</h3>
+      <p style="color:var(--muted);margin:0">Archive CDRs to S3, push them to Elasticsearch for the NOC, write rated calls
+        to the billing database. A sink is a consumer group named <code>connect-&lt;connector name&gt;</code>, so you watch
+        its <b>consumer lag</b> exactly as you did in Module 9.</p>
+    </div>
+  </div>
+
+  <div class="callout"><b>Admin gotcha:</b> a connector can be <code>RUNNING</code> while its task is <code>FAILED</code>.
+    The connector state only says the configuration was accepted. Read the task state and its <code>trace</code>, fix the
+    cause, then restart the task. A failed task doesn't retry forever on its own, so alert on task state.</div>
+  <div class="callout warn"><b>Production trap:</b> <code>tasks.max</code> above the topic's partition count only adds
+    idle sink tasks, and on Cloud each one is billed. Size it to the partitions. A sink can never use more tasks than the
+    topic has partitions.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="index.html"><small>← Back</small>Module overview</a>
+    <a class="next" href="02-schema-registry-compatibility.html"><small>Next →</small>Schema Registry: evolution &amp; compatibility</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), logEl = document.getElementById('log'), term = document.getElementById('term');
+const PARTS = 3, RATE = 30, PER_TASK = 12;
+const NAMES = { src: 'lNN.datagen-cdr', sink: 'lNN.archive-sink' };
+const S = { dep: 'cloud', tgt: 'src', tasks: 1, fault: 'none', fixed: true, src: null, sink: null, t: 0, bill: 0,
+  end: [0, 0, 0], done: [0, 0, 0], archived: 0 };
+const say = (h, hl) => logLine(logEl, h, hl);
+
+function cmd(action, which) {
+  const n = NAMES[which];
+  if (S.dep === 'cloud') {
+    const id = which === 'src' ? 'lcc-1a2b3' : 'lcc-4c5d6';
+    return {
+      create: [`confluent connect cluster create --config-file ~/kafka/${which === 'src' ? 'datagen' : 's3-sink'}-cloud.json`, [`Created connector ${n} ${id}`]],
+      pause: [`confluent connect cluster pause ${id}`, []],
+      resume: [`confluent connect cluster resume ${id}`, []],
+      restart: [`confluent connect cluster update ${id} --config-file ~/kafka/${which === 'src' ? 'datagen' : 's3-sink'}-cloud.json`, ['# or Restart in the Cloud Console, once the cause is fixed']],
+      delete: [`confluent connect cluster delete ${id} --force`, []],
+      status: [`confluent connect cluster describe ${id}`, []] }[action];
+  }
+  return {
+    create: [which === 'src' ? `./datagen-config.sh platform | cn /connectors -X POST -H 'Content-Type: application/json' -d @-`
+      : `cn /connectors -X POST -H 'Content-Type: application/json' -d @s3-sink.json`, [`{ "name": "${n}", … "type": "${which === 'src' ? 'source' : 'sink'}" }`]],
+    pause: [`cn /connectors/${n}/pause -X PUT`, ['(202, empty body; the state changes a moment later)']],
+    resume: [`cn /connectors/${n}/resume -X PUT`, ['(202, empty body)']],
+    restart: [`cn /connectors/${n}/tasks/0/restart -X POST`, []],
+    delete: [`cn /connectors/${n} -X DELETE`, []],
+    status: [`cn /connectors/${n}/status | jq`, []] }[action];
+}
+function run(action, which, extra, err) { const [c, o] = cmd(action, which); termRun(term, c, (o || []).concat(extra || []), err); }
+
+function taskCount(which) { return which === 'src' ? 1 : S.tasks; }
+function mk(which) { return { state: S.dep === 'cloud' ? 'PROVISIONING' : 'RUNNING', boot: S.dep === 'cloud' ? 2 : 0, task: 'RUNNING' }; }
+function faultHits(which) { return !S.fixed && ((S.fault === 'topic' && which === 'src') || (S.fault === 'creds' && which === 'sink')); }
+const TRACE = {
+  topic: 'org.apache.kafka.connect.errors.ConnectException: … TimeoutException: Topic lNN.cdr.missing not present in metadata after 60000 ms.',
+  creds: 'org.apache.kafka.connect.errors.ConnectException: … AmazonS3Exception: Access Denied (Service: Amazon S3; Status Code: 403; Error Code: AccessDenied …)' };
+
+function act(action) {
+  const w = S.tgt, c = S[w];
+  if (action === 'create') {
+    if (c) return say(`${NAMES[w]} already exists. Delete it first, or update its config.`);
+    S[w] = mk(w); run('create', w);
+    say(S.dep === 'cloud' ? `Created <b>${NAMES[w]}</b>. Status <code>PROVISIONING</code>: Confluent is starting workers for you (a minute or two).`
+      : `Created <b>${NAMES[w]}</b> on the shared Connect worker <code>cp-services.lab.internal:8083</code>.`, true);
+  } else if (!c) return say(`There is no ${NAMES[w]} yet. Press <b>Create</b> first.`);
+  else if (action === 'pause') {
+    c.state = 'PAUSED'; run('pause', w);
+    say(`<b>${NAMES[w]}</b> paused: the configuration stays, the tasks stop. ${w === 'sink' ? 'Records wait in the topic and lag grows. Nothing is lost.' : 'No new CDRs are generated.'}${S.dep === 'cloud' ? ' The bill follows the connector, not the data: delete it when you are done.' : ''}`);
+  } else if (action === 'resume') {
+    if (c.state !== 'PAUSED') return say(`${NAMES[w]} is not paused.`);
+    c.state = 'RUNNING'; run('resume', w); say(`<b>${NAMES[w]}</b> resumed from where it stopped.`);
+  } else if (action === 'restart') {
+    if (c.task !== 'FAILED') return say(`${NAMES[w]}'s task is ${c.task}. Restart is for a task that is <code>FAILED</code>.`);
+    run('restart', w);
+    if (faultHits(w)) { say(`Restarted, and it failed again: the cause is still there. Fix it first.`, true); return render(); }
+    c.task = 'RUNNING'; say(`Task restarted and <code>RUNNING</code>. ${w === 'sink' ? 'The sink drains its backlog from the committed offsets.' : ''}`, true);
+  } else if (action === 'delete') {
+    run('delete', w); S[w] = null; say(`<b>${NAMES[w]}</b> deleted.${S.dep === 'cloud' ? ' Task-hour billing for it stops.' : ' Its worker capacity is free again.'}${w === 'sink' ? ' Its committed offsets stay in group <code>connect-' + NAMES.sink + '</code>.' : ''}`);
+  }
+  render();
+}
+
+function tick() {
+  S.t++;
+  ['src', 'sink'].forEach(w => {
+    const c = S[w]; if (!c) return;
+    if (S.dep === 'cloud') S.bill += 0.1 * taskCount(w);
+    if (c.state === 'PROVISIONING' && --c.boot <= 0) { c.state = 'RUNNING'; say(`${NAMES[w]}: <code>PROVISIONING</code> → <code>RUNNING</code>`); }
+    if (c.state === 'RUNNING' && c.task === 'RUNNING' && faultHits(w)) {
+      c.task = 'FAILED'; run('status', w, [`"connector": { "state": "RUNNING" }`, `"tasks": [ { "id": 0, "state": "FAILED", "trace": "${TRACE[S.fault]}" } ]`], true);
+      say(`<b>${NAMES[w]}</b>: connector <code>RUNNING</code>, task <code>FAILED</code>. The trace says why.`, true);
+    }
+  });
+  const flowing = c => c && c.state === 'RUNNING' && c.task === 'RUNNING';
+  if (flowing(S.src)) { for (let p = 0; p < PARTS; p++) S.end[p] += RATE / PARTS; fly(70, 170, 470, 170, 'var(--p0)'); }
+  if (flowing(S.sink)) {
+    const active = Math.min(S.tasks, PARTS);
+    for (let k = 0; k < active; k++) {
+      const mine = [...Array(PARTS).keys()].filter(p => p % active === k);
+      mine.forEach(p => { const take = Math.min(PER_TASK / mine.length, S.end[p] - S.done[p]); S.done[p] += take; S.archived += take; });
+    }
+    if (S.archived > 0) fly(500, 170, 830, 170, 'var(--ok)');
+  }
+  render();
+}
+
+function fly(x1, y1, x2, y2, color) {
+  const dot = el('circle', { r: 6, fill: color }, svg);
+  tween(dot, x1, y1, x2, y2, 550).then(() => dot.remove());
+}
+
+function connBox(x, w, label, c, n) {
+  const g = el('g', {}, svg);
+  el('rect', { x, y: 70, width: 170, height: 200, rx: 12, fill: 'var(--surface)', stroke: c ? (c.task === 'FAILED' ? 'var(--bad)' : 'var(--accent)') : 'var(--border)', 'stroke-dasharray': c ? '' : '6 5', 'stroke-width': 1.6 }, g);
+  el('text', { x: x + 85, y: 92, 'text-anchor': 'middle', 'font-size': 13, 'font-weight': 700, text: label }, g);
+  el('text', { x: x + 85, y: 110, 'text-anchor': 'middle', 'font-size': 11, fill: 'var(--muted)', text: NAMES[w] }, g);
+  if (!c) { el('text', { x: x + 85, y: 175, 'text-anchor': 'middle', 'font-size': 12, fill: 'var(--muted)', text: 'not created' }, g); return; }
+  const col = { RUNNING: 'var(--ok)', PROVISIONING: 'var(--warn)', PAUSED: 'var(--muted)' }[c.state];
+  el('rect', { x: x + 25, y: 120, width: 120, height: 24, rx: 12, fill: col }, g);
+  el('text', { x: x + 85, y: 136, 'text-anchor': 'middle', 'font-size': 11.5, 'font-weight': 700, fill: '#fff', text: 'connector ' + c.state }, g);
+  for (let k = 0; k < n; k++) {
+    const tx = x + 14 + (k % 3) * 50, ty = 156 + Math.floor(k / 3) * 54;
+    const idle = w === 'sink' && k >= PARTS;
+    const tc = c.state !== 'RUNNING' ? 'var(--surface-2)' : c.task === 'FAILED' ? 'var(--bad)' : idle ? 'var(--surface-2)' : 'var(--ok-soft)';
+    el('rect', { x: tx, y: ty, width: 44, height: 46, rx: 7, fill: tc, stroke: idle ? 'var(--border)' : 'var(--ok)', 'stroke-dasharray': idle ? '4 3' : '' }, g);
+    el('text', { x: tx + 22, y: ty + 19, 'text-anchor': 'middle', 'font-size': 11, 'font-weight': 600, fill: c.task === 'FAILED' && c.state === 'RUNNING' ? '#fff' : 'var(--text)', text: 'task ' + k }, g);
+    el('text', { x: tx + 22, y: ty + 35, 'text-anchor': 'middle', 'font-size': 10, fill: c.task === 'FAILED' && c.state === 'RUNNING' ? '#fff' : 'var(--muted)', text: c.state !== 'RUNNING' ? '—' : c.task === 'FAILED' ? 'FAILED' : idle ? 'idle' : w === 'src' ? 'writes' : 'p' + [...Array(PARTS).keys()].filter(p => p % Math.min(n, PARTS) === k).join(',p') }, g);
+  }
+}
+
+function render() {
+  svg.innerHTML = '';
+  el('text', { x: 20, y: 26, 'font-size': 13, 'font-weight': 600, text: S.dep === 'cloud'
+    ? 'Confluent Cloud · env-lNN · workers run by Confluent, billed per task-hour'
+    : 'Confluent Platform · Connect cluster cp-services.lab.internal:8083 · workers run by the platform team' }, svg);
+  el('rect', { x: 10, y: 130, width: 96, height: 80, rx: 10, fill: 'var(--surface-2)', stroke: 'var(--border)' }, svg);
+  el('text', { x: 58, y: 165, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 600, text: 'mediation' }, svg);
+  el('text', { x: 58, y: 181, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 600, text: 'feed' }, svg);
+  connBox(120, 'src', 'Source: Datagen', S.src, 1);
+  // topic
+  el('rect', { x: 335, y: 70, width: 230, height: 200, rx: 12, fill: 'var(--surface)', stroke: 'var(--warn)', 'stroke-width': 1.6 }, svg);
+  el('text', { x: 450, y: 92, 'text-anchor': 'middle', 'font-size': 13, 'font-weight': 700, text: 'topic lNN.cdr.datagen' }, svg);
+  const maxEnd = Math.max(60, ...S.end);
+  for (let p = 0; p < PARTS; p++) {
+    const y = 112 + p * 50, lag = Math.round(S.end[p] - S.done[p]);
+    el('text', { x: 348, y: y + 20, 'font-size': 12, 'font-weight': 600, fill: PCOLORS[p], text: 'p' + p }, svg);
+    el('rect', { x: 372, y: y + 4, width: 180, height: 24, rx: 5, fill: 'var(--surface-2)' }, svg);
+    el('rect', { x: 372, y: y + 4, width: 180 * S.done[p] / maxEnd, height: 24, rx: 5, fill: 'var(--ok-soft)' }, svg);
+    el('rect', { x: 372 + 180 * S.done[p] / maxEnd, y: y + 4, width: 180 * (S.end[p] - S.done[p]) / maxEnd, height: 24, fill: lag > 40 ? 'var(--bad-soft)' : 'var(--warn-soft)' }, svg);
+    el('text', { x: 548, y: y + 21, 'text-anchor': 'end', 'font-size': 11, fill: 'var(--muted)', text: `lag ${lag}` }, svg);
+  }
+  el('text', { x: 450, y: 262, 'text-anchor': 'middle', 'font-size': 10.5, fill: 'var(--muted)', text: 'green = archived · amber/red = waiting' }, svg);
+  connBox(590, 'sink', 'Sink: S3 archive', S.sink, S.tasks);
+  el('rect', { x: 790, y: 130, width: 100, height: 80, rx: 10, fill: 'var(--surface-2)', stroke: 'var(--border)' }, svg);
+  el('text', { x: 840, y: 165, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 600, text: 'billing' }, svg);
+  el('text', { x: 840, y: 181, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 600, text: 'archive (S3)' }, svg);
+  el('text', { x: 680, y: 296, 'text-anchor': 'middle', 'font-size': 11, fill: 'var(--muted)', text: `consumer group connect-${NAMES.sink}` }, svg);
+  el('text', { x: 20, y: 326, 'font-size': 11.5, fill: 'var(--muted)', text: `Source writes ${RATE} CDRs per tick across ${PARTS} partitions · each active sink task archives up to ${PER_TASK} per tick` }, svg);
+
+  const h = Math.floor(S.t * 6 / 60), m = (S.t * 6) % 60;
+  document.getElementById('sClock').textContent = String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+  document.getElementById('sIn').textContent = Math.round(S.end.reduce((a, b) => a + b, 0));
+  document.getElementById('sOut').textContent = Math.round(S.archived);
+  document.getElementById('sLag').textContent = Math.round(S.end.reduce((a, b, i) => a + b - S.done[i], 0));
+  document.getElementById('sBill').textContent = S.dep === 'cloud' ? S.bill.toFixed(1) : (S.src ? 1 : 0) + (S.sink ? S.tasks : 0);
+  document.getElementById('sBillL').textContent = S.dep === 'cloud' ? 'task-hours billed' : 'tasks on the shared worker';
+  renderCfg();
+}
+
+function renderCfg() {
+  const n = NAMES[S.tgt], cloud = S.dep === 'cloud';
+  const src = cloud ? `{
+  "name": "${n}",
+  "connector.class": "DatagenSource",
+  "kafka.auth.mode": "KAFKA_API_KEY",
+  "kafka.api.key": "&lt;key&gt;",
+  "kafka.api.secret": "&lt;secret&gt;",
+  "kafka.topic": "${S.fault === 'topic' && !S.fixed ? 'lNN.cdr.missing' : 'lNN.cdr.datagen'}",
+  "output.data.format": "JSON",
+  "tasks.max": "1"
+}` : `{ "name": "${n}", "config": {
+  "connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+  "kafka.topic": "${S.fault === 'topic' && !S.fixed ? 'lNN.cdr.missing' : 'lNN.cdr.datagen'}",
+  "tasks.max": "1",
+  "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+  "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "value.converter.schemas.enable": "false" } }`;
+  const sink = cloud ? `{
+  "name": "${n}",
+  "connector.class": "S3_SINK",
+  "kafka.auth.mode": "KAFKA_API_KEY",
+  "topics": "lNN.cdr.datagen",
+  "input.data.format": "JSON",
+  "output.data.format": "JSON",
+  "s3.bucket.name": "&lt;archive bucket&gt;",
+  "time.interval": "HOURLY",
+  "flush.size": "1000",
+  "tasks.max": "<span class="chg">${S.tasks}</span>"
+}` : `{ "name": "${n}", "config": {
+  "connector.class": "io.confluent.connect.s3.S3SinkConnector",
+  "topics": "lNN.cdr.datagen",
+  "s3.bucket.name": "&lt;archive bucket&gt;",
+  "storage.class": "io.confluent.connect.s3.storage.S3Storage",
+  "format.class": "io.confluent.connect.s3.format.json.JsonFormat",
+  "flush.size": "1000",
+  "tasks.max": "<span class="chg">${S.tasks}</span>" } }`;
+  document.getElementById('cfg').innerHTML = `<span class="cm">// ${S.tgt === 'src' ? 'source' : 'sink'} · ${cloud ? 'Cloud: catalog name' : 'Platform: class + converters'}</span>\n` + (S.tgt === 'src' ? src : sink);
+}
+
+wireSeg('depSeg', v => {
+  if (v === S.dep) return;
+  S.dep = v; S.src = S.sink = null; S.end = [0, 0, 0]; S.done = [0, 0, 0]; S.archived = 0; S.bill = 0; S.t = 0;
+  say(v === 'cloud' ? 'Switched to <b>Confluent Cloud</b>: managed connectors from the catalog, billed per task-hour.'
+    : 'Switched to <b>Platform</b>: one shared Connect worker; you manage connectors over its REST API. (The lab worker has Datagen; an S3 sink plugin would have to be installed on every worker first.)', true);
+  render();
+});
+wireSeg('tgtSeg', v => { S.tgt = v; renderCfg(); });
+['Create', 'Pause', 'Resume', 'Restart', 'Delete'].forEach(a => document.getElementById('b' + a).onclick = () => act(a.toLowerCase()));
+document.getElementById('tasks').oninput = e => {
+  S.tasks = +e.target.value; document.getElementById('oTasks').textContent = S.tasks;
+  say(S.tasks > PARTS ? `<code>tasks.max=${S.tasks}</code> on a ${PARTS}-partition topic: ${S.tasks - PARTS} task(s) get no partition and sit idle${S.dep === 'cloud' ? ', but every task is billed' : ''}.`
+    : `<code>tasks.max=${S.tasks}</code>: ${S.tasks} sink task(s) share ${PARTS} partitions.`, S.tasks > PARTS);
+  render();
+};
+document.getElementById('fault').onchange = e => {
+  S.fault = e.target.value; S.fixed = S.fault === 'none';
+  say(S.fault === 'none' ? 'No fault.' : S.fault === 'topic' ? 'Fault: the source now writes to <code>lNN.cdr.missing</code>, which doesn\'t exist. Brokers don\'t create topics on demand.'
+    : 'Fault: the archive bucket\'s access key was revoked. The sink can read Kafka but cannot write to S3.', S.fault !== 'none');
+  render();
+};
+document.getElementById('bFix').onclick = () => {
+  if (S.fault === 'none' || S.fixed) return say('Nothing to fix.');
+  S.fixed = true;
+  if (S.fault === 'topic') termRun(term, S.dep === 'cloud' ? 'confluent kafka topic create lNN.cdr.missing --partitions 1' : 'kafka-topics.sh --bootstrap-server $CP --command-config $CFG --create --topic lNN.cdr.missing --partitions 1 --replication-factor 3', ['Created topic lNN.cdr.missing.']);
+  else termRun(term, '# store the rotated access key where the connector reads it, then update the connector', []);
+  say('Cause fixed. A <code>FAILED</code> task stays failed until you <b>restart</b> it.', true);
+};
+
+render();
+setInterval(tick, 900);
+
+renderQuiz('quiz', [
+  { q: 'Your Datagen connector shows <code>RUNNING</code>, but the topic stays empty. What do you check first?',
+    options: ['The broker logs on every broker', 'Whether the topic has enough partitions', 'The <b>task</b> state and its <code>trace</code> in the status output', 'The consumer lag of the sink'],
+    answer: 2,
+    explain: 'The connector state only means its configuration was accepted. The tasks move the data. A <code>RUNNING</code> connector with a <code>FAILED</code> task is the usual cause, and the <code>trace</code> names the reason (here: a topic that does not exist).' },
+  { q: 'A sink connector reads a 3-partition topic with <code>tasks.max=6</code>. What happens?',
+    options: ['Three tasks get a partition each; the other three sit idle (and on Cloud are still billed)', 'Each partition is read by two tasks, so throughput doubles', 'Kafka adds three partitions to match', 'The connector fails to start'],
+    answer: 0,
+    explain: 'A sink task is a member of the consumer group <code>connect-&lt;name&gt;</code>. Within a group, one partition goes to one member, so a sink can never use more tasks than the topic has partitions.' },
+  { q: 'You need a JDBC source connector on the lab\'s Platform Connect cluster. What must happen before <code>POST /connectors</code> can succeed?',
+    options: ['Nothing; Platform downloads plugins on demand', 'You enable it in the Cloud catalog', 'A Kafka ACL for the connector name', 'The plugin JAR is installed on every Connect worker (plus the database driver, network access and credentials)'],
+    answer: 3,
+    explain: 'On self-managed Connect the plugin is code on the worker. No plugin, no connector. On Cloud the catalog provides managed plugins and you install nothing. Either way you still need network access and an account on the source system.' },
+  { q: 'An MQ admin worries that pausing the archive sink for an hour will lose the CDRs written meanwhile. What actually happens?',
+    options: ['Kafka discards records that no consumer reads within the hour', 'The CDRs stay in the topic; on resume the sink continues from its committed offsets and lag drains', 'The source connector pauses too, so nothing is written', 'The CDRs are sent to a dead-letter queue'],
+    answer: 1,
+    explain: 'Kafka does not delete on read or on absence of readers: retention decides. A paused sink just stops consuming; its group <code>connect-&lt;name&gt;</code> keeps its offsets, so lag grows during the pause and drains afterwards.' },
+  { q: 'The Cloud lab is over. What do you do with your managed Datagen connector?',
+    options: ['Pause it so it is ready for next time', 'Set <code>tasks.max=0</code>', 'Delete it, because a managed connector is billed per task-hour while it exists', 'Delete the topic; the connector stops by itself'],
+    answer: 2,
+    explain: 'Pausing stops the data, not the connector. Cloud bills a managed connector per task-hour while it exists, so delete it (<code>confluent connect cluster delete … --force</code>). Deleting the topic would just turn the task into <code>FAILED</code>.' },
+]);
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+# Kafka UI (provectus/kafka-ui) on the trainer VM. Listens on localhost only; Caddy publishes it
+# at https://kafka-ui.kafka.supercloudlabs.com with basic auth. config.yml (one "cluster" per
+# Kafka user, with that user's SCRAM credentials) is rendered by scripts/deploy-kafka-ui.sh.
+services:
+  kafka-ui:
+    image: provectuslabs/kafka-ui:v0.7.2
+    container_name: shared-kafka-ui   # "kafka-ui" is taken by the Docker labs
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18080:8080"
+    environment:
+      SPRING_CONFIG_ADDITIONAL-LOCATION: /etc/kafkaui/config.yml
+      DYNAMIC_CONFIG_ENABLED: "false"   # no editing clusters/credentials from the browser
+      JAVA_OPTS: "-Xms256m -Xmx1536m"
+    volumes:
+      - ./config.yml:/etc/kafkaui/config.yml:ro

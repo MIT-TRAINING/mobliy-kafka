@@ -1,0 +1,24 @@
+#!/bin/bash
+# First-boot configuration for one Kafka node (controller or broker). Runs once via cloud-init.
+set -euxo pipefail
+exec > >(tee -a /var/log/kafka-first-boot.log) 2>&1
+
+hostnamectl set-hostname ${hostname}
+
+install -d -o kafka -g kafka -m 0750 /etc/kafka
+cat > /etc/kafka/server.properties <<'PROPS'
+${server_properties}
+PROPS
+chown kafka:kafka /etc/kafka/server.properties
+chmod 0640 /etc/kafka/server.properties
+
+install -d -o kafka -g kafka -m 0750 /var/log/kafka
+printf 'KAFKA_HEAP_OPTS="%s"\nLOG_DIR=/var/log/kafka\n' '${heap}' > /etc/kafka/kafka.env
+
+# Format once only: a restart must keep the data and meta.properties
+if [ ! -f /var/lib/kafka/data/meta.properties ]; then
+  sudo -u kafka /opt/kafka/bin/kafka-storage.sh format -t ${cluster_id} -c /etc/kafka/server.properties ${scram_args}
+fi
+
+systemctl enable --now node_exporter
+systemctl enable --now kafka

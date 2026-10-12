@@ -1,0 +1,30 @@
+# Kafka broker. Rendered per node (Terraform templatefile in AWS, scripts/render-config.py in the spike).
+process.roles=broker
+node.id=${node_id}
+broker.rack=${rack}
+controller.quorum.voters=${quorum_voters}
+controller.listener.names=CONTROLLER
+
+listeners=CLIENT://:9092,BROKER://:9094
+advertised.listeners=CLIENT://${hostname}:9092,BROKER://${hostname}:9094
+listener.security.protocol.map=CLIENT:SASL_PLAINTEXT,BROKER:SASL_PLAINTEXT,CONTROLLER:PLAINTEXT
+inter.broker.listener.name=BROKER
+sasl.enabled.mechanisms=SCRAM-SHA-512
+sasl.mechanism.inter.broker.protocol=SCRAM-SHA-512
+listener.name.broker.scram-sha-512.sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="broker" password="${broker_password}";
+listener.name.client.scram-sha-512.sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required;
+
+log.dirs=/var/lib/kafka/data
+default.replication.factor=3
+min.insync.replicas=2
+num.partitions=3
+auto.create.topics.enable=false
+unclean.leader.election.enable=false
+offsets.topic.replication.factor=3
+transaction.state.log.replication.factor=3
+transaction.state.log.min.isr=2
+group.initial.rebalance.delay.ms=3000
+
+authorizer.class.name=org.apache.kafka.metadata.authorizer.StandardAuthorizer
+allow.everyone.if.no.acl.found=false
+super.users=User:ANONYMOUS;User:admin;User:broker;User:trainer

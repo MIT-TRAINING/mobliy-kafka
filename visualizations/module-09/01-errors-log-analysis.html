@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Errors &amp; Log Analysis</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 9 · Troubleshooting &amp; Message Loss</a>
+    <div class="nav"><span>1 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 1</div>
+  <h1>Common Confluent Cloud and Platform errors, and how to read the logs</h1>
+  <p class="lede">Every Kafka request passes the same stages: your code, the connection, authentication, authorization,
+    metadata, the partition leader and the response. An exception tells you which stage refused it, and whether retrying can
+    ever help. Pick a <b>symptom</b>, then switch between the <b>client log</b>, the <b>broker log</b> and the
+    <b>metrics</b>. Then switch to <b>Confluent Cloud</b> and see which evidence you lose when Confluent runs the brokers.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Cluster</span>
+      <div class="seg" role="group" aria-label="Cluster" id="envSeg"><button data-v="P" aria-pressed="true">Platform lab</button><button data-v="C" aria-pressed="false">Confluent Cloud</button></div>
+      <span class="ctl-label">Evidence</span>
+      <div class="seg" role="group" aria-label="Evidence source" id="srcSeg"><button data-v="client" aria-pressed="true">Client log</button><button data-v="broker" aria-pressed="false">Broker log</button><button data-v="metrics" aria-pressed="false">Metrics</button></div>
+    </div>
+    <div class="scen" id="scen" role="group" aria-label="Symptom"></div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 250" role="img" aria-label="The stages of a Kafka request, with the failing stage highlighted"></svg></div>
+    <div class="term" id="term" aria-label="Log excerpt"></div>
+    <div class="verdict" id="verdict"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Read the exception before you read anything else</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Exception (client side)</th><th>Stage</th><th>Retriable?</th><th>Usual root cause</th></tr></thead>
+      <tbody>
+        <tr><td><code>SaslAuthenticationException</code></td><td>Authenticate</td><td>No</td><td>Wrong LDAP password or API secret, a key for another cluster, a Cloud key less than a couple of minutes old, or LDAP down</td></tr>
+        <tr><td><code>SSLHandshakeException</code></td><td>Connect</td><td>No</td><td>Missing CA (<code>PKIX path building failed</code>) or bootstrap by IP address (<code>No subject alternative names</code>), see Topic 3</td></tr>
+        <tr><td><code>TopicAuthorizationException</code>, <code>GroupAuthorizationException</code></td><td>Authorize</td><td>No</td><td>No role binding for that topic or group: wrong prefix, wrong principal</td></tr>
+        <tr><td><code>TimeoutException: Topic … not present in metadata</code></td><td>Metadata</td><td>No (the topic won't appear by itself)</td><td>Typo, or the topic was never created: the lab has <code>auto.create.topics.enable=false</code></td></tr>
+        <tr><td><code>NotEnoughReplicasException</code>, <code>NotLeaderOrFollowerException</code></td><td>Leader &amp; ISR</td><td>Yes, until <code>delivery.timeout.ms</code></td><td>Brokers down or followers out of sync; leader moving during a restart</td></tr>
+        <tr><td><code>RecordTooLargeException</code></td><td>Your code</td><td>No</td><td>Record above <code>max.request.size</code> (client) or <code>max.message.bytes</code> (topic)</td></tr>
+        <tr><td><code>RecordDeserializationException</code></td><td>Consumer app</td><td>No: the same bytes fail every time</td><td>A record written in another format or schema (a "poison" record)</td></tr>
+        <tr><td><code>CommitFailedException</code></td><td>Consumer app</td><td>No, rebalance first</td><td>Processing one poll took longer than <code>max.poll.interval.ms</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="grid grid-3" style="margin-top:16px">
+    <div class="card"><h3 style="margin-top:0">Client log</h3><p style="color:var(--muted);font-size:14px;margin:0">Always yours, on both Platform and Cloud. Find the <b>first</b> <code>ERROR</code> or <code>WARN</code> and its exception class. The 500 lines after it are usually consequences.</p></div>
+    <div class="card"><h3 style="margin-top:0">Broker log</h3><p style="color:var(--muted);font-size:14px;margin:0">Platform only. On the lab brokers it is <code>/var/log/kafka/server.log</code>, readable by the trainer over SSM. Look for <code>Shrinking ISR</code>, <code>Failed authentication</code> and <code>ERROR</code> lines in the same minute as the client error.</p></div>
+    <div class="card"><h3 style="margin-top:0">Metrics</h3><p style="color:var(--muted);font-size:14px;margin:0">They show the problems that log nothing, such as throttling and lag. Platform: JMX and Control Center. Cloud: the Metrics API (<code>client_limit_milliseconds</code>, <code>consumer_lag_offsets</code>) and the Console.</p></div>
+  </div>
+  <div class="callout"><b>Admin gotcha:</b> a producer that gets a retriable error keeps retrying silently until
+    <code>delivery.timeout.ms</code> (2 minutes by default). You see a <code>WARN … retrying</code> line, not an error, so
+    search client logs for <code>WARN</code> as well as <code>ERROR</code>.</div>
+  <div class="callout warn"><b>Production trap:</b> on Confluent Cloud there is no <code>server.log</code> to read. Before an incident,
+    make sure every application logs Kafka client <code>WARN</code>s with timestamps in UTC and records its client ID. Then the client log
+    and the Metrics API are enough for you and for Confluent Support (Topic 5).</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="index.html"><small>← Back</small>Module overview</a>
+    <a class="next" href="02-message-loss-root-causes.html"><small>Next →</small>Root causes of message loss</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), log = document.getElementById('log'), term = document.getElementById('term');
+const S = { env: 'P', src: 'client', sc: 'auth', sel: null };
+const STAGES = [
+  ['Your code', 'serialize, send()'], ['Connect', 'DNS · TCP · TLS'], ['Authenticate', 'SASL PLAIN'], ['Authorize', 'RBAC role bindings'],
+  ['Metadata', 'topic & leader lookup'], ['Leader & ISR', 'append, replicate'], ['Response', 'ack, quota delay'], ['Consumer app', 'deserialize, process']
+];
+const STAGE_INFO = [
+  'Runs in your JVM before anything is sent: serialization and size checks (<code>max.request.size</code>). Failures here never reach a broker log.',
+  'DNS lookup of the bootstrap name, a TCP connection to port 9092, then the TLS handshake against the cluster CA. Topic 3 walks through each step.',
+  'SASL PLAIN. On the Platform lab the broker checks your username and password against LDAP (<code>cp-ldap</code>). On Cloud it checks an API key and secret.',
+  'RBAC: does this principal have a role binding on this topic or group? Learners hold ResourceOwner on <code>Topic:l09.</code> and <code>Group:l09.</code> prefixes.',
+  'The client asks which partitions exist and which broker leads each one. A missing topic stops here.',
+  'The leader appends the batch and, with <code>acks=all</code>, waits for the in-sync replicas. It refuses the write if the ISR is smaller than <code>min.insync.replicas</code>.',
+  'The broker answers. If the client is over a quota or the Cloud cluster is at its limits, the broker delays the answer on purpose (throttling).',
+  'Your consumer code turns bytes back into a CDR, processes it and commits the offset. Errors here never reach a broker log.'
+];
+const host = e => e === 'P' ? 'cp-kafka.lab.internal/10.20.11.51:9092' : 'pkc-xxxxx.ap-south-1.aws.confluent.cloud/…:9092';
+const T = '[2026-10-12 09:41:07,118]';
+const NOBROKER = ['<span class="hl">No broker log on Confluent Cloud.</span>', 'Confluent runs the brokers, so you can\'t read server.log.', 'Use the client log and the Metrics API; Confluent Support reads the broker side (Topic 5).'];
+const SC = {
+  auth: { name: 'Producer can\'t log in', stage: 2, cls: 'bad', retry: 'no',
+    client: e => [`${T} ERROR [Producer clientId=billing-svc] Connection to node -1 (${host(e)}) failed authentication due to: Authentication failed during authentication due to invalid credentials with SASL mechanism PLAIN`, `!org.apache.kafka.common.errors.SaslAuthenticationException: Authentication failed during authentication due to invalid credentials with SASL mechanism PLAIN`],
+    broker: () => [`${T} INFO [SocketServer listenerType=BROKER, nodeId=1] Failed authentication with /10.20.11.105 (channelId=…) (Authentication failed during authentication due to invalid credentials with SASL mechanism PLAIN)`],
+    metrics: e => e === 'P' ? ['Broker JMX: kafka.server:type=socket-server-metrics,listener=CLIENT,… failed-authentication-total rising', 'Nothing in Control Center\'s topic or consumer pages: no request ever got that far.'] : ['No throughput for the client\'s topics in the Metrics API.', 'The Cloud audit log (if your organization reads it) records failed authentications.'],
+    cause: e => e === 'P' ? 'The LDAP password in <code>~/kafka/cp.properties</code> is wrong, or <code>cp-ldap</code> is down.' : 'Wrong API secret, a key for another cluster, or a key created less than about 2 minutes ago.',
+    fix: e => e === 'P' ? 'Re-enter the password, then test with <code>kafka-broker-api-versions.sh --bootstrap-server $CP --command-config $CFG</code>.' : 'Check the key\'s owner and resource with <code>confluent api-key list</code>, then wait a minute and retry.' },
+  authz: { name: 'Writes to the wrong topic name', stage: 3, cls: 'bad', retry: 'no',
+    client: () => [`${T} WARN [Producer clientId=billing-svc] Error while fetching metadata with correlation id 7 : {cdr.voice=TOPIC_AUTHORIZATION_FAILED}`, `!org.apache.kafka.common.errors.TopicAuthorizationException: Not authorized to access topics: [cdr.voice]`],
+    broker: () => [`${T} INFO Principal = User:l09 is Denied operation = Write from host = 10.20.11.105 on resource = Topic:LITERAL:cdr.voice … (authorizer log)`],
+    metrics: e => e === 'P' ? ['Control Center shows no topic named cdr.voice: the app forgot its l09. prefix.'] : ['Metrics API: no received_bytes for the topic the app thinks it writes.'],
+    cause: () => 'The app writes to <code>cdr.voice</code>, but the role bindings cover only the <code>l09.</code> prefix.',
+    fix: e => e === 'P' ? 'Fix the topic name (<code>l09.cdr.voice</code>). Compare with your role bindings: <code>confluent iam rbac role-binding list --principal User:l09 …</code>.' : 'Fix the topic name, or add the binding: <code>confluent iam rbac role-binding list --principal User:sa-… --inclusive</code>.' },
+  meta: { name: 'Topic never created', stage: 4, cls: 'bad', retry: 'no',
+    client: () => [`${T} WARN [Producer clientId=billing-svc] Error while fetching metadata with correlation id 4 : {l09.cdr.sms=UNKNOWN_TOPIC_OR_PARTITION}`, '… the same WARN repeats every 100 ms or so …', `!org.apache.kafka.common.errors.TimeoutException: Topic l09.cdr.sms not present in metadata after 60000 ms.`],
+    broker: () => ['(nothing: a metadata request for a topic that doesn\'t exist is not an error for the broker)'],
+    metrics: () => ['kafka-topics.sh --list shows no l09.cdr.sms.'],
+    cause: () => 'The topic doesn\'t exist and the cluster won\'t create it (<code>auto.create.topics.enable=false</code>, and Cloud never auto-creates either).',
+    fix: () => 'Create it with the agreed partitions and settings, then restart the producer. Don\'t turn on auto-create: you\'d get default settings and typo-named topics.' },
+  isr: { name: 'Writes rejected, two brokers down', stage: 5, cls: 'bad', retry: 'yes',
+    client: () => [`${T} WARN [Producer clientId=billing-svc] Got error produce response with correlation id 812 on topic-partition l09.cdr.voice-0, retrying (2147483646 attempts left). Error: NOT_ENOUGH_REPLICAS`, '… WARN repeats while it retries …', `!org.apache.kafka.common.errors.TimeoutException: Expiration of 12 record(s) for l09.cdr.voice-0:120000 ms has passed since batch creation`],
+    broker: () => [`[2026-10-12 09:39:51,402] INFO [Partition l09.cdr.voice-0 broker=1] Shrinking ISR from 1,2,3 to 1. …`, `!${T} ERROR [ReplicaManager broker=1] Error processing append operation on partition l09.cdr.voice-0`, `!org.apache.kafka.common.errors.NotEnoughReplicasException: The size of the current ISR Set(1) is insufficient to satisfy the min.isr requirement of 2 for partition l09.cdr.voice-0`],
+    metrics: e => e === 'P' ? ['UnderMinIsrPartitionCount > 0 and UnderReplicatedPartitions > 0 on cp-broker-1.', 'Control Center: brokers 2 and 3 offline.'] : ['You rarely see this on Cloud: Confluent replaces failed brokers. If you do, check the Confluent status page and open a ticket (Topic 5).'],
+    cause: () => 'Only one replica is in sync, and <code>min.insync.replicas=2</code>. The broker refuses <code>acks=all</code> writes rather than keep a single copy. This is the setting working as intended.',
+    fix: () => 'Bring the brokers back. Don\'t lower <code>min.insync.replicas</code> to get writes flowing: that is how acknowledged data gets lost (Topic 2).' },
+  size: { name: 'Huge CDR batch record', stage: 0, cls: 'bad', retry: 'no',
+    client: () => [`!${T} ERROR [billing-svc] send failed: org.apache.kafka.common.errors.RecordTooLargeException: The message is 1572910 bytes when serialized which is larger than 1048576, which is the value of the max.request.size configuration.`],
+    broker: () => ['(nothing: the producer refused the record before sending it)'],
+    metrics: () => ['No error metric on the broker side. Only the application\'s own error counter shows it.'],
+    cause: () => 'One record is 1.5 MB, above the producer\'s <code>max.request.size</code> (1 MB by default).',
+    fix: () => 'Split the record, or raise <code>max.request.size</code> <i>and</i> the topic\'s <code>max.message.bytes</code> together. If only the producer is raised, the broker rejects the record instead.' },
+  throttle: { name: 'Everything slow, no errors', stage: 6, cls: 'warn', retry: 'n/a',
+    client: () => ['(no ERROR or WARN lines at all)', 'Producer metric produce-throttle-time-avg = 840 ms'],
+    broker: () => ['(nothing logged: quota throttling is normal behaviour, not an error)'],
+    metrics: e => e === 'P' ? ['Broker RequestMetrics ThrottleTimeMs for Produce is high for User:l09.', 'kafka-configs.sh --describe --entity-type users shows producer_byte_rate for the user.'] : ['Metrics API: io.confluent.kafka.server/client_limit_milliseconds > 0 for the cluster.', 'received_bytes flat at the cluster type\'s ingress limit.'],
+    cause: e => e === 'P' ? 'A client quota (<code>producer_byte_rate</code>) delays the broker\'s responses.' : 'The cluster is at its ingress limit, so Confluent Cloud throttles clients.',
+    fix: e => e === 'P' ? 'Raise the quota or slow the producer. Throttling isn\'t loss by itself, but batches that wait too long expire (Topic 2).' : 'Improve batching and compression, or move to a larger cluster type or more CKUs (Module 8, Topic 4).' },
+  deser: { name: 'Consumer stuck at one offset', stage: 7, cls: 'bad', retry: 'no',
+    client: () => [`!${T} ERROR [Consumer clientId=billing-svc-1, groupId=l09.billing] org.apache.kafka.common.errors.RecordDeserializationException: Error deserializing key/value for partition l09.cdr.voice-2 at offset 4711. If needed, please seek past the record to continue consumption.`, '… the same error after every poll(), offset never moves …'],
+    broker: () => ['(nothing: the broker served the bytes correctly)'],
+    metrics: e => [e === 'P' ? 'Control Center consumer lag for l09.billing grows on partition 2 only.' : 'Metrics API consumer_lag_offsets grows for partition 2 only.'],
+    cause: () => 'A record at offset 4711 was written in another format (for example JSON into an Avro topic). Every poll fails at the same place.',
+    fix: () => 'Catch the error, send the raw record to a dead-letter topic such as <code>l09.cdr.voice.dlq</code>, seek past it and continue (Topic 4).' },
+  rebal: { name: 'Group rebalances every few minutes', stage: 7, cls: 'warn', retry: 'no',
+    client: () => [`${T} WARN [Consumer clientId=billing-svc-1, groupId=l09.billing] consumer poll timeout has expired. This means the time between subsequent calls to poll() was longer than the configured max.poll.interval.ms, which typically implies that the poll loop is spending too much time processing messages.`, `!org.apache.kafka.clients.consumer.CommitFailedException: Commit cannot be completed since the group has already rebalanced and assigned the partitions to another member. …`],
+    broker: () => [`${T} INFO [GroupCoordinator 2]: Member billing-svc-1-… in group l09.billing has failed, removing it from the group`, `${T} INFO [GroupCoordinator 2]: Preparing to rebalance group l09.billing …`],
+    metrics: e => [e === 'P' ? 'Control Center: l09.billing membership keeps changing; lag saw-tooths.' : 'Metrics API consumer_lag_offsets saw-tooths; no member stays assigned.'],
+    cause: () => 'Processing one batch of <code>max.poll.records</code> takes longer than <code>max.poll.interval.ms</code> (5 minutes by default), so the group throws the member out and the work is done twice.',
+    fix: () => 'Lower <code>max.poll.records</code> or speed up processing; raise <code>max.poll.interval.ms</code> only if a batch really needs longer (Topic 4).' }
+};
+
+function lines() {
+  const s = SC[S.sc];
+  if (S.src === 'broker' && S.env === 'C') return NOBROKER;
+  return S.src === 'client' ? s.client(S.env) : S.src === 'broker' ? s.broker(S.env) : s.metrics(S.env);
+}
+
+function render() {
+  const s = SC[S.sc];
+  svg.innerHTML = '';
+  STAGES.forEach(([name, sub], i) => {
+    const row = i < 4 ? 0 : 1, col = row ? 7 - i : i;
+    const x = 20 + col * 220, y = 30 + row * 120;
+    const state = i < s.stage ? 'ok' : i === s.stage ? s.cls : 'idle';
+    const g = el('g', {}, svg);
+    el('rect', { x, y, width: 196, height: 74, rx: 10, fill: state === 'ok' ? 'var(--ok-soft)' : state === 'bad' ? 'var(--bad-soft)' : state === 'warn' ? 'var(--warn-soft)' : 'var(--surface-2)',
+      stroke: state === 'ok' ? 'var(--ok)' : state === 'bad' ? 'var(--bad)' : state === 'warn' ? 'var(--warn)' : 'var(--border)', 'stroke-width': S.sel === i ? 3.5 : i === s.stage ? 2.5 : 1.2 }, g);
+    el('text', { x: x + 14, y: y + 28, 'font-size': 16, 'font-weight': 700, text: `${i + 1}. ${name}` }, g);
+    el('text', { x: x + 14, y: y + 52, 'font-size': 13, fill: 'var(--muted)', text: sub }, g);
+    el('text', { x: x + 182, y: y + 28, 'text-anchor': 'end', 'font-size': 16, 'font-weight': 700, fill: state === 'ok' ? 'var(--ok)' : state === 'idle' ? 'var(--muted)' : `var(--${state})`, text: state === 'ok' ? '✓' : state === 'idle' ? '–' : state === 'bad' ? '✗' : '!' }, g);
+    svgButton(g, `Stage ${i + 1}: ${name}`, () => { S.sel = i; render(); logLine(log, `<b>${name}:</b> ${STAGE_INFO[i]}`); });
+    if (i < 7) {
+      if (i === 3) el('path', { d: `M ${x + 98} ${y + 76} L ${x + 98} ${y + 118}`, stroke: 'var(--border)', 'stroke-width': 2, 'marker-end': 'url(#ar)' }, svg);
+      else if (row === 0) el('path', { d: `M ${x + 198} ${y + 37} L ${x + 218} ${y + 37}`, stroke: 'var(--border)', 'stroke-width': 2, 'marker-end': 'url(#ar)' }, svg);
+      else el('path', { d: `M ${x - 2} ${y + 37} L ${x - 22} ${y + 37}`, stroke: 'var(--border)', 'stroke-width': 2, 'marker-end': 'url(#ar)' }, svg);
+    }
+  });
+  const defs = el('defs', {}, svg), mk = el('marker', { id: 'ar', viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 6, markerHeight: 6, orient: 'auto' }, defs);
+  el('path', { d: 'M0 0 L10 5 L0 10 z', fill: 'var(--muted)' }, mk);
+  el('text', { x: 20, y: 18, 'font-size': 12, fill: 'var(--muted)', text: `${S.env === 'P' ? 'Platform lab (cp-kafka.lab.internal)' : 'Confluent Cloud'} · click a stage to see what happens there` }, svg);
+
+  term.innerHTML = '';
+  lines().forEach(l => {
+    const d = document.createElement('div');
+    const err = l.startsWith('!');
+    d.className = 'term-line ' + (err ? 'err' : l.startsWith('(') ? 'out' : '');
+    d.innerHTML = err ? l.slice(1) : l;
+    term.appendChild(d);
+  });
+  const retry = { yes: 'Retriable: the client retries on its own until <code>delivery.timeout.ms</code>.', no: 'Not retriable: retrying sends the same request into the same wall.', 'n/a': 'No error at all: only metrics show it.' }[s.retry];
+  setVerdict('verdict', s.cls, `stage ${s.stage + 1}: ${STAGES[s.stage][0]}`, `<b style="font-size:15px">Root cause:</b> ${s.cause(S.env)}<br><b style="font-size:15px">Fix:</b> ${s.fix(S.env)}<br><span style="color:var(--muted);font-size:14px">${retry}</span>`);
+}
+
+const scen = document.getElementById('scen');
+Object.entries(SC).forEach(([k, s]) => {
+  const b = document.createElement('button');
+  b.textContent = s.name; b.dataset.v = k; b.setAttribute('aria-pressed', k === S.sc);
+  b.onclick = () => {
+    scen.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b));
+    S.sc = k; S.sel = null; render();
+    logLine(log, `Symptom: <b>${s.name}</b> → fails at stage ${s.stage + 1} (${STAGES[s.stage][0]})`, true);
+  };
+  scen.appendChild(b);
+});
+wireSeg('envSeg', v => { S.env = v; render(); logLine(log, v === 'P' ? 'Platform lab: client log, broker server.log (trainer, via SSM) and JMX/Control Center' : 'Confluent Cloud: client log and the Metrics API only. Confluent reads the broker logs'); });
+wireSeg('srcSeg', v => { S.src = v; render(); logLine(log, `Reading the ${v === 'client' ? 'client log' : v === 'broker' ? 'broker log' : 'metrics'} for "${SC[S.sc].name}"`); });
+render();
+logLine(log, 'billing-svc writes CDRs to l09.cdr.voice. Pick a symptom, then compare the three evidence sources.');
+
+renderQuiz('quiz', [
+  { q: 'A producer logs <code>TimeoutException: Topic l09.cdr.sms not present in metadata after 60000 ms</code> on the lab cluster. Brokers are healthy. What is the most likely cause?',
+    options: ['The network is too slow for metadata requests', 'The topic doesn\'t exist, and the cluster has <code>auto.create.topics.enable=false</code>', 'The ISR is below <code>min.insync.replicas</code>', 'The producer\'s quota is too low'],
+    answer: 1,
+    explain: 'The word "Timeout" misleads people into chasing the network. The preceding <code>WARN … UNKNOWN_TOPIC_OR_PARTITION</code> lines show the real cause: the topic is missing, and neither the lab cluster nor Confluent Cloud creates it automatically.' },
+  { q: 'Which of these errors is worth retrying, because it can succeed later without anyone changing the client?',
+    options: ['<code>SaslAuthenticationException</code>', '<code>RecordTooLargeException</code>', '<code>TopicAuthorizationException</code>', '<code>NotEnoughReplicasException</code>'],
+    answer: 3,
+    explain: 'Not enough in-sync replicas is a temporary cluster state: when followers catch up or brokers return, the same write succeeds. The producer retries it automatically until <code>delivery.timeout.ms</code>. The other three fail the same way every time until someone fixes the password, the record size or the role binding.' },
+  { q: 'Producers to your Confluent Cloud cluster are slow, the client logs show no errors, and you can\'t read broker logs. Where do you look first?',
+    options: ['The Metrics API: <code>client_limit_milliseconds</code> and <code>received_bytes</code> for the cluster', 'Ask Confluent for <code>server.log</code> before doing anything else', 'Increase <code>retries</code> on the producer', 'Check the consumer group\'s committed offsets'],
+    answer: 0,
+    explain: 'Throttling logs nothing, because it isn\'t an error. A non-zero <code>client_limit_milliseconds</code> with <code>received_bytes</code> flat at the limit proves the cluster is throttling. That is evidence you can gather yourself in a minute.' },
+  { q: 'An MQ administrator sees <code>RecordDeserializationException … at offset 4711</code> and says "the broker must have corrupted the message". What does the evidence say?',
+    options: ['The broker\'s disk is failing, so check its server.log', 'The record was written in a format the consumer can\'t read. The broker logged nothing because it served the bytes correctly.', 'The consumer\'s session timed out', 'The topic\'s retention deleted the record'],
+    answer: 1,
+    explain: 'Kafka stores and returns bytes without inspecting them. A deserialization failure happens in your consumer\'s code (stage 8), so the broker log is empty. Handle the poison record with a dead-letter topic and seek past it.' },
+  { q: 'A client logs <code>WARN … retrying (2147483646 attempts left). Error: NOT_ENOUGH_REPLICAS</code> for a few minutes, then <code>Expiration of 12 record(s) … 120000 ms has passed since batch creation</code>. What happened to those 12 records?',
+    options: ['They were written with one copy and will replicate later', 'They were dropped by the broker without telling the client', 'They were never written. The producer gave up after <code>delivery.timeout.ms</code> and reported the failure to the send callback.', 'They were moved to a dead-letter topic automatically'],
+    answer: 2,
+    explain: 'The broker refused every attempt, so nothing was written. After the default 2-minute <code>delivery.timeout.ms</code> the producer fails the batch and calls your callback with the exception. If the application ignores that callback, those CDRs are silently lost (Topic 2).' }
+]);
+</script>
+</body>
+</html>

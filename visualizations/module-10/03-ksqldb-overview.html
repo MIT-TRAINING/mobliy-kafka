@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ksqlDB on Confluent</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 10 · Ecosystem, Migration &amp; DR</a>
+    <div class="nav"><span>3 / 5</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 3</div>
+  <h1>ksqlDB on Confluent: streams, tables and the queries that never stop</h1>
+  <p class="lede">ksqlDB runs SQL over Kafka topics. A <b>push</b> query streams rows to your terminal until you stop it.
+    A <b>pull</b> query asks a table once, like a database. A <b>persistent</b> query keeps running on the server after you
+    leave, writes to new topics, and is what an admin has to track and clean up. The stream <code>lNN_calls</code> already
+    holds the lab's six calls. Run each query, insert more calls, then switch <code>auto.offset.reset</code> to
+    <code>latest</code>, start over, and see what the new queries miss.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Server</span>
+      <div class="seg" role="group" aria-label="ksqlDB server" id="depSeg"><button data-v="cloud" aria-pressed="true">Cloud cluster lNN-ksql</button><button data-v="cp" aria-pressed="false">Platform, shared :8088</button></div>
+      <span class="ctl-label">auto.offset.reset</span>
+      <div class="seg" role="group" aria-label="auto.offset.reset" id="aorSeg"><button data-v="earliest" aria-pressed="true">earliest</button><button data-v="latest" aria-pressed="false">latest</button></div>
+    </div>
+    <div class="scen" id="queries" role="group" aria-label="Statements to run"></div>
+    <div class="controls" style="margin-top:10px">
+      <span class="ctl-label">INSERT a call</span>
+      <select id="caller" aria-label="Caller"><option>9198450001</option><option>9198450002</option><option>9198450003</option></select>
+      <select id="dur" aria-label="Duration in seconds"><option value="20">20 s</option><option value="95">95 s</option><option value="130">130 s</option><option value="300">300 s</option><option value="610">610 s</option></select>
+      <button class="primary" id="insert">INSERT</button>
+      <button id="stopPush">Stop push query (Ctrl+C)</button>
+      <button class="danger" id="cleanup">Run 99-cleanup.sql</button>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 340" role="img" aria-label="Input stream, ksqlDB server with running queries, and output topics"></svg></div>
+    <div class="stats">
+      <div class="stat"><b id="sEv">0</b><span>events in the stream</span></div>
+      <div class="stat"><b id="sRows">–</b><span>rows in the table</span></div>
+      <div class="stat"><b id="sQ">0</b><span>persistent queries</span></div>
+      <div class="stat"><b id="sT">1</b><span>Kafka topics for this pipeline</span></div>
+    </div>
+    <div class="term" id="term" aria-live="polite"><div class="term-empty">./ksql.sh output appears here.</div></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Three kinds of query</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Query</th><th>Looks like</th><th>Runs</th><th>Leaves behind</th></tr></thead>
+      <tbody>
+        <tr><td>Push</td><td><code>SELECT … FROM lNN_calls EMIT CHANGES;</code></td><td>In your session, until Ctrl+C or <code>LIMIT n</code></td><td>Nothing</td></tr>
+        <tr><td>Pull</td><td><code>SELECT … FROM lNN_minutes_by_caller WHERE caller = '…';</code></td><td>Once, answers from the table's current state</td><td>Nothing</td></tr>
+        <tr><td>Persistent</td><td><code>CREATE STREAM | TABLE … AS SELECT …</code></td><td><b>On the server</b>, forever, with a query ID (<code>CSAS_…</code>, <code>CTAS_…</code>)</td><td>An output topic, plus internal <code>_confluent-ksql-…</code> topics for state</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Admin concern</th><th>Confluent Cloud</th><th>Confluent Platform (lab)</th></tr></thead>
+      <tbody>
+        <tr><td>Server</td><td>Your own ksqlDB cluster, sized in CSUs (smallest: 1 CSU)</td><td>One shared server on <code>cp-services.lab.internal:8088</code></td></tr>
+        <tr><td>Cost</td><td>Billed per hour <b>while the cluster exists</b>, even with no queries</td><td>Your servers; every persistent query takes capacity from all learners</td></tr>
+        <tr><td>Internal topics</td><td><code>_confluent-ksql-pksqlc-…</code></td><td><code>_confluent-ksql-default_…</code> (service ID <code>default_</code>)</td></tr>
+        <tr><td>Names and access</td><td>Your environment, your names</td><td>Prefix streams, tables and topics with <code>lNN</code>; RBAC on the topics</td></tr>
+        <tr><td>Clean up</td><td><code>DROP … DELETE TOPIC</code>, then delete the ksqlDB cluster</td><td><code>DROP … DELETE TOPIC</code> (the <code>99-cleanup.sql</code> file)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Admin gotcha:</b> <code>auto.offset.reset</code> defaults to <code>latest</code>. A persistent query
+    created without <code>earliest</code> ignores every record already on the topic, so the totals look wrong and nothing
+    reports an error. The lab's <code>ksql.sh</code> sends <code>earliest</code>; the web editors need it set by hand.</div>
+  <div class="callout warn"><b>Production trap:</b> closing your terminal doesn't stop a persistent query. List them
+    with <code>SHOW QUERIES;</code>. Dropping the stream or table created with <code>AS SELECT</code> also stops its
+    query, and <code>DELETE TOPIC</code> removes its topic. Drop derived objects before the stream they read from.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="02-schema-registry-compatibility.html"><small>← Previous</small>Schema Registry: evolution &amp; compatibility</a>
+    <a class="next" href="04-backup-dr-replication.html"><small>Next →</small>Backup &amp; DR: Replicator &amp; multi-datacenter</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), logEl = document.getElementById('log'), term = document.getElementById('term');
+const LAB_CALLS = [['9198450001', 'c-1', 40], ['9198450002', 'c-2', 300], ['9198450001', 'c-3', 610], ['9198450003', 'c-4', 15], ['9198450002', 'c-5', 95], ['9198450001', 'c-6', 130]];
+const S = { dep: 'cloud', aor: 'earliest', calls: [], long: null, agg: null, push: null, n: 6 };
+const say = (h, hl) => logLine(logEl, h, hl);
+const svc = () => S.dep === 'cloud' ? 'pksqlc-…' : 'default_';
+
+const STMTS = [
+  { id: 'push', label: 'Push: SELECT * FROM lNN_calls EMIT CHANGES;' },
+  { id: 'long', label: 'Persistent: 03-long-calls.sql (WHERE duration_sec >= 120)' },
+  { id: 'agg', label: 'Persistent: 04-minutes-by-caller.sql (GROUP BY caller)' },
+  { id: 'pull', label: "Pull: SELECT * FROM lNN_minutes_by_caller WHERE caller = '9198450001';" },
+  { id: 'show', label: 'SHOW QUERIES;' },
+];
+function renderStmts() {
+  const box = document.getElementById('queries'); box.innerHTML = '';
+  STMTS.forEach(s => { const b = document.createElement('button'); b.textContent = s.label; b.onclick = () => runStmt(s.id); box.appendChild(b); });
+}
+const startAt = () => S.aor === 'earliest' ? 0 : S.calls.length;
+const callRow = c => `{"row":{"columns":["${c[0]}","${c[1]}","${c[2]}",${c[3]},false]}}`;
+function aggRows() {
+  if (!S.agg) return null;
+  const m = new Map();
+  S.calls.slice(S.agg.from).forEach(c => { const r = m.get(c[0]) || [0, 0]; m.set(c[0], [r[0] + 1, r[1] + c[3]]); });
+  return m;
+}
+const longRows = () => S.long ? S.calls.slice(S.long.from).filter(c => c[3] >= 120) : null;
+
+function runStmt(id) {
+  if (id === 'push') {
+    if (S.push) return say('A push query is already running in this session. Stop it first.');
+    S.push = { from: startAt() };
+    const rows = S.calls.slice(S.push.from).map(callRow);
+    termRun(term, './ksql.sh "SELECT * FROM ${ME}_calls EMIT CHANGES;"', ['[{"header":{"queryId":"transient_…","schema":"`CALLER` STRING KEY, `CALL_ID` STRING, `CALLEE` STRING, `DURATION_SEC` INTEGER, `ROAMING` BOOLEAN"}},'].concat(rows));
+    say(rows.length ? `Push query started from <b>${S.aor}</b>: ${rows.length} existing rows, then it waits for new ones.` : 'Push query started from <b>latest</b>: only the header. It waits for new calls; INSERT one.', true);
+  } else if (id === 'long' || id === 'agg') {
+    if (S[id]) return termRun(term, `./ksql.sh -f sql/${id === 'long' ? '03-long-calls' : '04-minutes-by-caller'}.sql`, [`ERROR Cannot add ${id === 'long' ? 'stream' : 'table'} 'LNN_${id === 'long' ? 'LONG_CALLS' : 'MINUTES_BY_CALLER'}': A ${id === 'long' ? 'stream' : 'table'} with the same name already exists`], true);
+    S[id] = { from: startAt(), qid: id === 'long' ? `CSAS_LNN_LONG_CALLS_${S.n++}` : `CTAS_LNN_MINUTES_BY_CALLER_${S.n++}` };
+    termRun(term, `./ksql.sh -f sql/${id === 'long' ? '03-long-calls' : '04-minutes-by-caller'}.sql`, [`OK    Created query with ID ${S[id].qid}`]);
+    const missed = S[id].from;
+    say(`<b>${S[id].qid}</b> now runs <b>on the server</b>, writing to <code>lNN.ksql.${id === 'long' ? 'long_calls' : 'minutes_by_caller'}</code>.${missed ? ` It started at <b>latest</b> and skipped the ${missed} calls already on the topic.` : ' It started at earliest and processed every call already on the topic.'}`, missed > 0);
+  } else if (id === 'pull') {
+    if (!S.agg) return termRun(term, `./ksql.sh "SELECT * FROM \${ME}_minutes_by_caller WHERE caller = '9198450001';"`, ["ERROR Exception while preparing statement: LNN_MINUTES_BY_CALLER does not exist."], true);
+    const r = aggRows().get('9198450001');
+    termRun(term, `./ksql.sh "SELECT * FROM \${ME}_minutes_by_caller WHERE caller = '9198450001';"`,
+      ['[{"header":{"queryId":"…","schema":"`CALLER` STRING KEY, `CALLS` BIGINT, `TOTAL_SEC` INTEGER"}}' + (r ? ',' : ']')].concat(r ? [`{"row":{"columns":["9198450001",${r[0]},${r[1]}]}}]`] : []));
+    say(r ? `Pull query: 9198450001 has <b>${r[0]} calls, ${r[1]} s</b>, the table's current state, answered once.` : 'Pull query: no row for 9198450001. The table only counts calls since its query started.', !r);
+  } else if (id === 'show') {
+    const qs = [S.long, S.agg].filter(Boolean);
+    termRun(term, './ksql.sh "SHOW QUERIES;"', qs.length ? qs.map(q => `${q.qid}   RUNNING   sink ${q.qid.replace(/^C[ST]AS_/, '').replace(/_\d+$/, '')}`) : ['(no persistent queries)']);
+    say(`${qs.length} persistent quer${qs.length === 1 ? 'y' : 'ies'} running on the server.${S.push ? ' The push query is not listed as persistent: it lives in your session.' : ''}`);
+  }
+  render();
+}
+
+function insert() {
+  const c = [document.getElementById('caller').value, 'c-' + (S.calls.length + 1), '9198451111', +document.getElementById('dur').value];
+  S.calls.push(c);
+  termRun(term, `./ksql.sh "INSERT INTO \${ME}_calls (caller, call_id, callee, duration_sec, roaming) VALUES ('${c[0]}', '${c[1]}', '${c[2]}', ${c[3]}, false);"`, []);
+  if (S.push) termRun(term, '# push query session', [callRow(c)]);
+  const parts = [];
+  if (S.long) parts.push(c[3] >= 120 ? 'long_calls got it' : 'long_calls skipped it (&lt; 120 s)');
+  if (S.agg) { const r = aggRows().get(c[0]); parts.push(`the table row for ${c[0]} is now ${r[0]} calls, ${r[1]} s`); }
+  say(`Inserted <b>${c[1]}</b> (${c[0]}, ${c[3]} s). ${parts.length ? parts.join('; ') + '.' : 'No persistent query is running, so nothing else changes.'}`);
+  render();
+  const dot = el('circle', { r: 6, fill: 'var(--p0)' }, svg);
+  tween(dot, 290, 120, 330, 170, 450).then(() => dot.remove());
+}
+
+function render() {
+  svg.innerHTML = '';
+  el('text', { x: 20, y: 22, 'font-size': 13, 'font-weight': 700, text: 'STREAM lNN_calls' }, svg);
+  el('text', { x: 20, y: 38, 'font-size': 11, fill: 'var(--muted)', text: `topic lNN.ksql.calls · ${S.calls.length} events` }, svg);
+  const shown = S.calls.slice(-9);
+  shown.forEach((c, k) => {
+    const y = 48 + k * 30, i = S.calls.length - shown.length + k;
+    el('rect', { x: 20, y, width: 270, height: 26, rx: 5, fill: 'var(--surface)', stroke: 'var(--border)' }, svg);
+    el('text', { x: 28, y: y + 17, 'font-size': 11.5, 'font-family': 'var(--mono)', text: `${i}  ${c[1].padEnd(4)} ${c[0]}  ${String(c[3]).padStart(3)} s` }, svg);
+  });
+  // server
+  el('rect', { x: 320, y: 48, width: 250, height: 262, rx: 12, fill: 'var(--surface-2)', stroke: 'var(--warn)', 'stroke-width': 1.6 }, svg);
+  el('text', { x: 445, y: 70, 'text-anchor': 'middle', 'font-size': 13, 'font-weight': 700, text: S.dep === 'cloud' ? 'ksqlDB cluster lNN-ksql (1 CSU)' : 'ksqlDB server cp-services:8088' }, svg);
+  el('text', { x: 445, y: 86, 'text-anchor': 'middle', 'font-size': 10.5, fill: 'var(--muted)', text: S.dep === 'cloud' ? 'billed per hour while it exists' : 'shared by every learner' }, svg);
+  const qs = [S.long, S.agg].filter(Boolean);
+  qs.forEach((q, k) => {
+    const y = 100 + k * 50;
+    el('rect', { x: 334, y, width: 222, height: 42, rx: 8, fill: 'var(--ok-soft)', stroke: 'var(--ok)' }, svg);
+    el('text', { x: 344, y: y + 17, 'font-size': 11, 'font-weight': 700, text: q.qid }, svg);
+    el('text', { x: 344, y: y + 33, 'font-size': 10.5, fill: 'var(--muted)', text: `RUNNING · persistent · from offset ${q.from}` }, svg);
+  });
+  if (!qs.length) el('text', { x: 445, y: 130, 'text-anchor': 'middle', 'font-size': 11.5, fill: 'var(--muted)', text: 'no persistent queries' }, svg);
+  if (S.push) {
+    el('rect', { x: 334, y: 210, width: 222, height: 42, rx: 8, fill: 'var(--accent-soft)', stroke: 'var(--accent)', 'stroke-dasharray': '5 4' }, svg);
+    el('text', { x: 344, y: 227, 'font-size': 11, 'font-weight': 700, text: 'push query (transient)' }, svg);
+    el('text', { x: 344, y: 243, 'font-size': 10.5, fill: 'var(--muted)', text: 'streams to your terminal only' }, svg);
+  }
+  el('text', { x: 445, y: 296, 'text-anchor': 'middle', 'font-size': 10.5, fill: 'var(--muted)', text: 'auto.offset.reset = ' + S.aor }, svg);
+  el('line', { x1: 290, y1: 170, x2: 320, y2: 170, stroke: 'var(--muted)', 'stroke-width': 1.5 }, svg);
+  // outputs
+  let y = 22;
+  const lr = longRows();
+  el('text', { x: 600, y, 'font-size': 13, 'font-weight': 700, fill: lr ? 'var(--text)' : 'var(--muted)', text: 'STREAM lNN_long_calls' }, svg);
+  el('text', { x: 600, y: y + 16, 'font-size': 11, fill: 'var(--muted)', text: lr ? `topic lNN.ksql.long_calls · ${lr.length} events` : 'not created' }, svg);
+  if (lr) el('text', { x: 600, y: y + 34, 'font-size': 11.5, 'font-family': 'var(--mono)', text: lr.slice(-6).map(c => `${c[1]}:${c[3]}`).join(' ') || '(empty)' }, svg);
+  y = 90;
+  const ag = aggRows();
+  el('text', { x: 600, y, 'font-size': 13, 'font-weight': 700, fill: ag ? 'var(--text)' : 'var(--muted)', text: 'TABLE lNN_minutes_by_caller' }, svg);
+  el('text', { x: 600, y: y + 16, 'font-size': 11, fill: 'var(--muted)', text: ag ? `topic lNN.ksql.minutes_by_caller · ${ag.size} rows` : 'not created' }, svg);
+  if (ag) {
+    ['CALLER', 'CALLS', 'TOTAL_SEC'].forEach((h, k) => el('text', { x: 600 + [0, 110, 170][k], y: y + 36, 'font-size': 10.5, 'font-weight': 700, fill: 'var(--muted)', text: h }, svg));
+    [...ag.entries()].sort().forEach(([k, r], i) => {
+      [k, r[0], r[1]].forEach((v, j) => el('text', { x: 600 + [0, 110, 170][j], y: y + 54 + i * 18, 'font-size': 11.5, 'font-family': 'var(--mono)', text: v }, svg));
+    });
+  }
+  y = 230;
+  const internal = S.agg ? [`_confluent-ksql-${svc()}query_${S.agg.qid}-…-changelog`] : [];
+  el('text', { x: 600, y, 'font-size': 12, 'font-weight': 700, fill: internal.length ? 'var(--warn)' : 'var(--muted)', text: 'Internal topics (state)' }, svg);
+  el('text', { x: 600, y: y + 18, 'font-size': 10.5, 'font-family': 'var(--mono)', fill: 'var(--muted)', text: internal[0] ? internal[0].slice(0, 46) : 'none' }, svg);
+  if (internal[0]) el('text', { x: 600, y: y + 32, 'font-size': 10.5, 'font-family': 'var(--mono)', fill: 'var(--muted)', text: internal[0].slice(46) }, svg);
+  el('line', { x1: 570, y1: 120, x2: 594, y2: 60, stroke: S.long ? 'var(--ok)' : 'var(--border)', 'stroke-width': 1.5 }, svg);
+  el('line', { x1: 570, y1: 170, x2: 594, y2: 120, stroke: S.agg ? 'var(--ok)' : 'var(--border)', 'stroke-width': 1.5 }, svg);
+
+  document.getElementById('sEv').textContent = S.calls.length;
+  document.getElementById('sRows').textContent = ag ? ag.size : '–';
+  document.getElementById('sQ').textContent = qs.length;
+  document.getElementById('sT').textContent = 1 + qs.length + internal.length;
+}
+
+function reset(why) {
+  S.calls = LAB_CALLS.map((c, i) => [c[0], c[1], '9198451111', c[2]]); S.long = S.agg = S.push = null;
+  if (why) say(why, true);
+  render();
+}
+wireSeg('depSeg', v => { S.dep = v; say(v === 'cloud' ? 'Cloud: your own ksqlDB cluster, internal topics start <code>_confluent-ksql-pksqlc-…</code>.' : 'Platform: the shared server on <code>cp-services.lab.internal:8088</code>; internal topics start <code>_confluent-ksql-default_</code>.'); render(); });
+wireSeg('aorSeg', v => { S.aor = v; say(`New queries will start from <b>${v}</b>. Queries already running keep their position.`, v === 'latest'); render(); });
+document.getElementById('insert').onclick = insert;
+document.getElementById('stopPush').onclick = () => { if (!S.push) return say('No push query is running.'); S.push = null; termRun(term, '^C', []); say('Push query stopped. It left nothing on the server.'); render(); };
+document.getElementById('cleanup').onclick = () => {
+  termRun(term, './ksql.sh -f sql/99-cleanup.sql', [S.agg ? 'OK    Dropped table LNN_MINUTES_BY_CALLER' : 'OK    (table did not exist)', S.long ? 'OK    Dropped stream LNN_LONG_CALLS' : 'OK    (stream did not exist)', 'OK    Dropped stream LNN_CALLS']);
+  reset(`Dropped the table and both streams with <code>DELETE TOPIC</code>: the persistent queries stopped and their topics are gone.${S.dep === 'cloud' ? ' On Cloud the ksqlDB cluster is still billed: delete it too.' : ''} (The lab's six calls are reloaded so you can try again.)`);
+};
+renderStmts(); reset();
+
+renderQuiz('quiz', [
+  { q: 'After seven calls from three subscribers, how many entries do <code>lNN_calls</code> (stream) and <code>lNN_minutes_by_caller</code> (table) hold?',
+    options: ['7 and 7', '3 and 3', '7 events in the stream, 3 rows in the table', '3 events in the stream, 7 rows in the table'],
+    answer: 2,
+    explain: 'A stream is every event, appended. A table is the latest value per key: one row per caller, updated on each call. Both are views over Kafka topics.' },
+  { q: 'You close your terminal. Which of these keeps running on the ksqlDB server?',
+    options: ['<code>CREATE TABLE … AS SELECT … GROUP BY caller</code>', '<code>SELECT * FROM lNN_calls EMIT CHANGES;</code>', 'A pull query on the table', 'None of them; ksqlDB stops everything when the client disconnects'],
+    answer: 0,
+    explain: 'A persistent query (<code>CREATE … AS SELECT</code>) runs on the server with a query ID until you drop or terminate it. Push and pull queries belong to your session.' },
+  { q: 'You created <code>lNN_long_calls</code> in a web editor and it stays empty, though the input has calls of 300 and 610 seconds. Most likely cause?',
+    options: ['The filter needs a GROUP BY', 'The query started at <code>auto.offset.reset=latest</code>, so it skipped every record already on the topic', 'Persistent queries only run on Platform', 'ksqlDB needs Schema Registry for JSON'],
+    answer: 1,
+    explain: 'The default is <code>latest</code>. The query only sees calls inserted after it started. Set <code>earliest</code> before creating it (the lab\'s <code>ksql.sh</code> does) or drop and recreate.' },
+  { q: 'The Cloud lab is over and you have run <code>99-cleanup.sql</code>. What is still costing money?',
+    options: ['The dropped streams\' topics', 'The internal changelog topics', 'Nothing; dropping the queries stops billing', 'The ksqlDB cluster itself, billed per hour while it exists: delete it'],
+    answer: 3,
+    explain: '<code>DROP … DELETE TOPIC</code> stops the queries and removes their topics (and the internal ones). The cluster you created in Part 1 is billed per hour even when idle, so delete it.' },
+  { q: 'An MQ admin asks where ksqlDB keeps the running totals. What do you tell them?',
+    options: ['In an embedded relational database you must back up separately', 'In Kafka: the table\'s output topic, plus an internal changelog topic that rebuilds the local state after a restart', 'In ZooKeeper', 'Only in memory; a restart resets the totals'],
+    answer: 1,
+    explain: 'ksqlDB is a Kafka Streams application. Local state is a cache backed by a <code>_confluent-ksql-…-changelog</code> topic, and the result is a normal Kafka topic any consumer can read. Count those topics in your capacity and cleanup plans.' },
+]);
+</script>
+</body>
+</html>

@@ -1,0 +1,3 @@
+# Generated IDs, passwords, certificates and inventories with real values never go into git.
+secrets/
+learners.csv

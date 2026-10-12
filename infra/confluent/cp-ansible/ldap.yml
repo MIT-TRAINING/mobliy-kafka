@@ -1,0 +1,57 @@
+# OpenLDAP on cp-ldap for the shared Confluent Platform cluster (README Part B.4).
+# Installs slapd with the suffix dc=lab,dc=internal and loads ../secrets/users.ldif
+# from gen-ldap-users.sh. Safe to re-run: existing entries are skipped (ldapadd -c).
+# The LDAP admin password is the "ldap_admin" row of ../secrets/cp-ldap-passwords.csv.
+#
+# Run before cp-ansible (the brokers bind to LDAP on start):
+#   ansible-playbook -i hosts.yml -i ../secrets/ansible-ssm.yml ldap.yml
+- name: OpenLDAP directory for MDS and the CLIENT listener
+  hosts: cp-ldap.lab.internal
+  become: true
+  vars:
+    ldap_admin_password: "{{ lookup('ansible.builtin.csvfile', 'ldap_admin', file=cp_secrets_dir ~ '/cp-ldap-passwords.csv', delimiter=',', col='1') }}"
+  tasks:
+    - name: Preseed slapd (domain lab.internal, admin password)
+      ansible.builtin.debconf:
+        name: slapd
+        question: "{{ item.q }}"
+        value: "{{ item.v }}"
+        vtype: "{{ item.t }}"
+      loop:
+        - { q: slapd/domain, v: lab.internal, t: string }
+        - { q: shared/organization, v: Kafka Course, t: string }
+        - { q: slapd/password1, v: "{{ ldap_admin_password }}", t: password }
+        - { q: slapd/password2, v: "{{ ldap_admin_password }}", t: password }
+        - { q: slapd/no_configuration, v: "false", t: boolean }
+      no_log: true
+
+    - name: Install slapd and ldap-utils
+      ansible.builtin.apt:
+        name: [slapd, ldap-utils]
+        update_cache: true
+
+    - name: Copy the LDIF
+      ansible.builtin.copy:
+        src: "{{ cp_secrets_dir }}/users.ldif"
+        dest: /root/users.ldif
+        mode: "0600"
+
+    - name: Load users and groups
+      ansible.builtin.shell: ldapadd -c -x -D cn=admin,dc=lab,dc=internal -w "$LDAP_PW" -f /root/users.ldif
+      environment:
+        LDAP_PW: "{{ ldap_admin_password }}"
+      register: ldapadd
+      changed_when: "'adding new entry' in ldapadd.stdout"
+      failed_when: ldapadd.rc not in [0, 68]   # 68 = entry already exists
+      no_log: true
+
+    - name: Remove the LDIF
+      ansible.builtin.file:
+        path: /root/users.ldif
+        state: absent
+
+    - name: Check that the learner entries exist
+      ansible.builtin.command: ldapsearch -x -LLL -b ou=people,dc=lab,dc=internal "(uid=l01)" dn
+      register: search
+      changed_when: false
+      failed_when: "'uid=l01' not in search.stdout"

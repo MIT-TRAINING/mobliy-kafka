@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Message-Loss Prevention Checklist</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 9 · Troubleshooting &amp; Message Loss</a>
+    <div class="nav"><span>6 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 6</div>
+  <h1>Best-practice checklist for preventing message loss</h1>
+  <p class="lede">No single setting prevents message loss. The producer, the topic, the brokers' placement, the
+    consumer and your alerting each close a different gap. Start from a <b>preset</b> or tick items yourself, then press
+    <b>Run chaos drills</b>. Nine failures hit the CDR pipeline, and each drill shows which unticked item let CDRs be lost or
+    billed twice. Click a drill to see what happened.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Preset</span>
+      <div class="seg" role="group" aria-label="Preset" id="preSeg"><button data-v="none" aria-pressed="false">nothing</button><button data-v="apache" aria-pressed="true">Apache Kafka 4.x defaults</button><button data-v="lab" aria-pressed="false">Platform lab cluster</button><button data-v="all" aria-pressed="false">full checklist</button></div>
+    </div>
+    <div class="ck-groups" id="groups"></div>
+    <div class="controls"><button class="primary" id="run">Run chaos drills</button></div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 330" role="img" aria-label="Nine chaos drills and whether the pipeline survived each"></svg></div>
+    <div class="stats">
+      <div class="stat"><b id="sPass">–</b><span>drills survived</span></div>
+      <div class="stat"><b id="sItems">0 / 11</b><span>checklist items ticked</span></div>
+    </div>
+    <div class="verdict" id="verdict"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>The checklist, with the reason for each item</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Layer</th><th>Item</th><th>Closes this gap</th><th>Default</th></tr></thead>
+      <tbody>
+        <tr><td rowspan="3">Producer</td><td><code>acks=all</code></td><td>Leader dies before followers copy (Topic 2)</td><td>Producer default since Kafka 3.0, but apps can override it</td></tr>
+        <tr><td><code>enable.idempotence=true</code></td><td>Retries writing the same CDR twice</td><td>Default since 3.0, but turned off quietly when conflicting settings are given</td></tr>
+        <tr><td>Check every <code>send()</code> result</td><td>Expired or refused batches vanishing in fire-and-forget code</td><td>Up to your code</td></tr>
+        <tr><td rowspan="4">Topic and cluster</td><td>Replication factor 3</td><td>Losing the only copy</td><td>Apache: <code>default.replication.factor=1</code>. Lab: 3. Cloud: always 3</td></tr>
+        <tr><td><code>min.insync.replicas=2</code></td><td><code>acks=all</code> acknowledged with a single copy</td><td>Apache: 1. Lab: 2</td></tr>
+        <tr><td><code>unclean.leader.election.enable=false</code></td><td>An out-of-sync replica becoming leader</td><td>false</td></tr>
+        <tr><td>Replicas spread across zones</td><td>All replicas in one failed zone</td><td>Self-managed: set <code>broker.rack</code> (the lab gets the same effect from RF 3 on one broker per zone). Cloud handles placement</td></tr>
+        <tr><td rowspan="2">Consumer</td><td>Commit after processing</td><td>Auto-commit marking unprocessed CDRs as done</td><td><code>enable.auto.commit=true</code></td></tr>
+        <tr><td>Dead-letter topic</td><td>A poison record blocking or being skipped silently</td><td>Up to your code</td></tr>
+        <tr><td rowspan="2">Operations</td><td>Retention longer than the worst consumer outage</td><td>Unread CDRs deleted before billing reads them</td><td><code>retention.ms</code> 7 days</td></tr>
+        <tr><td>Alerts: URP, under-min-ISR, lag growth, throttling</td><td>Problems that log nothing (Module 8)</td><td>None</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Admin takeaway:</b> the full checklist turns <i>loss</i> into <i>visible failure</i>. When two brokers
+    die, writes are refused rather than half-stored, and when a batch expires the app is told. Being unavailable for a while is
+    something you can recover from. Billing records that are silently missing are not.</div>
+  <div class="callout warn"><b>Production trap:</b> settings drift. Check them on a schedule instead of trusting the deploy:
+    <code>kafka-configs.sh --bootstrap-server $CP --command-config $CFG --describe --entity-type topics --entity-name l09.cdr.voice --all</code>
+    for each critical topic, and the effective producer config that every client logs at startup (<code>ProducerConfig values:</code>).</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="05-support-escalation.html"><small>← Previous</small>Confluent support &amp; escalation</a>
+    <a class="next" href="index.html"><small>Done →</small>Back to Module 9 overview</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), log = document.getElementById('log');
+const ITEMS = {
+  Producer: [['acks', '<code>acks=all</code>'], ['idem', '<code>enable.idempotence=true</code>'], ['cb', 'Check every <code>send()</code> result']],
+  'Topic & cluster': [['rf3', 'Replication factor 3'], ['misr', '<code>min.insync.replicas=2</code>'], ['unclean', '<code>unclean.leader.election.enable=false</code>'], ['rack', 'Replicas spread across 3 zones']],
+  Consumer: [['commit', 'Commit offsets after processing'], ['dlq', 'Dead-letter topic for poison records']],
+  Operations: [['ret', 'Retention longer than the worst consumer outage'], ['alert', 'Alerts on URP, under-min-ISR, lag growth, throttling']]
+};
+const PRESETS = {
+  none: [],
+  apache: ['acks', 'idem', 'unclean', 'ret'],
+  lab: ['acks', 'idem', 'rf3', 'misr', 'unclean', 'rack', 'ret'],
+  all: ['acks', 'idem', 'cb', 'rf3', 'misr', 'unclean', 'rack', 'commit', 'dlq', 'ret', 'alert']
+};
+const DRILLS = [
+  { name: 'Leader crash', need: ['acks', 'rf3'], kind: 'lost',
+    ok: 'With <code>acks=all</code>, every acknowledged CDR was already on the followers. The new leader has them all.',
+    bad: { acks: 'With <code>acks=1</code>, the last CDRs were only on the leader. The new leader never had them.', rf3: 'With one replica there is no follower to take over. The partition is offline until the broker returns, and anything not flushed to disk is gone.' } },
+  { name: 'Second broker lost', need: ['rf3', 'misr'], kind: 'lost',
+    ok: 'With only one in-sync replica left, writes were refused (<code>NotEnoughReplicas</code>). Nothing was acknowledged on a single copy.',
+    bad: { rf3: 'With fewer than 3 replicas, losing two brokers leaves nothing.', misr: 'With <code>min.insync.replicas=1</code>, writes were acknowledged with one copy. Then that broker died too.' } },
+  { name: 'Stale replica elected', need: ['unclean'], kind: 'lost',
+    ok: 'The out-of-sync replica wasn\'t allowed to lead. The partition waited for an in-sync replica.',
+    bad: { unclean: 'Unclean election made a replica that was far behind the leader, and every CDR it lacked was truncated away.' } },
+  { name: 'Retry after network blip', need: ['idem'], kind: 'dup',
+    ok: 'The broker recognized the retried batch by its producer ID and sequence number, and stored it once.',
+    bad: { idem: 'The first attempt had been written but its response was lost. The retry wrote the same CDRs again, so subscribers are billed twice.' } },
+  { name: 'Quota throttling', need: ['cb'], kind: 'lost',
+    ok: 'Expired batches reached the callback, which logged them and re-sent them once the throttling eased.',
+    bad: { cb: 'Batches expired after <code>delivery.timeout.ms</code>, and fire-and-forget code never looked at the <code>TimeoutException</code>.' } },
+  { name: 'Consumer crash mid-batch', need: ['commit'], kind: 'lost',
+    ok: 'Offsets were committed only after processing. The restarted consumer reprocessed the batch, and nothing was skipped.',
+    bad: { commit: 'Auto-commit had already committed offsets for CDRs that were never billed. After the restart the group continued past them.' } },
+  { name: 'Poison record', need: ['dlq'], kind: 'lost',
+    ok: 'The bad record went to the dead-letter topic, the consumer moved on, and the team replayed it after fixing the producer.',
+    bad: { dlq: 'The consumer either blocked on the record, or someone reset offsets past it and skipped good CDRs with it.' } },
+  { name: 'Billing offline for a weekend', need: ['ret', 'alert'], kind: 'lost',
+    ok: 'A lag-growth alert paged on Saturday, and retention outlasted the outage. Nothing expired unread.',
+    bad: { ret: 'Retention was shorter than the outage. The oldest CDRs were deleted before billing came back.', alert: 'No alert on lag growth: nobody noticed the group was down until Monday.' } },
+  { name: 'Availability zone outage', need: ['rack', 'rf3'], kind: 'lost',
+    ok: 'Replicas were spread over three zones, so the other two zones still held in-sync copies.',
+    bad: { rack: 'Brokers weren\'t spread across zones (no <code>broker.rack</code>), so some partitions had all their replicas in the failed zone.', rf3: 'Too few replicas to cover a zone failure.' } }
+];
+const S = { on: new Set(PRESETS.apache), res: null, busy: false, sel: null };
+
+function buildChecks() {
+  const g = document.getElementById('groups');
+  Object.entries(ITEMS).forEach(([grp, items]) => {
+    const fs = document.createElement('fieldset');
+    fs.innerHTML = `<legend>${grp}</legend>`;
+    const box = document.createElement('div'); box.className = 'checks';
+    items.forEach(([k, label]) => {
+      const l = document.createElement('label');
+      l.innerHTML = `<input type="checkbox" data-k="${k}"> <span>${label}</span>`;
+      l.querySelector('input').onchange = e => {
+        e.target.checked ? S.on.add(k) : S.on.delete(k);
+        S.res = null; render();
+        logLine(log, `${e.target.checked ? 'Ticked' : 'Unticked'}: ${label}`);
+      };
+      box.appendChild(l);
+    });
+    fs.appendChild(box); g.appendChild(fs);
+  });
+}
+function syncChecks() { document.querySelectorAll('#groups input').forEach(c => c.checked = S.on.has(c.dataset.k)); }
+
+function evalDrill(d) { const miss = d.need.filter(n => !S.on.has(n)); return { pass: !miss.length, miss }; }
+
+function render() {
+  svg.innerHTML = '';
+  DRILLS.forEach((d, k) => {
+    const col = k % 3, row = Math.floor(k / 3), x = 20 + col * 290, y = 10 + row * 106;
+    const r = S.res && S.res[k];
+    const st = !r ? 'idle' : r === 'run' ? 'run' : r.pass ? 'ok' : 'bad';
+    const g = el('g', {}, svg);
+    el('rect', { x, y, width: 270, height: 94, rx: 10, fill: st === 'ok' ? 'var(--ok-soft)' : st === 'bad' ? 'var(--bad-soft)' : st === 'run' ? 'var(--warn-soft)' : 'var(--surface-2)',
+      stroke: S.sel === k ? 'var(--accent)' : st === 'ok' ? 'var(--ok)' : st === 'bad' ? 'var(--bad)' : st === 'run' ? 'var(--warn)' : 'var(--border)', 'stroke-width': S.sel === k ? 3 : 1.5 }, g);
+    el('text', { x: x + 14, y: y + 28, 'font-size': 15.5, 'font-weight': 700, text: `${k + 1}. ${d.name}` }, g);
+    const sub = !r ? 'not run' : r === 'run' ? 'running…' : r.pass ? 'survived' : d.kind === 'dup' ? 'CDRs duplicated' : 'CDRs lost';
+    el('text', { x: x + 14, y: y + 54, 'font-size': 14, 'font-weight': 600, fill: st === 'ok' ? 'var(--ok)' : st === 'bad' ? 'var(--bad)' : 'var(--muted)', text: sub }, g);
+    if (r && r !== 'run' && !r.pass) el('text', { x: x + 14, y: y + 76, 'font-size': 12, fill: 'var(--muted)', text: 'missing: ' + r.miss.map(m => LABEL[m]).join(', ') }, g);
+    else el('text', { x: x + 14, y: y + 76, 'font-size': 12, fill: 'var(--muted)', text: 'needs: ' + d.need.map(m => LABEL[m]).join(', ') }, g);
+    el('text', { x: x + 256, y: y + 28, 'text-anchor': 'end', 'font-size': 18, 'font-weight': 700, fill: st === 'ok' ? 'var(--ok)' : st === 'bad' ? 'var(--bad)' : 'var(--muted)', text: st === 'ok' ? '✓' : st === 'bad' ? '✗' : '' }, g);
+    svgButton(g, `Drill ${k + 1}: ${d.name}`, () => explain(k));
+  });
+  document.getElementById('sItems').textContent = `${S.on.size} / 11`;
+  const done = S.res && S.res.every(r => r && r !== 'run');
+  document.getElementById('sPass').textContent = done ? `${S.res.filter(r => r.pass).length} / 9` : '–';
+  if (!done) setVerdict('verdict', '', 'ready', 'Press <b>Run chaos drills</b>.');
+  else {
+    const p = S.res.filter(r => r.pass).length;
+    if (p === 9) setVerdict('verdict', 'ok', 'all survived', 'Every drill ended with no lost or duplicated CDRs. Some drills still made writes fail visibly or paused a partition. That is the trade you chose.');
+    else {
+      const counts = {};
+      S.res.forEach(r => r.miss && r.miss.forEach(m => counts[m] = (counts[m] || 0) + 1));
+      const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+      setVerdict('verdict', p >= 6 ? 'warn' : 'bad', `${9 - p} drill(s) failed`, `Highest value next item: <b>${LABEL[top[0]]}</b>, which would fix ${top[1]} more drill(s).`);
+    }
+  }
+}
+const LABEL = { acks: 'acks=all', idem: 'idempotence', cb: 'send() checks', rf3: 'RF 3', misr: 'min.insync 2', unclean: 'no unclean election', rack: 'zone spread', commit: 'commit after processing', dlq: 'DLQ', ret: 'retention', alert: 'alerts' };
+
+function explain(k) {
+  S.sel = k; render();
+  const d = DRILLS[k], r = evalDrill(d);
+  logLine(log, `<b>${d.name}:</b> ${r.pass ? d.ok : r.miss.map(m => d.bad[m]).join(' ')}`, !r.pass);
+}
+
+async function run() {
+  if (S.busy) return;
+  S.busy = true; document.getElementById('run').disabled = true;
+  S.res = DRILLS.map(() => null); S.sel = null;
+  for (let k = 0; k < DRILLS.length; k++) {
+    S.res[k] = 'run'; render();
+    await sleep(reducedMotion ? 0 : 220);
+    S.res[k] = evalDrill(DRILLS[k]); render();
+  }
+  const p = S.res.filter(r => r.pass).length;
+  logLine(log, `Chaos drills finished: ${p} of 9 survived with ${S.on.size} of 11 items ticked. Click a drill for details`, true);
+  S.busy = false; document.getElementById('run').disabled = false;
+}
+
+buildChecks(); syncChecks();
+wireSeg('preSeg', v => {
+  S.on = new Set(PRESETS[v]); S.res = null; syncChecks(); render();
+  logLine(log, { none: 'Preset: nothing ticked', apache: 'Preset: Apache Kafka 4.x defaults (producer acks=all and idempotence, RF 1, min.insync 1, auto-commit, no rack)', lab: 'Preset: the Platform lab cluster (RF 3, min.insync 2, unclean election off, one broker per AZ) with default clients', all: 'Preset: the full checklist' }[v]);
+});
+document.getElementById('run').onclick = run;
+render();
+logLine(log, 'Preset: Apache Kafka 4.x defaults. Run the drills, then improve the checklist.');
+
+renderQuiz('quiz', [
+  { q: 'A team uses Apache Kafka 4.x producer defaults and keeps the broker default <code>default.replication.factor=1</code>. Which drill does the good producer default <i>not</i> save them from?',
+    options: ['Retry after a network blip', 'Leader crash: with a single replica, there is no follower to take over', 'Stale replica elected', 'None, the defaults are safe'],
+    answer: 1,
+    explain: '<code>acks=all</code> and idempotence are producer defaults since Kafka 3.0, but they can\'t create copies that don\'t exist. With RF 1, a broker failure takes the partition offline, and data that wasn\'t flushed can be lost. The Platform lab and Confluent Cloud both use RF 3.' },
+  { q: 'Which consumer setting is the most common cause of "the CDR was in Kafka but billing never charged it"?',
+    options: ['<code>enable.auto.commit=true</code> with processing that can fail after the commit', '<code>fetch.min.bytes=1</code>', '<code>max.poll.records=500</code>', '<code>isolation.level=read_uncommitted</code>'],
+    answer: 0,
+    explain: 'Auto-commit commits offsets on a timer, whether or not the records were processed. If the consumer crashes in between, the restarted group continues after the committed offset and skips those CDRs. Commit after processing instead.' },
+  { q: 'Billing was offline from Friday night to Monday morning, and <code>l09.cdr.voice</code> has <code>retention.ms</code> of 1 day. What happens when billing restarts?',
+    options: ['It reads everything from Friday', 'The broker extends retention because a group is behind', 'CDRs older than a day were deleted. The committed offset is gone, so the consumer jumps to <code>auto.offset.reset</code> and those CDRs are never billed.', 'The consumer fails to start'],
+    answer: 2,
+    explain: 'Retention is time-based and ignores consumers. Kafka does not keep data for slow readers the way an MQ queue does. Set retention longer than your worst plausible outage and alert on lag growth so the outage is short.' },
+  { q: 'With the full checklist, the "second broker lost" drill passes. What do producers actually experience during it?',
+    options: ['Nothing at all', 'Writes go to a dead-letter topic automatically', 'Writes are silently dropped', 'Writes to the affected partitions fail visibly with <code>NotEnoughReplicasException</code> until a broker returns, but no acknowledged CDR is lost'],
+    answer: 3,
+    explain: 'The checklist turns loss into visible unavailability. <code>min.insync.replicas=2</code> refuses writes that would rest on a single copy, the callback reports them, and the app can retry or buffer.' },
+  { q: 'Which pair of items stops retries from billing a subscriber twice, and stops failed sends from vanishing?',
+    options: ['RF 3 and zone spread', 'A dead-letter topic and retention', '<code>enable.idempotence=true</code> and checking every <code>send()</code> result', '<code>unclean.leader.election.enable=false</code> and alerts'],
+    answer: 2,
+    explain: 'Idempotence lets the broker drop duplicate retries using the producer ID and sequence numbers. Checking the callback or the <code>Future</code> makes sure every send that finally fails is seen and handled. Both are producer-side, so the cluster can\'t do them for you.' }
+]);
+</script>
+</body>
+</html>

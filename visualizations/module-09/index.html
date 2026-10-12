@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kafka Module 9 Visualizations</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+<style>
+  .topics { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin-top: 24px; }
+  .topic { display: block; text-decoration: none; color: var(--text); transition: border-color .15s, transform .15s; }
+  .topic:hover { border-color: var(--accent); transform: translateY(-2px); }
+  .topic .num { font-family: var(--mono); color: var(--accent); font-size: 13px; font-weight: 600; }
+  .topic h3 { margin: 6px 0; }
+  .topic p { margin: 0 0 10px; color: var(--muted); font-size: 15px; }
+  .topic .tags { display: flex; gap: 6px; flex-wrap: wrap; }
+  ol.hands { margin: 0; padding-left: 20px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <span>Apache Kafka &amp; Confluent Kafka Administration</span>
+    <div class="nav"><a href="../module-08/index.html">← Module 8</a><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Module 9</div>
+  <h1>Troubleshooting &amp; Preventing Message Loss on Confluent Kafka</h1>
+  <p class="lede">Interactive visualizations for each Module 9 topic. Each page has a hands-on simulation you can
+    play with, followed by a 5-question self-quiz with explanations.</p>
+  <p style="color:var(--muted);font-size:14px;margin:4px 0 0"><b style="color:var(--text)">Objective:</b> Troubleshoot
+    Confluent Kafka clusters and diagnose, resolve, and prevent message loss and other production issues.</p>
+
+  <div class="topics">
+    <a class="card topic" href="01-errors-log-analysis.html">
+      <div class="num">01</div><h3>Common errors &amp; log analysis</h3>
+      <p>Pick a symptom from the CDR pipeline, read the client log, the broker log and the metrics side by side, and find the stage of the request where it failed and whether retrying can help.</p>
+      <div class="tags"><span class="pill">explorer</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="02-message-loss-root-causes.html">
+      <div class="num">02</div><h3>Root causes of message loss</h3>
+      <p>Send 24 CDRs while brokers crash and a quota throttles you. Change <code>acks</code>, replication factor, <code>min.insync.replicas</code> and unclean election, and count which acknowledged messages disappear.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="03-connectivity-client-issues.html">
+      <div class="num">03</div><h3>Connectivity &amp; client-side issues</h3>
+      <p>Build a client config for the lab cluster and connect. Watch it pass or fail at DNS, TCP, TLS, SASL and metadata, with the real error and the command that tests that step.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="04-consumer-lag-remediation.html">
+      <div class="num">04</div><h3>Consumer lag analysis &amp; remediation</h3>
+      <p>Run <code>l09.billing</code> against a growing CDR stream. Diagnose lag caused by slow processing, a hot partition, a poison record or a rebalance loop, and fix each one.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="05-support-escalation.html">
+      <div class="num">05</div><h3>Confluent support &amp; escalation</h3>
+      <p>Triage five incidents: decide who owns the fix, pick a severity and attach the evidence. See which tickets reach the right team first time and which bounce back.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+    <a class="card topic" href="06-message-loss-prevention-checklist.html">
+      <div class="num">06</div><h3>Best-practice checklist for preventing message loss</h3>
+      <p>Tick the producer, topic, consumer and operations settings you'd ship, then run nine chaos drills against them and see which ones still lose or duplicate CDRs.</p>
+      <div class="tags"><span class="pill">simulation</span><span class="pill">5-question quiz</span></div>
+    </a>
+  </div>
+
+  <h2>Hands-on for this module</h2>
+  <div class="card">
+    <ol class="hands">
+      <li>Diagnose and resolve simulated message-loss and connectivity scenarios on the shared Confluent Kafka cluster</li>
+    </ol>
+  </div>
+</div>
+</body>
+</html>

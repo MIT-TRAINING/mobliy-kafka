@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Schema Evolution &amp; Compatibility</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 10 · Ecosystem, Migration &amp; DR</a>
+    <div class="nav"><span>2 / 5</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 2</div>
+  <h1>Schema Registry: schema evolution and compatibility</h1>
+  <p class="lede">The business wants a <code>roaming</code> flag and a <code>network</code> field on every voice CDR, and
+    billing-svc can't stop while you add them. Schema Registry stops a breaking change before it reaches Kafka: the producer
+    asks the registry first, and an incompatible schema gets <code>409</code>. Pick a compatibility mode, apply one change
+    to <code>CdrVoice</code>, press <b>Check</b>, then <b>Register</b>. Find a change that passes <b>BACKWARD</b> but fails
+    <b>BACKWARD_TRANSITIVE</b>.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Compatibility of the subject</span>
+      <select id="mode" aria-label="Compatibility mode">
+        <option>BACKWARD</option><option>BACKWARD_TRANSITIVE</option><option>FORWARD</option><option>FORWARD_TRANSITIVE</option><option>FULL</option><option>FULL_TRANSITIVE</option><option>NONE</option>
+      </select>
+      <button id="reset">Reset subject to v1</button>
+    </div>
+    <div class="scen" id="changes" role="group" aria-label="Change to apply to the latest schema"></div>
+    <div class="controls" style="margin-top:10px">
+      <button id="check">Check (dry run)</button>
+      <button class="primary" id="register">Register</button>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 340" role="img" aria-label="Subject versions, the candidate schema and which readers can decode which data"></svg></div>
+    <div class="verdict" id="verdict"></div>
+    <div class="term" id="term" aria-live="polite"><div class="term-empty">Registry requests appear here. sr() is the lab's curl helper for the Schema Registry REST API.</div></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>The compatibility modes</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Mode</th><th>The registry checks</th><th>Safe changes (Avro)</th><th>Upgrade first</th></tr></thead>
+      <tbody>
+        <tr><td><code>BACKWARD</code> (default)</td><td>A reader on the <b>new</b> schema can read data written with the <b>latest</b> one</td><td>Add a field <b>with</b> a default; remove a field; widen <code>int</code> → <code>long</code></td><td>Consumers</td></tr>
+        <tr><td><code>FORWARD</code></td><td>A reader on the <b>latest</b> schema can read data written with the <b>new</b> one</td><td>Add any field; remove a field that <b>had</b> a default</td><td>Producers</td></tr>
+        <tr><td><code>FULL</code></td><td>Both directions</td><td>Add or remove fields that have defaults</td><td>Either, in any order</td></tr>
+        <tr><td><code>…_TRANSITIVE</code></td><td>The same, against <b>every</b> earlier version, not just the latest</td><td>As above, for the whole history</td><td>Needed when old data stays on the topic (long retention, replays, compacted topics)</td></tr>
+        <tr><td><code>NONE</code></td><td>Nothing</td><td>Anything, including breaking changes</td><td>Coordinate by hand, or write to a new topic</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="grid grid-2">
+    <div class="card">
+      <h3 style="margin-top:0">What the registry stores</h3>
+      <p style="color:var(--muted);margin:0">A <b>subject</b> (by default <code>&lt;topic&gt;-value</code> and
+        <code>&lt;topic&gt;-key</code>) holds <b>versions</b> 1, 2, 3 … Each version has a registry-wide <b>schema ID</b>.
+        Every record carries a magic byte <code>0</code>, the 4-byte ID and then the Avro bytes, so a consumer fetches
+        the schema by ID and can decode any version on the topic.</p>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">Cloud and Platform</h3>
+      <p style="color:var(--muted);margin:0">Cloud: one Schema Registry per environment, reached with a separate
+        Schema Registry API key. Platform lab: <code>cp-services.lab.internal:8081</code> with your LDAP user, and RBAC
+        <code>ResourceOwner</code> on subjects starting with <code>lNN.</code>. Both start with
+        <code>{"compatibilityLevel":"BACKWARD"}</code>.</p>
+    </div>
+  </div>
+  <div class="callout"><b>Admin gotcha:</b> Kafka brokers don't read your records. In Apache Kafka nothing stops a
+    producer that skips the registry. Confluent Platform can check on the broker as well: set
+    <code>confluent.value.schema.validation=true</code> on the topic, and the broker rejects records without a valid schema
+    ID. In production, also set <code>auto.register.schemas=false</code> on producers and register schemas from CI.</div>
+  <div class="callout warn"><b>Production trap:</b> switching a subject to <code>NONE</code> "just for this release"
+    lets a breaking schema through. Every consumer still on the old schema then fails on the next record, and the bad
+    records stay on the topic until retention removes them. Use a new field with a default, or a new topic.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="01-managed-connectors.html"><small>← Previous</small>Confluent managed connectors (source/sink)</a>
+    <a class="next" href="03-ksqldb-overview.html"><small>Next →</small>ksqlDB on Confluent</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), logEl = document.getElementById('log'), term = document.getElementById('term');
+const SUBJECT = 'lNN.cdr.voice.avro-value';
+const V1 = [
+  { name: 'callId', type: 'string' }, { name: 'caller', type: 'string' },
+  { name: 'callee', type: 'string' }, { name: 'durationSec', type: 'int' }];
+const CHANGES = [
+  { id: 'roam', label: 'add roaming: boolean, default false', ok: f => !has(f, 'roaming'), apply: f => [...f, { name: 'roaming', type: 'boolean', def: 'false' }] },
+  { id: 'netNo', label: 'add network: string, no default', ok: f => !has(f, 'network'), apply: f => [...f, { name: 'network', type: 'string' }] },
+  { id: 'netDef', label: 'add network: string, default "unknown"', ok: f => !has(f, 'network'), apply: f => [...f, { name: 'network', type: 'string', def: '"unknown"' }] },
+  { id: 'netDrop', label: 'drop the default from network', ok: f => has(f, 'network') && get(f, 'network').def, apply: f => f.map(x => x.name === 'network' ? { name: x.name, type: x.type } : x) },
+  { id: 'rmCallee', label: 'remove callee (no default)', ok: f => has(f, 'callee'), apply: f => f.filter(x => x.name !== 'callee') },
+  { id: 'rmRoam', label: 'remove roaming (has a default)', ok: f => has(f, 'roaming'), apply: f => f.filter(x => x.name !== 'roaming') },
+  { id: 'long', label: 'durationSec: int → long', ok: f => has(f, 'durationSec') && get(f, 'durationSec').type === 'int', apply: f => f.map(x => x.name === 'durationSec' ? { ...x, type: 'long' } : x) },
+  { id: 'str', label: 'durationSec: int → string', ok: f => has(f, 'durationSec') && get(f, 'durationSec').type === 'int', apply: f => f.map(x => x.name === 'durationSec' ? { ...x, type: 'string' } : x) },
+  { id: 'rename', label: 'rename caller → msisdn', ok: f => has(f, 'caller'), apply: f => f.map(x => x.name === 'caller' ? { ...x, name: 'msisdn' } : x) },
+];
+const S = { mode: 'BACKWARD', versions: [], change: 'roam', nextId: 100001 };
+function has(f, n) { return f.some(x => x.name === n); }
+function get(f, n) { return f.find(x => x.name === n); }
+const latest = () => S.versions[S.versions.length - 1].fields;
+const candidate = () => { const c = CHANGES.find(x => x.id === S.change); return c && c.ok(latest()) ? c.apply(latest()) : null; };
+
+const PROMOTE = { int: ['long', 'float', 'double'], long: ['float', 'double'], float: ['double'], string: ['bytes'], bytes: ['string'] };
+/* Avro schema resolution: can a reader on schema R decode data written with schema W? */
+function canRead(R, W, which) {
+  const errs = [];
+  R.forEach((f, i) => {
+    const w = get(W, f.name);
+    if (!w) { if (!f.def) errs.push(`{errorType:'READER_FIELD_MISSING_DEFAULT_VALUE', description:'The field '${f.name}' at path '/fields/${i}' in the ${which[0]} schema has no default value and is missing in the ${which[1]} schema', …}`); }
+    else if (w.type !== f.type && !(PROMOTE[w.type] || []).includes(f.type)) errs.push(`{errorType:'TYPE_MISMATCH', description:'The type (path '/fields/${i}/type') of a field in the ${which[0]} schema does not match with the ${which[1]} schema', …}`);
+  });
+  return errs;
+}
+function evaluate(cand) {
+  const m = S.mode, trans = m.endsWith('TRANSITIVE');
+  const against = trans ? S.versions : [S.versions[S.versions.length - 1]];
+  let errs = [];
+  if (m !== 'NONE') against.forEach(v => {
+    if (m.startsWith('BACKWARD') || m.startsWith('FULL')) errs = errs.concat(canRead(cand, v.fields, ['new', 'old']));
+    if (m.startsWith('FORWARD') || m.startsWith('FULL')) errs = errs.concat(canRead(v.fields, cand, ['old', 'new']));
+  });
+  return [...new Set(errs)];
+}
+const ORDER = { BACKWARD: 'upgrade the <b>consumers</b> first, then the producers', FORWARD: 'upgrade the <b>producers</b> first, then the consumers', FULL: 'upgrade producers and consumers in <b>any order</b>', NONE: 'nothing is checked: <b>you</b> must coordinate every client' };
+const orderFor = m => ORDER[m.replace('_TRANSITIVE', '')];
+
+function schemaJson(f) { return f.map(x => x.name + ':' + x.type + (x.def ? '=' + x.def : '')).join(', '); }
+
+function check() {
+  const cand = candidate(); if (!cand) return say('That change does not apply to the latest version. Pick another.');
+  const errs = evaluate(cand), trans = S.mode.endsWith('TRANSITIVE');
+  termRun(term, `jq -n --rawfile s cdr-voice-next.avsc '{schema: $s}' | sr "/compatibility/subjects/$SUBJECT/versions${trans ? '' : '/latest'}?verbose=true" -X POST -H 'Content-Type: application/vnd.schemaregistry.v1+json' -d @-`,
+    errs.length ? ['{', '  "is_compatible": false,', '  "messages": [', ...errs.map(e => '    "' + e + '"'), '  ]', '}'] : ['{ "is_compatible": true, "messages": [] }'], errs.length > 0);
+  say(errs.length ? `Dry run: <b>incompatible</b> under ${S.mode}. Nothing was registered.` : `Dry run: compatible under ${S.mode}. Nothing registered yet.`, errs.length > 0);
+  render(cand);
+}
+function register() {
+  const cand = candidate(); if (!cand) return say('That change does not apply to the latest version. Pick another.');
+  const errs = evaluate(cand);
+  if (errs.length) {
+    termRun(term, `sr /subjects/$SUBJECT/versions -X POST -H 'Content-Type: application/vnd.schemaregistry.v1+json' -d @cdr-voice-next.json`,
+      [`{"error_code":409,"message":"Schema being registered is incompatible with an earlier schema for subject \\"${SUBJECT}\\" …"}`], true);
+    say(`<b>409 Conflict.</b> The producer's send fails before anything reaches Kafka. The topic stays clean.`, true);
+    setVerdict('verdict', 'bad', 'Refused', `Under <code>${S.mode}</code> this change would break a reader. Versions stay <code>[${S.versions.map(v => v.v).join(',')}]</code>.`);
+    return render(cand);
+  }
+  const v = { v: S.versions.length + 1, id: S.nextId++, fields: cand };
+  S.versions.push(v);
+  termRun(term, `sr /subjects/$SUBJECT/versions -X POST -H 'Content-Type: application/vnd.schemaregistry.v1+json' -d @cdr-voice-next.json`, [`{"id":${v.id}}`]);
+  say(`Registered <b>version ${v.v}</b>, schema ID ${v.id}. Records written from now on carry ID ${v.id}; old records keep theirs.`, true);
+  setVerdict('verdict', 'ok', 'Registered', `Version ${v.v} under <code>${S.mode}</code>: ${orderFor(S.mode)}.`);
+  renderChanges(); render();
+}
+
+function render(cand) {
+  cand = cand === undefined ? candidate() : cand;
+  svg.innerHTML = '';
+  // versions
+  el('text', { x: 20, y: 24, 'font-size': 13, 'font-weight': 700, text: 'Subject' }, svg);
+  el('text', { x: 20, y: 42, 'font-size': 11.5, fill: 'var(--muted)', text: SUBJECT }, svg);
+  el('text', { x: 20, y: 58, 'font-size': 11.5, fill: 'var(--muted)', text: 'compatibility ' + S.mode }, svg);
+  const shown = S.versions.slice(-6);
+  shown.forEach((v, k) => {
+    const y = 72 + k * 40, last = v === S.versions[S.versions.length - 1];
+    el('rect', { x: 20, y, width: 220, height: 34, rx: 7, fill: last ? 'var(--accent-soft)' : 'var(--surface-2)', stroke: last ? 'var(--accent)' : 'var(--border)' }, svg);
+    el('text', { x: 30, y: y + 15, 'font-size': 12, 'font-weight': 700, text: `v${v.v} · id ${v.id}${last ? ' · latest' : ''}` }, svg);
+    el('text', { x: 30, y: y + 28, 'font-size': 10, fill: 'var(--muted)', text: schemaJson(v.fields).slice(0, 40) + (schemaJson(v.fields).length > 40 ? '…' : '') }, svg);
+  });
+  // candidate
+  el('text', { x: 270, y: 24, 'font-size': 13, 'font-weight': 700, text: 'Candidate CdrVoice' }, svg);
+  const base = latest();
+  if (!cand) el('text', { x: 270, y: 60, 'font-size': 12, fill: 'var(--muted)', text: 'pick a change that applies to the latest version' }, svg);
+  else {
+    const rows = cand.map(f => ({ f, st: !has(base, f.name) ? 'add' : JSON.stringify(get(base, f.name)) !== JSON.stringify(f) ? 'chg' : 'same' }))
+      .concat(base.filter(b => !has(cand, b.name)).map(f => ({ f, st: 'del' })));
+    rows.forEach((r, k) => {
+      const y = 40 + k * 34, col = { add: 'var(--ok)', chg: 'var(--warn)', del: 'var(--bad)', same: 'var(--border)' }[r.st];
+      el('rect', { x: 270, y, width: 290, height: 28, rx: 6, fill: r.st === 'same' ? 'var(--surface)' : r.st === 'add' ? 'var(--ok-soft)' : r.st === 'del' ? 'var(--bad-soft)' : 'var(--warn-soft)', stroke: col }, svg);
+      el('text', { x: 280, y: y + 18, 'font-size': 12, 'font-family': 'var(--mono)', 'text-decoration': r.st === 'del' ? 'line-through' : '', text: `${r.f.name}: ${r.f.type}${r.f.def ? '  default ' + r.f.def : ''}` }, svg);
+      el('text', { x: 552, y: y + 18, 'text-anchor': 'end', 'font-size': 10.5, fill: col === 'var(--border)' ? 'var(--muted)' : col, text: { add: 'added', chg: 'changed', del: 'removed', same: '' }[r.st] }, svg);
+    });
+  }
+  // who can read what
+  el('text', { x: 590, y: 24, 'font-size': 13, 'font-weight': 700, text: 'Who can decode what' }, svg);
+  const lv = S.versions[S.versions.length - 1];
+  const checks = cand ? [
+    ['new reader ← latest data', 'BACKWARD', canRead(cand, lv.fields, ['new', 'old']).length === 0],
+    ['latest reader ← new data', 'FORWARD', canRead(lv.fields, cand, ['old', 'new']).length === 0],
+    ['new reader ← every version', 'BACKWARD_TRANSITIVE', S.versions.every(v => canRead(cand, v.fields, ['new', 'old']).length === 0)],
+    ['every reader ← new data', 'FORWARD_TRANSITIVE', S.versions.every(v => canRead(v.fields, cand, ['old', 'new']).length === 0)],
+  ] : [];
+  checks.forEach(([lab, mode, ok], k) => {
+    const y = 40 + k * 46;
+    el('rect', { x: 590, y, width: 300, height: 38, rx: 8, fill: ok ? 'var(--ok-soft)' : 'var(--bad-soft)', stroke: ok ? 'var(--ok)' : 'var(--bad)' }, svg);
+    el('text', { x: 602, y: y + 16, 'font-size': 12, 'font-weight': 600, text: (ok ? '✓ ' : '✗ ') + lab }, svg);
+    el('text', { x: 602, y: y + 31, 'font-size': 10.5, fill: 'var(--muted)', text: 'what ' + mode + ' checks' }, svg);
+  });
+  // wire format
+  const y = 268;
+  el('text', { x: 590, y: y - 8, 'font-size': 11.5, fill: 'var(--muted)', text: 'Every record on lNN.cdr.voice.avro:' }, svg);
+  [['0', 'magic', 26], [String(lv.id), 'schema id (4 bytes)', 110], ['Avro bytes', 'no field names', 164]].reduce((x, [t, s, w]) => {
+    el('rect', { x, y, width: w, height: 30, rx: 5, fill: 'var(--surface-2)', stroke: 'var(--border)' }, svg);
+    el('text', { x: x + w / 2, y: y + 19, 'text-anchor': 'middle', 'font-size': 11.5, 'font-family': 'var(--mono)', text: t }, svg);
+    el('text', { x: x + w / 2, y: y + 46, 'text-anchor': 'middle', 'font-size': 10, fill: 'var(--muted)', text: s }, svg);
+    return x + w;
+  }, 590);
+}
+
+function renderChanges() {
+  const box = document.getElementById('changes'); box.innerHTML = '';
+  CHANGES.forEach(c => {
+    const b = document.createElement('button');
+    b.textContent = c.label; b.disabled = !c.ok(latest());
+    b.setAttribute('aria-pressed', c.id === S.change);
+    b.onclick = () => { S.change = c.id; renderChanges(); render(); say(`Candidate: latest schema + <b>${c.label}</b>.`); };
+    box.appendChild(b);
+  });
+  if (!CHANGES.find(c => c.id === S.change).ok(latest())) { const first = CHANGES.find(c => c.ok(latest())); if (first) { S.change = first.id; renderChanges(); } }
+}
+const say = (h, hl) => logLine(logEl, h, hl);
+
+function reset() {
+  S.versions = [{ v: 1, id: 100001, fields: V1 }]; S.nextId = 100002; S.change = 'roam';
+  setVerdict('verdict', '', 'v1 only', `Subject <code>${SUBJECT}</code> holds version 1. ${orderFor(S.mode)[0].toUpperCase() + orderFor(S.mode).slice(1)}.`);
+  renderChanges(); render();
+}
+document.getElementById('mode').onchange = e => {
+  S.mode = e.target.value;
+  termRun(term, `sr /config/$SUBJECT -X PUT -H 'Content-Type: application/vnd.schemaregistry.v1+json' -d '{"compatibility":"${S.mode}"}'`, [`{"compatibility":"${S.mode}"}`]);
+  say(`Subject compatibility set to <b>${S.mode}</b>: ${orderFor(S.mode)}.`, true);
+  render();
+};
+document.getElementById('check').onclick = check;
+document.getElementById('register').onclick = register;
+document.getElementById('reset').onclick = () => { reset(); say('Subject reset to version 1.'); };
+reset();
+
+renderQuiz('quiz', [
+  { q: 'What does a Schema Registry–serialized record carry so that a consumer can decode it?',
+    options: ['The full Avro schema as a header', 'A magic byte and the 4-byte <b>schema ID</b>, then the Avro bytes', 'The subject name and version number', 'Nothing; consumers use the latest schema'],
+    answer: 1,
+    explain: 'Only the ID travels. The deserializer fetches (and caches) the schema by ID, which is why one topic can hold v1 and v2 records side by side and every consumer still decodes both.' },
+  { q: 'Under the default <code>BACKWARD</code> mode, a producer sends a record using a schema that adds <code>network</code> <b>without</b> a default. What happens?',
+    options: ['The record is written; old consumers ignore the field', 'The broker rejects the record with <code>INVALID_RECORD</code>', 'The registry registers it and marks the subject broken', 'The registry answers <code>409</code>, the send fails in the producer and nothing reaches Kafka'],
+    answer: 3,
+    explain: 'A reader on the new schema would have no value for <code>network</code> in old records (<code>READER_FIELD_MISSING_DEFAULT_VALUE</code>). The serializer asks the registry before sending; the refusal fails the send, so the topic stays clean.' },
+  { q: 'The subject is <code>BACKWARD</code> and you have just registered v2 (adds <code>roaming</code> with a default). In which order do you roll out?',
+    options: ['Consumers first, then producers', 'Producers first, then consumers', 'Both at the same instant, or messages are lost', 'Order doesn\'t matter for BACKWARD'],
+    answer: 0,
+    explain: 'BACKWARD guarantees that the <b>new</b> reader can read <b>old</b> data. Upgrade the consumers first so they can read both, then the producers. FORWARD reverses the order; FULL allows either.' },
+  { q: 'v2 added <code>network</code> with default <code>"unknown"</code>. v3 drops that default. It passes <code>BACKWARD</code> but fails <code>BACKWARD_TRANSITIVE</code>. Why?',
+    options: ['Transitive mode forbids removing defaults altogether', 'v3 changes the field type', 'v1 records have no <code>network</code>, and a v3 reader has no default to fill in; only the transitive check compares v3 with v1', 'Transitive mode also checks consumers\' Java classes'],
+    answer: 2,
+    explain: 'BACKWARD compares only with the latest version (v2, which has <code>network</code>). TRANSITIVE compares with every version, and v1 data lacks the field. Use it when old data stays on the topic: long retention, compacted topics, replays.' },
+  { q: 'Billing wants <code>caller</code> renamed to <code>msisdn</code> under <code>FULL</code>. The registry refuses. What is the safe path?',
+    options: ['Set the subject to <code>NONE</code> for one release, then back to FULL', 'Delete the subject and register the new schema as v1', 'Rename it in the producer only; consumers will adapt', 'Add <code>msisdn</code> with a default and keep <code>caller</code> until every consumer reads <code>msisdn</code>; or move to a new topic'],
+    answer: 3,
+    explain: 'A rename is a remove plus an add without a default, so it breaks readers in both directions. Adding the new field with a default is compatible. Switching to NONE or deleting the subject lets a breaking schema reach consumers that still decode old records.' },
+]);
+</script>
+</body>
+</html>

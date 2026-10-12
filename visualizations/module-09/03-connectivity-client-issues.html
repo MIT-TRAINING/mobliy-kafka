@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connectivity &amp; Client Issues</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 9 · Troubleshooting &amp; Message Loss</a>
+    <div class="nav"><span>3 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 3</div>
+  <h1>Troubleshooting connectivity and client-side issues</h1>
+  <p class="lede">"Can't connect to Kafka" is six different problems. A client has to resolve a name, open a TCP
+    connection, complete TLS, log in with SASL, read metadata and then connect to <i>every</i> broker that metadata names.
+    Build a client config for the Platform lab cluster, press <b>Connect</b>, and find the first step that fails. Each failure shows
+    the error the client prints and the one command that tests that step on its own.</p>
+
+  <div class="card">
+    <div class="controls">
+      <label class="ctl-label" for="where">Client runs on</label>
+      <select id="where"><option value="vm">your lab VM</option><option value="laptop">your laptop (office network)</option></select>
+      <label class="ctl-label" for="boot">bootstrap.servers</label>
+      <select id="boot"><option value="dns">cp-kafka.lab.internal:9092</option><option value="ip">10.20.11.51:9092</option><option value="port">cp-kafka.lab.internal:9091</option></select>
+    </div>
+    <div class="controls">
+      <label class="ctl-label" for="proto">security.protocol</label>
+      <select id="proto"><option value="SASL_SSL">SASL_SSL</option><option value="SSL">SSL</option><option value="PLAINTEXT">PLAINTEXT</option></select>
+      <label class="ctl-label" for="ca">ssl.truststore</label>
+      <select id="ca"><option value="yes">/home/learner/kafka/cp-ca.pem</option><option value="no">(not set: JVM default CAs)</option></select>
+      <label class="ctl-label" for="pw">LDAP password</label>
+      <select id="pw"><option value="ok">current</option><option value="old">last week's</option></select>
+    </div>
+    <div class="checks">
+      <label><input type="checkbox" id="cStop"> The trainer has stopped the Confluent Platform hosts overnight</label>
+      <label><input type="checkbox" id="cAdv"> What if: on <i>your own</i> cluster, the brokers advertise <code>localhost:9092</code> (a common Docker mistake)</label>
+    </div>
+    <div class="controls"><button class="primary" id="go">Connect</button><button id="fixIt">Use the lab's working config</button></div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 330" role="img" aria-label="Connection steps from DNS to ready, with the first failing step marked"></svg></div>
+    <div class="term" id="term" aria-label="Client output and diagnostic commands"><div class="term-empty">Press Connect.</div></div>
+    <div class="verdict" id="verdict"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>One test per step</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Step</th><th>Test it alone (from the client host)</th><th>Typical client symptom</th><th>Usual fix</th></tr></thead>
+      <tbody>
+        <tr><td>1. DNS</td><td><code>getent hosts cp-kafka.lab.internal</code></td><td><code>No resolvable bootstrap urls given in bootstrap.servers</code></td><td>Run from inside the VPC; <code>.lab.internal</code> is a private zone</td></tr>
+        <tr><td>2. TCP</td><td><code>nc -vz cp-kafka.lab.internal 9092</code></td><td><code>Connection to node -1 … could not be established</code>, then <code>Timed out waiting for a node assignment</code></td><td>Right port; security group; hosts running</td></tr>
+        <tr><td>3. TLS</td><td><code>openssl s_client -connect $CP -CAfile $CP_CA -verify_return_error &lt;/dev/null</code></td><td><code>SSLHandshakeException: PKIX path building failed</code> or <code>No subject alternative names</code></td><td>Point the truststore at <code>cp-ca.pem</code>; connect by DNS name, not IP</td></tr>
+        <tr><td>4. SASL</td><td><code>kafka-broker-api-versions.sh --bootstrap-server $CP --command-config $CFG</code></td><td><code>SaslAuthenticationException</code>, or a client that just disconnects</td><td><code>security.protocol=SASL_SSL</code>, <code>sasl.mechanism=PLAIN</code>, current password</td></tr>
+        <tr><td>5–6. Metadata, brokers</td><td>The same command: it lists every broker as advertised</td><td><code>Connection to node 1 (localhost/127.0.0.1:9092) could not be established</code></td><td>Fix <code>advertised.listeners</code> on the brokers (admin side)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Admin gotcha:</b> bootstrap succeeding proves only that <i>one</i> broker answered. The client then
+    connects to the hosts in the metadata, which come from each broker's <code>advertised.listeners</code>. If a broker advertises
+    a name the client can't reach, the client hangs after a successful bootstrap. Check with
+    <code>kafka-broker-api-versions.sh</code>, which prints every advertised broker address.</div>
+  <div class="callout warn"><b>Production trap:</b> a client with the wrong <code>security.protocol</code> often logs no
+    exception at all, only <code>Bootstrap broker … disconnected</code> over and over until a timeout. When you see that line, check
+    the protocol and SASL settings before you blame the network.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="02-message-loss-root-causes.html"><small>← Previous</small>Root causes of message loss</a>
+    <a class="next" href="04-consumer-lag-remediation.html"><small>Next →</small>Consumer lag analysis &amp; remediation</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), log = document.getElementById('log'), term = document.getElementById('term');
+const STEPS = ['1. DNS lookup', '2. TCP connect', '3. TLS handshake', '4. SASL login (LDAP)', '5. Metadata', '6. Connect to each broker', 'Ready to produce'];
+const S = { res: null, busy: false };
+const v = id => document.getElementById(id).value;
+const chk = id => document.getElementById(id).checked;
+const CMD = {
+  dns: 'getent hosts cp-kafka.lab.internal',
+  tcp: () => `nc -vz ${v('boot') === 'ip' ? '10.20.11.51' : 'cp-kafka.lab.internal'} ${v('boot') === 'port' ? 9091 : 9092}`,
+  tls: 'openssl s_client -connect $CP -CAfile $CP_CA -verify_return_error </dev/null 2>&1 | grep -E "Verify return|verify error"',
+  api: 'kafka-broker-api-versions.sh --bootstrap-server $CP --command-config $CFG | grep "id:"'
+};
+
+function evaluate() {
+  const where = v('where'), boot = v('boot'), proto = v('proto'), ca = v('ca'), pw = v('pw');
+  const hostTxt = boot === 'ip' ? '10.20.11.51:9092' : boot === 'port' ? 'cp-kafka.lab.internal:9091' : 'cp-kafka.lab.internal:9092';
+  const ok = (detail) => ({ ok: true, detail });
+  const steps = [];
+  // 1 DNS
+  if (boot === 'ip') steps.push(ok('IP address given: no lookup needed'));
+  else if (where === 'laptop') return fin(steps, 0, 'The name is not resolvable outside the VPC', [
+    `WARN Couldn't resolve server ${hostTxt} from bootstrap.servers as DNS resolution failed for cp-kafka.lab.internal`,
+    '!org.apache.kafka.common.config.ConfigException: No resolvable bootstrap urls given in bootstrap.servers'],
+    [CMD.dns, ['(no output, exit code 2: the name exists only in the VPC\'s private DNS zone)'], true],
+    '<code>cp-kafka.lab.internal</code> is in a private DNS zone that only resolves inside the lab VPC. Run the client on your lab VM.');
+  else steps.push(ok('cp-kafka.lab.internal → 10.20.11.51, .12.51, .13.51 (3 brokers)'));
+  // 2 TCP
+  const tcpFail = where === 'laptop' ? 'private 10.20.x.x addresses aren\'t routable from your office' : chk('cStop') ? 'the instances are stopped: nothing answers' : boot === 'port' ? 'port 9091 is the brokers\' internal mTLS listener, not open to lab VMs' : null;
+  if (tcpFail) return fin(steps, 1, tcpFail, [
+    `WARN [AdminClient clientId=adminclient-1] Connection to node -1 (${boot === 'ip' ? '/10.20.11.51:9092' : 'cp-kafka.lab.internal/10.20.11.51:' + (boot === 'port' ? 9091 : 9092)}) could not be established. Node may not be available.`,
+    '… repeats for each address …', '!org.apache.kafka.common.errors.TimeoutException: Timed out waiting for a node assignment. Call: listNodes'],
+    [CMD.tcp(), [`nc: connect to ${boot === 'ip' ? '10.20.11.51' : 'cp-kafka.lab.internal'} port ${boot === 'port' ? 9091 : 9092} (tcp) failed: Connection timed out`], true],
+    chk('cStop') && where === 'vm' && boot !== 'port' ? 'The Platform hosts are stopped. Ask the trainer to start them; your config is fine.' :
+      boot === 'port' ? 'Use the CLIENT listener, port 9092. Lab VMs may reach only 9092, 8090, 8081, 8083, 8088 and 9021.' : 'Run the client inside the lab network (your lab VM).');
+  steps.push(ok(`TCP to ${hostTxt} open`));
+  // 3 TLS
+  if (proto === 'PLAINTEXT') return fin(steps, 2, 'the client speaks plaintext to a TLS listener', [
+    `WARN [AdminClient clientId=adminclient-1] Bootstrap broker ${hostTxt} (id: -1 rack: null) disconnected`, '… the same line every second …',
+    '!org.apache.kafka.common.errors.TimeoutException: Timed out waiting for a node assignment. Call: listNodes',
+    'broker server.log: INFO [SocketServer listenerType=BROKER, nodeId=1] Failed authentication with /10.20.11.105 (channelId=…) (SSL handshake failed)'],
+    [CMD.tls, ['Verify return code: 0 (ok)', '(TLS works from openssl, so the problem is the client\'s security.protocol)'], false],
+    'Set <code>security.protocol=SASL_SSL</code>. The CLIENT listener on 9092 only accepts TLS.');
+  if (ca === 'no') return fin(steps, 2, 'the JVM doesn\'t trust the lab CA', [
+    '!org.apache.kafka.common.errors.SslAuthenticationException: SSL handshake failed',
+    '!Caused by: javax.net.ssl.SSLHandshakeException: PKIX path building failed: … unable to find valid certification path to requested target'],
+    ['openssl s_client -connect $CP -verify_return_error </dev/null 2>&1 | grep -E "Verify return|verify error"', ['verify error:num=20:unable to get local issuer certificate'], true],
+    'The brokers\' certificates are signed by the lab\'s private CA. Point <code>ssl.truststore.location</code> (type PEM) at <code>/home/learner/kafka/cp-ca.pem</code>.');
+  if (boot === 'ip') return fin(steps, 2, 'the certificate has no SAN for an IP address', [
+    '!org.apache.kafka.common.errors.SslAuthenticationException: SSL handshake failed',
+    '!Caused by: javax.net.ssl.SSLHandshakeException: No subject alternative names matching IP address 10.20.11.51 found'],
+    ['openssl s_client -connect 10.20.11.51:9092 </dev/null 2>/dev/null | openssl x509 -noout -ext subjectAltName', ['X509v3 Subject Alternative Name:', '    DNS:cp-broker-1.lab.internal, DNS:cp-kafka.lab.internal, …'], false],
+    'The client checks that the name you connected to is in the certificate. Use <code>cp-kafka.lab.internal:9092</code>. Don\'t turn off hostname verification to "fix" it.');
+  steps.push(ok('certificate chain trusted, hostname matches'));
+  // 4 SASL
+  if (proto === 'SSL') return fin(steps, 3, 'the client never starts SASL', [
+    `WARN [AdminClient clientId=adminclient-1] Bootstrap broker ${hostTxt} (id: -1 rack: null) disconnected`, '… repeats until the timeout …',
+    'broker server.log: … Unexpected Kafka request of type METADATA during SASL handshake.'],
+    [CMD.api, ['(hangs, then) TimeoutException: Timed out waiting for a node assignment'], true],
+    'The listener expects a SASL login after TLS. Set <code>security.protocol=SASL_SSL</code> and <code>sasl.mechanism=PLAIN</code> with your JAAS line.');
+  if (pw === 'old') return fin(steps, 3, 'LDAP rejected the password', [
+    `ERROR [AdminClient clientId=adminclient-1] Connection to node -1 (cp-kafka.lab.internal/10.20.11.51:9092) failed authentication due to: Authentication failed during authentication due to invalid credentials with SASL mechanism PLAIN`,
+    '!org.apache.kafka.common.errors.SaslAuthenticationException: Authentication failed during authentication due to invalid credentials with SASL mechanism PLAIN'],
+    [CMD.api, ['Error … SaslAuthenticationException: Authentication failed …'], true],
+    'Put the current password into <code>~/kafka/cp.properties</code>. This error is not retriable: the client will fail the same way until the file changes.');
+  steps.push(ok('User:l09 authenticated against cp-ldap'));
+  // 5 Metadata, 6 brokers
+  if (chk('cAdv')) {
+    steps.push(ok('brokers advertised as localhost:9092 (id 1, 2, 3)'));
+    return fin(steps, 5, 'the advertised address points back at the client itself', [
+      'WARN [AdminClient clientId=adminclient-1] Connection to node 1 (localhost/127.0.0.1:9092) could not be established. Node may not be available.',
+      '!org.apache.kafka.common.errors.TimeoutException: Timed out waiting for a node assignment.'],
+      [CMD.api, ['localhost:9092 (id: 1 rack: …) -> (', '(every broker reports the same unusable address)'], false],
+      'Bootstrap worked, then the client followed the metadata to <code>localhost</code>. The broker admin fixes <code>advertised.listeners</code> to a name clients can reach. The client config is fine.');
+  }
+  steps.push(ok('cp-broker-1/2/3.lab.internal:9092'));
+  steps.push(ok('connected to all three brokers'));
+  return fin(steps, -1, '', ['INFO Kafka version: …', 'INFO [AdminClient clientId=adminclient-1] … connected'],
+    [CMD.api, ['cp-broker-1.lab.internal:9092 (id: 1 rack: …) -> (', 'cp-broker-2.lab.internal:9092 (id: 2 rack: …) -> (', 'cp-broker-3.lab.internal:9092 (id: 3 rack: …) -> ('], false], '');
+}
+function fin(steps, failAt, why, clientLines, test, fix) { return { steps, failAt, why, clientLines, test, fix }; }
+
+function draw(res, upto) {
+  svg.innerHTML = '';
+  STEPS.forEach((name, k) => {
+    const y = 14 + k * 45;
+    const st = !res || k > upto ? 'idle' : res.failAt === k ? 'bad' : (res.failAt === -1 || k < res.failAt) ? 'ok' : 'idle';
+    el('rect', { x: 20, y, width: 260, height: 36, rx: 8, fill: st === 'ok' ? 'var(--ok-soft)' : st === 'bad' ? 'var(--bad-soft)' : 'var(--surface-2)', stroke: st === 'ok' ? 'var(--ok)' : st === 'bad' ? 'var(--bad)' : 'var(--border)', 'stroke-width': st === 'bad' ? 2.5 : 1.2 }, svg);
+    el('text', { x: 34, y: y + 23, 'font-size': 15, 'font-weight': 600, text: name }, svg);
+    el('circle', { cx: 310, cy: y + 18, r: 12, fill: st === 'ok' ? 'var(--ok)' : st === 'bad' ? 'var(--bad)' : 'var(--surface-2)', stroke: 'var(--border)' }, svg);
+    el('text', { x: 310, y: y + 23, 'text-anchor': 'middle', 'font-size': 14, 'font-weight': 700, fill: '#fff', text: st === 'ok' ? '✓' : st === 'bad' ? '✗' : '' }, svg);
+    let detail = '';
+    if (res && k <= upto) detail = res.failAt === k ? res.why : res.steps[k] ? res.steps[k].detail : '';
+    el('text', { x: 336, y: y + 23, 'font-size': 14, fill: st === 'bad' ? 'var(--bad)' : 'var(--muted)', text: detail }, svg);
+    if (k < STEPS.length - 1) el('line', { x1: 150, y1: y + 36, x2: 150, y2: y + 45, stroke: 'var(--border)', 'stroke-width': 2 }, svg);
+  });
+}
+
+async function connect() {
+  if (S.busy) return;
+  S.busy = true; document.getElementById('go').disabled = true;
+  const res = evaluate(); S.res = res;
+  const last = res.failAt === -1 ? STEPS.length - 1 : res.failAt;
+  const tok = el('circle', { r: 7, fill: 'var(--accent)' }, svg);
+  for (let k = 0; k <= last; k++) {
+    draw(res, k - 1); svg.appendChild(tok);
+    await tween(tok, 296, 14 + Math.max(0, k - 1) * 45 + 18, 296, 14 + k * 45 + 18, 260);
+    draw(res, k); svg.appendChild(tok);
+  }
+  tok.remove();
+  term.innerHTML = '';
+  res.clientLines.forEach(l => { const d = document.createElement('div'); d.className = 'term-line ' + (l.startsWith('!') ? 'err' : 'out'); d.textContent = l.replace(/^!/, ''); term.appendChild(d); });
+  termRun(term, res.test[0].replace(/</g, '&lt;'), res.test[1].map(s => s.replace(/</g, '&lt;')), res.test[2]);
+  if (res.failAt === -1) { setVerdict('verdict', 'ok', 'connected', 'Every step passed. This is the config in <code>~/kafka/cp.properties</code>.'); logLine(log, 'Connected: DNS, TCP, TLS, SASL, metadata and all three brokers OK'); }
+  else { setVerdict('verdict', 'bad', `fails at ${STEPS[res.failAt]}`, res.fix); logLine(log, `<b>${STEPS[res.failAt]}</b> failed: ${res.why}`, true); }
+  S.busy = false; document.getElementById('go').disabled = false;
+}
+
+document.getElementById('go').onclick = connect;
+document.getElementById('fixIt').onclick = () => {
+  [['where', 'vm'], ['boot', 'dns'], ['proto', 'SASL_SSL'], ['ca', 'yes'], ['pw', 'ok']].forEach(([id, val]) => document.getElementById(id).value = val);
+  document.getElementById('cStop').checked = false; document.getElementById('cAdv').checked = false;
+  draw(null); setVerdict('verdict', '', 'config', 'Reset to the lab config. Press Connect.');
+  logLine(log, 'Loaded the working lab config: SASL_SSL, PLAIN, cp-ca.pem, cp-kafka.lab.internal:9092');
+};
+['where', 'boot', 'proto', 'ca', 'pw', 'cStop', 'cAdv'].forEach(id => document.getElementById(id).addEventListener('change', e => {
+  draw(null); setVerdict('verdict', '', 'changed', 'Config changed. Press Connect.');
+  logLine(log, `${id === 'cStop' ? 'CP hosts stopped' : id === 'cAdv' ? 'Brokers advertise localhost:9092' : id} → ${e.target.type === 'checkbox' ? e.target.checked : e.target.value}`);
+}));
+document.getElementById('where').value = 'laptop';
+draw(null);
+setVerdict('verdict', '', 'start', 'The config starts on your laptop. Press <b>Connect</b>, then fix one step at a time.');
+logLine(log, 'You are a billing-svc developer testing from your laptop. Press Connect.');
+
+renderQuiz('quiz', [
+  { q: 'A client logs <code>Bootstrap broker cp-kafka.lab.internal:9092 (id: -1 rack: null) disconnected</code> every second and never throws an authentication error. <code>nc -vz</code> to the same host and port succeeds. What do you check first?',
+    options: ['The security group', 'DNS', 'The client\'s <code>security.protocol</code> and SASL settings', 'The topic\'s replication factor'],
+    answer: 2,
+    explain: 'TCP works, so the network is fine. A client speaking PLAINTEXT (or SSL without SASL) to a SASL_SSL listener is dropped by the broker without a useful client-side error. The broker log shows <code>SSL handshake failed</code> or an unexpected request during the SASL handshake.' },
+  { q: 'You connect with <code>10.20.11.51:9092</code> and get <code>No subject alternative names matching IP address 10.20.11.51 found</code>. What is the right fix?',
+    options: ['Connect with the DNS name <code>cp-kafka.lab.internal:9092</code>', 'Disable hostname verification in the client', 'Switch to PLAINTEXT', 'Add the IP to <code>/etc/hosts</code>'],
+    answer: 0,
+    explain: 'The certificate lists DNS names, not IP addresses. Hostname verification is what stops a man-in-the-middle, so turning it off removes the protection TLS is there for. Use a name that is in the certificate.' },
+  { q: 'Bootstrap succeeds, but the client then logs <code>Connection to node 1 (localhost/127.0.0.1:9092) could not be established</code>. Whose configuration is wrong?',
+    options: ['The client\'s <code>bootstrap.servers</code>', 'The broker\'s <code>advertised.listeners</code>', 'The client\'s truststore', 'The consumer group\'s offsets'],
+    answer: 1,
+    explain: 'After bootstrap the client uses the addresses in the metadata, which come from each broker\'s <code>advertised.listeners</code>. A broker advertising <code>localhost</code> sends the client to itself. Only the broker admin can fix it.' },
+  { q: 'From your laptop, <code>getent hosts cp-kafka.lab.internal</code> prints nothing. On your lab VM it prints an address. What does that tell you?',
+    options: ['The cluster is down', 'Your laptop\'s Java version is too old', 'The DNS name is only resolvable inside the lab VPC, so the client must run there', 'The certificate has expired'],
+    answer: 2,
+    explain: 'The <code>.lab.internal</code> zone is private to the VPC. The lab VM can resolve and reach the brokers, and your laptop can\'t do either. Don\'t chase TLS or passwords until the name resolves.' },
+  { q: 'A producer fails with <code>SaslAuthenticationException</code>. A colleague suggests raising <code>retries</code> and <code>reconnect.backoff.max.ms</code>. Why won\'t that help?',
+    options: ['Retries are disabled for SASL', 'Backoff only applies to consumers', 'The broker blocks clients that retry', 'Authentication failures are not retriable: the same credentials fail every time until the config or the LDAP account changes'],
+    answer: 3,
+    explain: 'Retrying helps with transient states such as a leader moving or followers catching up. A wrong password stays wrong. Fix the credentials, then test with <code>kafka-broker-api-versions.sh --command-config $CFG</code>.' }
+]);
+</script>
+</body>
+</html>
