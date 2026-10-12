@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Root Causes of Message Loss</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 9 · Troubleshooting &amp; Message Loss</a>
+    <div class="nav"><span>2 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 2</div>
+  <h1>Root causes of message loss: acks, replication factor, quotas and throttling</h1>
+  <p class="lede">Kafka doesn't lose messages at random. Loss means one of two things: the cluster <b>acknowledged</b> a
+    CDR that later disappeared, or the producer <b>gave up</b> on one and nobody looked at the error. Pick a failure, set the
+    producer and topic, then press <b>Send 24 CDRs</b>. Try to get a red "acknowledged then lost" cell, then change one
+    setting at a time until you can't.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Failure</span>
+      <div class="seg" role="group" aria-label="Failure scenario" id="scSeg"><button data-v="crash" aria-pressed="true">Leader crashes</button><button data-v="cascade" aria-pressed="false">Brokers fail one by one</button><button data-v="throttle" aria-pressed="false">Quota throttling</button></div>
+    </div>
+    <div class="controls">
+      <span class="ctl-label">acks</span>
+      <div class="seg" role="group" aria-label="acks" id="acksSeg"><button data-v="0" aria-pressed="false">0</button><button data-v="1" aria-pressed="true">1</button><button data-v="all" aria-pressed="false">all</button></div>
+      <span class="ctl-label">replication factor</span>
+      <div class="seg" role="group" aria-label="Replication factor" id="rfSeg"><button data-v="1" aria-pressed="false">1</button><button data-v="2" aria-pressed="false">2</button><button data-v="3" aria-pressed="true">3</button></div>
+      <span class="ctl-label">min.insync.replicas</span>
+      <div class="seg" role="group" aria-label="min.insync.replicas" id="misrSeg"><button data-v="1" aria-pressed="true">1</button><button data-v="2" aria-pressed="false">2</button></div>
+    </div>
+    <div class="controls">
+      <span class="ctl-label">unclean.leader.election.enable</span>
+      <div class="seg" role="group" aria-label="Unclean leader election" id="uncSeg"><button data-v="false" aria-pressed="true">false</button><button data-v="true" aria-pressed="false">true</button></div>
+      <span class="ctl-label">send() errors</span>
+      <div class="seg" role="group" aria-label="How the app handles send errors" id="cbSeg"><button data-v="handle" aria-pressed="true">callback checks them</button><button data-v="ignore" aria-pressed="false">fire and forget</button></div>
+      <button class="primary" id="run">Send 24 CDRs</button>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 340" role="img" aria-label="Producer outcomes per CDR and the log on each replica"></svg></div>
+    <div class="legend">
+      <span><i style="background:var(--ok)"></i>acknowledged, still there</span>
+      <span><i style="background:var(--bad)"></i>acknowledged, then lost</span>
+      <span><i style="background:var(--p4)"></i>failed, error ignored (silent loss)</span>
+      <span><i style="background:var(--warn)"></i>failed, app told</span>
+      <span><i style="background:var(--muted)"></i>stored, but no leader can serve it</span>
+    </div>
+    <div class="stats">
+      <div class="stat"><b id="sAck">0</b><span>acknowledged</span></div>
+      <div class="stat"><b id="sLost">0</b><span>acknowledged, then lost</span></div>
+      <div class="stat"><b id="sDrop">0</b><span>silently dropped</span></div>
+      <div class="stat"><b id="sErr">0</b><span>failures the app saw</span></div>
+      <div class="stat"><b id="sStuck">0</b><span>unreachable</span></div>
+    </div>
+    <div class="verdict" id="verdict"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Where acknowledged data goes missing</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Mechanism</th><th>What happens</th><th>Setting that closes it</th><th>Lab and Cloud</th></tr></thead>
+      <tbody>
+        <tr><td>Leader dies before followers copy</td><td>With <code>acks=1</code> the leader acknowledges after its own write. A new leader without the last records takes over, and the old leader truncates them when it returns.</td><td><code>acks=all</code> (the producer default since Kafka 3.0)</td><td>Producer setting on both. Check apps that set <code>acks=1</code> "for speed".</td></tr>
+        <tr><td><code>acks=0</code></td><td>The producer never hears back. Anything sent to a dying broker is gone, and no error reaches the app.</td><td>Never use it for CDRs or billing data</td><td>Producer setting on both</td></tr>
+        <tr><td>Too few copies</td><td>RF 1 has no copy to fail over to. RF 2 with <code>min.insync.replicas=1</code> keeps writing with one copy left.</td><td>RF 3 and <code>min.insync.replicas=2</code></td><td>Lab: <code>default.replication.factor=3</code>, <code>min.insync.replicas=2</code>. Cloud: RF is always 3</td></tr>
+        <tr><td>Unclean leader election</td><td>An out-of-sync replica becomes leader and everything it lacks is deleted from the others, even records written with <code>acks=all</code>.</td><td><code>unclean.leader.election.enable=false</code> (the default)</td><td>Lab: default false. Cloud: not a setting you can change</td></tr>
+        <tr><td>Quotas and throttling</td><td>The broker delays responses. Batches wait in the producer until <code>delivery.timeout.ms</code>, then fail, or <code>send()</code> blocks for <code>max.block.ms</code> when <code>buffer.memory</code> is full.</td><td>Handle the send callback; size quotas and Cloud capacity with headroom; alert on throttling</td><td>Lab: <code>producer_byte_rate</code> client quotas. Cloud: cluster-type limits (<code>client_limit_milliseconds</code>)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Admin takeaway:</b> <code>acks=all</code> means "every replica <i>currently in the ISR</i> has it". It is
+    only as strong as <code>min.insync.replicas</code>: with 1, an ISR of just the leader still acknowledges. Use RF 3 with
+    <code>min.insync.replicas=2</code>, so every acknowledged CDR is on at least two brokers in two zones.</div>
+  <div class="callout warn"><b>Production trap:</b> throttling never deletes data on the broker. The loss happens in your
+    application, when a <code>send()</code> callback receives a <code>TimeoutException</code> and nobody checks it. Grep the code for
+    <code>producer.send(record)</code> with no callback and no <code>.get()</code>.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="01-errors-log-analysis.html"><small>← Previous</small>Common errors &amp; log analysis</a>
+    <a class="next" href="03-connectivity-client-issues.html"><small>Next →</small>Connectivity &amp; client-side issues</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), log = document.getElementById('log');
+const N = 24, LAG = 2;
+const S = { sc: 'crash', acks: '1', rf: 3, misr: 1, unclean: false, cb: 'handle', running: false, run: null };
+const AZ = { 1: 'ap-south-1a', 2: 'ap-south-1b', 3: 'ap-south-1c' };
+const COLOR = { safe: 'var(--ok)', lost: 'var(--bad)', drop: 'var(--p4)', err: 'var(--warn)', stuck: 'var(--muted)', pending: 'var(--surface-2)', sent: 'var(--accent-soft)' };
+
+function fresh() {
+  const reps = [1, 2, 3].slice(0, S.rf);
+  return { reps, up: { 1: true, 2: true, 3: true }, logs: { 1: [], 2: [], 3: [] }, isr: new Set(reps), leader: 1, unc: false,
+    out: Array(N).fill('pending'), acked: new Set(), i: 0, notes: [] };
+}
+
+function note(R, html, hl) { logLine(log, html, hl); R.notes.push(html); }
+
+function crash(R, b) {
+  R.up[b] = false;
+  const wasIsr = R.isr.has(b);
+  R.isr.delete(b);
+  if (!R.reps.includes(b)) return note(R, `cp-broker-${b} is down (not a replica of this partition)`);
+  if (R.leader !== b) return note(R, `cp-broker-${b} is down${wasIsr ? '. It leaves the ISR' : ''}. ISR = {${[...R.isr].join(',') || '–'}}`, true);
+  const clean = R.reps.filter(r => R.up[r] && R.isr.has(r));
+  if (clean.length) elect(R, clean[0], false);
+  else if (S.unclean && R.reps.some(r => R.up[r])) elect(R, R.reps.find(r => R.up[r]), true);
+  else { R.leader = null; note(R, `<b>Leader cp-broker-${b} crashed</b>. No in-sync replica is left, so the partition is <b>offline</b>`, true); }
+}
+
+function elect(R, nb, unclean) {
+  const old = R.leader;
+  R.leader = nb; R.unc = R.unc || unclean;
+  if (unclean) R.isr = new Set([nb]);
+  R.reps.forEach(r => { if (r !== nb && R.logs[r].length > R.logs[nb].length) R.logs[r] = R.logs[nb].slice(); });
+  const gone = [...R.acked].filter(m => !R.logs[nb].includes(m));
+  note(R, `${old ? `<b>Leader cp-broker-${old} crashed</b>. ` : ''}${unclean ? '<b>Unclean</b> election: out-of-sync' : 'Clean election: in-sync'} cp-broker-${nb} is the new leader` +
+    (gone.length ? `. It never had CDR ${gone.join(', ')}, so they are <b>gone</b>` : ''), true);
+}
+
+function restore(R, b) {
+  R.up[b] = true;
+  if (!R.reps.includes(b)) return;
+  if (R.leader === null) {
+    if (S.unclean) elect(R, b, true);
+    else note(R, `cp-broker-${b} is back but was not in sync. With unclean election off, it can't lead: the partition stays offline`, true);
+    return;
+  }
+  R.logs[b] = R.logs[R.leader].slice(); R.isr.add(b);
+  note(R, `cp-broker-${b} is back, catches up and rejoins the ISR`);
+}
+
+function events(R, i) {
+  if (S.sc === 'crash' && i === 8) crash(R, 1);
+  if (S.sc === 'cascade') {
+    if (i === 0) crash(R, 3);
+    if (i === 8) crash(R, 1);
+    if (i === 16) { crash(R, 2); restore(R, 3); }
+  }
+  if (S.sc === 'throttle' && i === 8) note(R, `Quota <code>producer_byte_rate</code> reached: the broker delays every response. Batches pile up in the producer`, true);
+}
+
+function fail(R, i, why) {
+  R.out[i] = S.cb === 'handle' ? 'err' : 'drop';
+  if (i === R.firstFail) note(R, `CDR ${i}: ${why}${S.cb === 'handle' ? ' → the callback logs it and the app re-sends or parks it' : ' → <b>nobody checks the callback</b>'}`, true);
+}
+
+function step(R) {
+  const i = R.i;
+  events(R, i);
+  if (S.sc === 'throttle' && i >= 9 && i <= 14) {
+    if (R.firstFail === undefined) R.firstFail = i;
+    fail(R, i, '<code>TimeoutException: Expiration of … record(s) … ms has passed since batch creation</code>');
+  } else if (R.leader === null) {
+    if (R.firstFail === undefined) R.firstFail = i;
+    fail(R, i, 'no leader for l09.cdr.voice-0, the batch expires after <code>delivery.timeout.ms</code>');
+  } else if (S.acks === '0' && R.crashedAt === i) {
+    R.out[i] = 'lost'; R.acked.add(i);
+    note(R, `CDR ${i} went to the dead leader's socket. With <code>acks=0</code> the producer never finds out`, true);
+  } else if (S.acks === 'all' && R.isr.size < S.misr) {
+    if (R.firstFail === undefined) R.firstFail = i;
+    fail(R, i, `<code>NotEnoughReplicasException</code> (ISR ${R.isr.size} &lt; min.insync.replicas ${S.misr}), retried until <code>delivery.timeout.ms</code>`);
+  } else {
+    R.logs[R.leader].push(i);
+    if (S.acks === 'all') R.isr.forEach(r => { if (r !== R.leader) R.logs[r] = R.logs[R.leader].slice(); });
+    else R.isr.forEach(r => { if (r !== R.leader) R.logs[r] = R.logs[R.leader].slice(0, Math.max(R.logs[r].length, R.logs[R.leader].length - LAG)); });
+    R.acked.add(i); R.out[i] = 'safe';
+  }
+  R.i++;
+  settle(R);
+}
+
+function settle(R) {
+  R.acked.forEach(m => {
+    if (R.out[m] === 'err' || R.out[m] === 'drop') return;
+    if (R.leader !== null) R.out[m] = R.logs[R.leader].includes(m) ? 'safe' : 'lost';
+    else R.out[m] = R.reps.some(r => R.logs[r].includes(m)) ? 'stuck' : 'lost';
+  });
+}
+
+function render(R) {
+  svg.innerHTML = '';
+  el('text', { x: 20, y: 24, 'font-size': 14, 'font-weight': 600, text: `billing-svc → l09.cdr.voice-0   (acks=${S.acks}, RF ${S.rf}, min.insync.replicas=${S.misr})` }, svg);
+  el('text', { x: 20, y: 58, 'font-size': 12, fill: 'var(--muted)', text: 'Producer' }, svg);
+  el('text', { x: 20, y: 72, 'font-size': 12, fill: 'var(--muted)', text: 'outcome' }, svg);
+  R.out.forEach((o, i) => {
+    const x = 110 + i * 32;
+    el('rect', { x, y: 42, width: 28, height: 34, rx: 5, fill: COLOR[o], stroke: 'var(--border)' }, svg);
+    el('text', { x: x + 14, y: 64, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 600, fill: o === 'pending' ? 'var(--muted)' : '#fff', text: i }, svg);
+  });
+  el('line', { x1: 20, y1: 98, x2: 880, y2: 98, stroke: 'var(--border)' }, svg);
+  [1, 2, 3].forEach((b, k) => {
+    const y = 116 + k * 62, rep = R.reps.includes(b);
+    const role = !rep ? 'not a replica' : !R.up[b] ? 'down' : R.leader === b ? 'leader' : R.isr.has(b) ? 'follower, ISR' : 'not in ISR';
+    el('text', { x: 20, y: y + 16, 'font-size': 13, 'font-weight': 700, fill: R.up[b] ? 'var(--text)' : 'var(--bad)', text: `cp-broker-${b}` }, svg);
+    el('text', { x: 20, y: y + 33, 'font-size': 11.5, fill: R.leader === b ? 'var(--ok)' : !R.up[b] && rep ? 'var(--bad)' : 'var(--muted)', text: role }, svg);
+    el('rect', { x: 108, y: y - 2, width: 772, height: 42, rx: 8, fill: rep ? 'var(--surface)' : 'var(--surface-2)', stroke: R.leader === b ? 'var(--ok)' : 'var(--border)', 'stroke-width': R.leader === b ? 2 : 1, 'stroke-dasharray': R.up[b] ? '' : '5 4', opacity: rep ? 1 : .5 }, svg);
+    R.logs[b].forEach(m => {
+      const x = 110 + m * 32;
+      el('rect', { x, y: 4 + y, width: 28, height: 30, rx: 4, fill: R.up[b] ? 'var(--accent-soft)' : 'var(--surface-2)', stroke: 'var(--accent)', 'stroke-width': .8 }, svg);
+      el('text', { x: x + 14, y: y + 24, 'text-anchor': 'middle', 'font-size': 11.5, fill: R.up[b] ? 'var(--text)' : 'var(--muted)', text: m }, svg);
+    });
+    el('text', { x: 876, y: y + 52, 'text-anchor': 'end', 'font-size': 10.5, fill: 'var(--muted)', text: AZ[b] }, svg);
+  });
+  const st = R.leader === null ? 'OFFLINE: no leader' : `leader cp-broker-${R.leader}${R.unc ? ' (elected uncleanly)' : ''}`;
+  el('text', { x: 20, y: 322, 'font-size': 13, 'font-weight': 600, fill: R.leader === null ? 'var(--bad)' : 'var(--text)', text: `Partition: ${st} · ISR {${[...R.isr].join(',') || '–'}}` }, svg);
+  el('text', { x: 880, y: 322, 'text-anchor': 'end', 'font-size': 12, fill: 'var(--muted)', text: R.i < N ? `next CDR: ${R.i}` : 'all 24 sent' }, svg);
+
+  const c = k => R.out.filter(o => o === k).length;
+  document.getElementById('sAck').textContent = R.acked.size;
+  document.getElementById('sLost').textContent = c('lost');
+  document.getElementById('sDrop').textContent = c('drop');
+  document.getElementById('sErr').textContent = c('err');
+  document.getElementById('sStuck').textContent = c('stuck');
+  if (R.i < N) { setVerdict('verdict', '', 'ready', 'Press <b>Send 24 CDRs</b>.'); return; }
+  const lost = c('lost'), drop = c('drop'), err = c('err'), stuck = c('stuck');
+  if (lost) setVerdict('verdict', 'bad', 'data loss', `${lost} CDR(s) were <b>acknowledged</b> and then disappeared. ${S.acks !== 'all' ? 'The leader acknowledged before any follower had them: use <code>acks=all</code>.' : R.unc ? 'An out-of-sync replica was elected leader: keep <code>unclean.leader.election.enable=false</code>.' : 'Too few copies existed when the broker failed.'}`);
+  else if (drop) setVerdict('verdict', 'bad', 'silent loss', `${drop} CDR(s) failed and the app never looked. The cluster lost nothing: check the result of every <code>send()</code>.`);
+  else if (err || stuck) setVerdict('verdict', 'warn', 'no loss', `Nothing acknowledged was lost. ${err ? `${err} write(s) failed <i>visibly</i>, so the app can retry or park them. ` : ''}${stuck ? `${stuck} CDR(s) are safe on disk but unreadable until a replica that has them comes back.` : ''} Durability was traded for availability.`);
+  else setVerdict('verdict', 'ok', 'all safe', 'Every CDR was acknowledged and is still on the current leader.');
+}
+
+async function run() {
+  if (S.running) return;
+  S.running = true; document.getElementById('run').disabled = true;
+  const R = fresh(); S.run = R;
+  if (S.sc !== 'throttle') R.crashedAt = 8;
+  logLine(log, `Sending 24 CDRs: ${{ crash: 'cp-broker-1 (the leader) crashes before CDR 8', cascade: 'cp-broker-3 is down; the leader crashes before CDR 8; before CDR 16 cp-broker-2 dies and cp-broker-3 returns', throttle: 'the producer hits its quota from CDR 8' }[S.sc]}`, true);
+  if (S.acks === 'all' && S.misr > S.rf) logLine(log, `min.insync.replicas=${S.misr} is larger than RF ${S.rf}: every acks=all write will be refused`, true);
+  for (let k = 0; k < N; k++) { step(R); render(R); await sleep(reducedMotion ? 0 : 110); }
+  S.running = false; document.getElementById('run').disabled = false;
+}
+
+function reset(text) { S.run = fresh(); render(S.run); if (text) logLine(log, text); }
+wireSeg('scSeg', v => { S.sc = v; reset(`Failure: ${v}`); });
+wireSeg('acksSeg', v => { S.acks = v; reset(`acks=${v}`); });
+wireSeg('rfSeg', v => { S.rf = +v; reset(`replication factor ${v}`); });
+wireSeg('misrSeg', v => { S.misr = +v; reset(`min.insync.replicas=${v}`); });
+wireSeg('uncSeg', v => { S.unclean = v === 'true'; reset(`unclean.leader.election.enable=${v}`); });
+wireSeg('cbSeg', v => { S.cb = v; reset(v === 'handle' ? 'The send callback checks every exception' : 'Fire and forget: producer.send(record) with no callback'); });
+document.getElementById('run').onclick = run;
+reset();
+logLine(log, 'Start with acks=1 and the leader crash, then switch to acks=all and run it again.');
+
+renderQuiz('quiz', [
+  { q: 'With <code>acks=1</code> and RF 3, the leader crashes. CDRs 6 and 7 were acknowledged but are missing on the new leader. Why?',
+    options: ['The followers deleted them during the election', 'The leader acknowledged them after writing its own copy, before any follower had fetched them', '<code>min.insync.replicas</code> was too high', 'The producer\'s retries overwrote them'],
+    answer: 1,
+    explain: '<code>acks=1</code> waits only for the leader. The followers trail by a few records, so the new leader never had 6 and 7. When the old leader returns it truncates its log to match the new leader, and those records are gone for good.' },
+  { q: 'Topic: RF 3, <code>min.insync.replicas=2</code>, producer <code>acks=all</code>. Two of the three brokers go down. What does the producer see?',
+    options: ['Writes continue with one copy', 'The topic is deleted', 'Writes succeed and are replicated when the brokers return', '<code>NotEnoughReplicasException</code>: writes are refused and retried until they time out, but nothing acknowledged is lost'],
+    answer: 3,
+    explain: 'With an ISR of 1 and a minimum of 2, the leader refuses <code>acks=all</code> writes. You lose availability for that partition, not data. That is the trade the setting is designed to make.' },
+  { q: 'In the "brokers fail one by one" run with <code>acks=all</code>, turning on <code>unclean.leader.election.enable</code> loses even the first CDRs. What happened?',
+    options: ['cp-broker-3, which had missed everything, was elected leader, and the other replicas were truncated to match it', 'The producer resent them with the wrong key', 'Unclean election disables replication', 'The quota throttled the old messages'],
+    answer: 0,
+    explain: 'Unclean election chooses availability over consistency: any live replica may lead, even one that is far behind. Whatever it never received is removed from the cluster, including records written with <code>acks=all</code>. Keep it off for billing data. Confluent Cloud doesn\'t let you turn it on.' },
+  { q: 'An application is throttled by its quota for 3 minutes. The broker logs no errors and has every record it accepted, yet billing is missing CDRs. What is the most likely reason?',
+    options: ['The broker deletes throttled records', 'Throttled records go to a dead-letter topic', 'Batches waited longer than <code>delivery.timeout.ms</code> and failed, and the app\'s <code>send()</code> callback ignored the <code>TimeoutException</code>', 'Throttling lowers the replication factor'],
+    answer: 2,
+    explain: 'Quotas only delay responses. The records that never reached the broker expired inside the producer, and the failure was reported to the callback. Fire-and-forget code throws that report away, so the loss is in the app, not the cluster.' },
+  { q: 'An MQ administrator wants <code>acks=0</code> on <code>cdr.voice</code> "because MQ non-persistent messages are fast and we have RF 3". What is wrong with that reasoning?',
+    options: ['Nothing: RF 3 makes <code>acks=0</code> safe', '<code>acks=0</code> turns replication off', 'RF 3 only protects records the leader received. With <code>acks=0</code> the producer never learns about records that didn\'t arrive, so failures are never reported or retried.', '<code>acks=0</code> is not a valid setting'],
+    answer: 2,
+    explain: 'Replication can\'t protect a record the cluster never got. With <code>acks=0</code> the producer assumes success the moment the bytes leave its socket: in the simulation, the CDR sent to the dying leader vanishes with no error.' }
+]);
+</script>
+</body>
+</html>

@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consumer Lag Remediation</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 9 · Troubleshooting &amp; Message Loss</a>
+    <div class="nav"><span>4 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 4</div>
+  <h1>Consumer lag analysis and remediation in Confluent</h1>
+  <p class="lede">Lag is a symptom with several causes, and each cause has its own fix. Adding consumers cures one of them
+    and does nothing for the rest. <code>l09.billing</code> reads <code>l09.cdr.voice</code>. Press <b>Run</b>, then cause trouble
+    with the checkboxes. Read the <b>shape</b> of the lag: does it grow everywhere or on one partition, steadily or in a saw-tooth?
+    Then fix it.</p>
+
+  <div class="card">
+    <div class="sliders">
+      <label><span>CDRs produced <output id="rateOut"></output></span><input type="range" id="rate" min="100" max="1500" step="50" value="600" aria-label="Produce rate"></label>
+      <label><span>Consumers in l09.billing <output id="consOut"></output></span><input type="range" id="cons" min="1" max="8" value="2" aria-label="Consumers"></label>
+      <label><span>Processing time per CDR <output id="procOut"></output></span><input type="range" id="proc" min="1" max="20" value="5" aria-label="Processing time per record"></label>
+    </div>
+    <div class="controls">
+      <span class="ctl-label">partitions</span>
+      <div class="seg" role="group" aria-label="Partitions" id="partSeg"><button data-v="3" aria-pressed="false">3</button><button data-v="6" aria-pressed="true">6</button><button data-v="12" aria-pressed="false">12</button></div>
+      <span class="ctl-label">max.poll.records</span>
+      <div class="seg" role="group" aria-label="max.poll.records" id="mprSeg"><button data-v="500" aria-pressed="true">500</button><button data-v="100" aria-pressed="false">100</button></div>
+      <button class="primary" id="run">Run</button>
+      <button id="desc">kafka-consumer-groups.sh --describe</button>
+    </div>
+    <div class="checks">
+      <label><input type="checkbox" id="cHot"> Hot key: a test switch sends 40 % of all CDRs with one key, so they all land on partition 0</label>
+      <label><input type="checkbox" id="cPoison"> A JSON record lands in partition 2 of the Avro topic (a poison record)</label>
+      <label><input type="checkbox" id="cSlow"> The rating API slows to 1 s per CDR</label>
+    </div>
+    <div class="controls"><button id="dlq" disabled>Send the poison record to l09.cdr.voice.dlq and skip it</button></div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 340" role="img" aria-label="Total consumer lag over time, lag per partition and the consumers that own each partition"></svg></div>
+    <div class="stats">
+      <div class="stat"><b id="sLag">0</b><span>total lag (records)</span></div>
+      <div class="stat"><b id="sTrend">0</b><span>change per second</span></div>
+      <div class="stat"><b id="sIdle">0</b><span>idle consumers</span></div>
+      <div class="stat"><b id="sReb">0</b><span>rebalances</span></div>
+      <div class="stat"><b id="sClock">0 s</b><span>simulated time</span></div>
+    </div>
+    <div class="verdict" id="verdict"></div>
+    <div class="term" id="term"><div class="term-empty">Press the kafka-consumer-groups.sh button to take a snapshot.</div></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Read the shape, then pick the fix</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>What the lag looks like</th><th>Cause</th><th>Fix</th><th>Not the fix</th></tr></thead>
+      <tbody>
+        <tr><td>Grows on every partition, steadily</td><td>Total consumer capacity is below the produce rate</td><td>More consumers (up to the partition count), or faster processing</td><td>Restarting the group</td></tr>
+        <tr><td>Some consumers have no partitions</td><td>More consumers than partitions</td><td>More partitions (plan for key ordering), or fewer consumers</td><td>Adding even more consumers</td></tr>
+        <tr><td>One partition grows, the others are near 0</td><td>Hot key: one partition gets more than one consumer can process</td><td>Better key design, faster processing</td><td>More consumers: one partition is only ever read by one member of the group</td></tr>
+        <tr><td>One partition frozen at a single offset, errors in the log</td><td>Poison record (<code>RecordDeserializationException</code>)</td><td>Dead-letter topic and skip, then fix the producer</td><td>Resetting offsets to latest: that skips good CDRs too</td></tr>
+        <tr><td>Saw-tooth: drains, jumps, members come and go</td><td>A poll batch takes longer than <code>max.poll.interval.ms</code>, so the member is removed and its work redone</td><td>Lower <code>max.poll.records</code>; speed up the slow call</td><td>Raising <code>session.timeout.ms</code>: heartbeats are fine</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="grid grid-2" style="margin-top:16px">
+    <div class="card"><h3 style="margin-top:0">Platform lab</h3><p style="color:var(--muted);font-size:14px;margin:0">Control Center's consumer lag pages (the brokers emit lag), or
+      <code>kafka-consumer-groups.sh --bootstrap-server $CP --command-config $CFG --describe --group l09.billing</code>. The LAG column is
+      log-end offset minus committed offset per partition.</p></div>
+    <div class="card"><h3 style="margin-top:0">Confluent Cloud</h3><p style="color:var(--muted);font-size:14px;margin:0">The Metrics API metric <code>consumer_lag_offsets</code>, grouped by
+      <code>metric.consumer_group_id</code> and partition, about 3 minutes behind. Or the Console's consumer group page.
+      <code>kafka-consumer-groups.sh</code> works against Cloud too, with an API key.</p></div>
+  </div>
+  <div class="callout"><b>Admin takeaway:</b> lag in <i>records</i> doesn't tell you whether you're in trouble. Divide it by the
+    drain rate: 120,000 records at +2,000/s is a minute behind, while 5,000 records that keep growing is an incident. Alert on lag that
+    keeps growing (Module 8, Topic 1), not on a fixed number.</div>
+  <div class="callout warn"><b>Production trap:</b> lag turns into message loss when it grows past retention. If
+    <code>l09.billing</code> is 3 days behind and <code>retention.ms</code> is 1 day, the oldest CDRs are deleted before
+    billing reads them, and the consumer jumps ahead under <code>auto.offset.reset</code> with only a log line. Topic 6 drills this.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="03-connectivity-client-issues.html"><small>← Previous</small>Connectivity &amp; client-side issues</a>
+    <a class="next" href="05-support-escalation.html"><small>Next →</small>Confluent support &amp; escalation</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), log = document.getElementById('log'), term = document.getElementById('term');
+const DT = 10, HIST = 60;
+const S = { rate: 600, cons: 2, proc: 5, parts: 6, mpr: 500, hot: false, poison: false, slow: false, running: false, t: 0, reb: 0,
+  lag: [], end: [], hist: [], storm: false, lastLag: 0, timer: null };
+
+function resetParts() {
+  S.lag = Array(S.parts).fill(0);
+  S.end = Array(S.parts).fill(0).map((_, p) => 20000 + p * 137);
+  S.hist = [];
+}
+function owner(p) { const a = Math.min(S.cons, S.parts); return p % a; }
+function procMs() { return S.slow ? 1000 : S.proc; }
+function weights() {
+  if (!S.hot) return Array(S.parts).fill(1 / S.parts);
+  return Array(S.parts).fill(0).map((_, p) => p === 0 ? 0.4 : 0.6 / (S.parts - 1));
+}
+function poisoned() { return S.poison && S.parts > 2; }
+
+function tick() {
+  const w = weights(), active = Math.min(S.cons, S.parts);
+  const storm = S.slow && S.mpr * procMs() / 1000 > 300;
+  if (storm && !S.storm) logLine(log, `<b>Rebalance loop</b>: ${S.mpr} records × ${procMs()} ms = ${S.mpr * procMs() / 1000} s per poll, more than max.poll.interval.ms (300 s). Members are removed before they commit`, true);
+  if (storm) S.reb += active;
+  S.storm = storm;
+  const stuckC = poisoned() ? owner(2) : -1;
+  for (let p = 0; p < S.parts; p++) { const add = Math.round(S.rate * w[p] * DT); S.lag[p] += add; S.end[p] += add; }
+  for (let c = 0; c < active; c++) {
+    if (storm || c === stuckC) continue;
+    let cap = 1000 / procMs() * DT;
+    const mine = [...Array(S.parts).keys()].filter(p => owner(p) === c);
+    let left = mine.filter(p => S.lag[p] > 0);
+    while (cap > 0.5 && left.length) {
+      const share = cap / left.length;
+      left.forEach(p => { const take = Math.min(S.lag[p], share); S.lag[p] -= take; cap -= take; });
+      left = left.filter(p => S.lag[p] > 0.5);
+    }
+  }
+  S.lag = S.lag.map(x => Math.max(0, Math.round(x)));
+  S.t += DT;
+  const total = S.lag.reduce((a, b) => a + b, 0);
+  S.hist.push(total); if (S.hist.length > HIST) S.hist.shift();
+  render();
+  S.lastLag = total;
+}
+
+function diagnose() {
+  const total = S.lag.reduce((a, b) => a + b, 0), n = S.hist.length;
+  const trend = n > 1 ? (S.hist[n - 1] - S.hist[n - 2]) / DT : 0;
+  const active = Math.min(S.cons, S.parts), cap = active * 1000 / procMs(), hotIn = S.rate * weights()[0];
+  if (S.storm) return ['bad', 'rebalance loop', `Each poll of ${S.mpr} CDRs takes ${S.mpr * procMs() / 1000} s, longer than <code>max.poll.interval.ms</code> (300 s). Set <code>max.poll.records=100</code> to stop the loop, then deal with the slow API.`];
+  if (poisoned()) return ['bad', 'poison record', `Partition 2 is frozen at one offset, and so is everything else consumer c${owner(2) + 1} owns: <code>poll()</code> throws <code>RecordDeserializationException</code> each time. Park the record in the dead-letter topic and skip it.`];
+  if (S.hot && hotIn > 1000 / procMs()) return ['bad', 'hot partition', `Partition 0 gets ${Math.round(hotIn)} CDRs/s, but one consumer manages ${Math.round(1000 / procMs())}/s. Only one member of a group reads a partition, so more consumers won't help. Fix the key or the processing time.`];
+  if (cap < S.rate) return ['bad', 'too little capacity', `${active} active consumer(s) × ${Math.round(1000 / procMs())} CDRs/s = ${Math.round(cap)}/s, against ${S.rate}/s produced. ${1000 / procMs() * S.parts < S.rate ? `Even one consumer per partition would only reach ${Math.round(1000 / procMs() * S.parts)}/s: make processing faster.` : S.cons < S.parts ? 'Add consumers (up to ' + S.parts + ').' : 'Every partition already has its own consumer: add partitions or make processing faster.'}`];
+  const per = 1000 / procMs(), loads = Array(active).fill(0);
+  weights().forEach((w, p) => loads[owner(p)] += S.rate * w);
+  const busiest = loads.indexOf(Math.max(...loads));
+  if (loads[busiest] >= per * 0.999 && Math.max(...loads) > Math.min(...loads) + 1 && S.cons <= S.parts) return ['warn', 'uneven assignment', `Total capacity ${Math.round(cap)}/s is enough, but c${busiest + 1} owns ${[...Array(S.parts).keys()].filter(p => owner(p) === busiest).length} partitions (${Math.round(loads[busiest])} CDRs/s) and is at its limit, so its partitions don't drain. Use a consumer count that divides ${S.parts} evenly.`];
+  if (S.cons > S.parts) return [total > 1000 && trend >= 0 ? 'warn' : 'ok', `${S.cons - S.parts} idle`, `${S.cons - S.parts} consumer(s) have no partition and do nothing. A group can use at most ${S.parts} consumers on ${S.parts} partitions.`];
+  if (total > 1000 && trend < 0) return ['warn', 'draining', `Capacity ${Math.round(cap)}/s is above ${S.rate}/s: lag falls by about ${Math.round(-trend)}/s. Roughly ${Math.round(total / -trend)} s to catch up.`];
+  if (total > 1000) return ['warn', 'behind', 'Lag is high but not growing.'];
+  return ['ok', 'healthy', `Capacity ${Math.round(cap)}/s keeps up with ${S.rate}/s.`];
+}
+
+function render() {
+  svg.innerHTML = '';
+  const box = { x: 30, y: 40, w: 470, h: 150 };
+  const max = Math.max(5000, ...S.hist) * 1.1;
+  el('text', { x: 20, y: 24, 'font-size': 14, 'font-weight': 600, text: 'Total lag, l09.billing on l09.cdr.voice' }, svg);
+  el('rect', { x: box.x, y: box.y, width: box.w, height: box.h, fill: 'var(--surface-2)', rx: 6 }, svg);
+  el('text', { x: box.x + 4, y: box.y + 14, 'font-size': 11, fill: 'var(--muted)', text: fmtNum(max) }, svg);
+  el('text', { x: box.x + 4, y: box.y + box.h - 4, 'font-size': 11, fill: 'var(--muted)', text: '0' }, svg);
+  el('text', { x: box.x + box.w, y: box.y + box.h + 16, 'text-anchor': 'end', 'font-size': 11, fill: 'var(--muted)', text: `last ${HIST * DT / 60} min` }, svg);
+  if (S.hist.length > 1) {
+    const vals = S.hist.slice(), pad = Array(HIST - vals.length).fill(null);
+    const bx = { x: box.x + box.w * pad.length / (HIST - 1), y: box.y, w: box.w * (vals.length - 1) / (HIST - 1), h: box.h };
+    el('path', { d: seriesPath(vals, bx, max), fill: 'none', stroke: S.storm || poisoned() ? 'var(--bad)' : 'var(--accent)', 'stroke-width': 2.5 }, svg);
+  }
+  // per-partition bars
+  const top = 30, rowH = Math.min(24, 290 / S.parts), pmax = Math.max(2000, ...S.lag);
+  el('text', { x: 540, y: 24, 'font-size': 14, 'font-weight': 600, text: 'Lag per partition (owner)' }, svg);
+  S.lag.forEach((l, p) => {
+    const y = top + 6 + p * rowH, c = owner(p), stuck = poisoned() && c === owner(2);
+    el('text', { x: 540, y: y + rowH * .7, 'font-size': 11.5, 'font-family': 'var(--mono)', text: `p${p}` }, svg);
+    el('rect', { x: 570, y: y + 2, width: 250, height: rowH - 6, rx: 3, fill: 'var(--surface-2)' }, svg);
+    el('rect', { x: 570, y: y + 2, width: Math.max(1, 250 * l / pmax), height: rowH - 6, rx: 3, fill: PCOLORS[c % 6], opacity: stuck ? .55 : 1 }, svg);
+    el('text', { x: 826, y: y + rowH * .7, 'font-size': 11, fill: stuck && p === 2 ? 'var(--bad)' : 'var(--muted)', text: (p === 2 && poisoned() ? '☠ ' : '') + `c${c + 1} ${fmtNum(l)}` }, svg);
+  });
+  // consumers
+  el('text', { x: 20, y: 236, 'font-size': 14, 'font-weight': 600, text: 'Consumers' }, svg);
+  for (let c = 0; c < S.cons; c++) {
+    const x = 20 + c * 62, idle = c >= S.parts, stuck = poisoned() && c === owner(2);
+    el('rect', { x, y: 248, width: 56, height: 56, rx: 8, fill: idle ? 'var(--surface-2)' : 'var(--surface)', stroke: S.storm ? 'var(--warn)' : stuck ? 'var(--bad)' : idle ? 'var(--border)' : PCOLORS[c % 6], 'stroke-width': 2, 'stroke-dasharray': S.storm ? '5 3' : '' }, svg);
+    el('text', { x: x + 28, y: 270, 'text-anchor': 'middle', 'font-size': 13, 'font-weight': 700, text: `c${c + 1}` }, svg);
+    const mine = [...Array(S.parts).keys()].filter(p => owner(p) === c);
+    el('text', { x: x + 28, y: 288, 'text-anchor': 'middle', 'font-size': 10, fill: 'var(--muted)', text: idle ? 'idle' : 'p' + mine.join(',') }, svg);
+    if (stuck) el('text', { x: x + 28, y: 300, 'text-anchor': 'middle', 'font-size': 10, fill: 'var(--bad)', text: 'stuck' }, svg);
+  }
+  el('text', { x: 20, y: 330, 'font-size': 12, fill: 'var(--muted)', text: `Each consumer: ${Math.round(1000 / procMs())} CDRs/s · produced: ${S.rate}/s${S.hot ? ' · 40 % on p0' : ''}` }, svg);
+
+  const total = S.lag.reduce((a, b) => a + b, 0), n = S.hist.length;
+  document.getElementById('sLag').textContent = fmtNum(total);
+  const tr = n > 1 ? (S.hist[n - 1] - S.hist[n - 2]) / DT : 0;
+  document.getElementById('sTrend').textContent = (tr > 0 ? '+' : '') + fmtNum(tr) + '/s';
+  document.getElementById('sIdle').textContent = Math.max(0, S.cons - S.parts);
+  document.getElementById('sReb').textContent = S.reb;
+  document.getElementById('sClock').textContent = S.t >= 60 ? Math.floor(S.t / 60) + ' min ' + (S.t % 60) + ' s' : S.t + ' s';
+  const [cls, label, msg] = diagnose();
+  setVerdict('verdict', cls, label, msg);
+  document.getElementById('rateOut').textContent = S.rate + '/s';
+  document.getElementById('consOut').textContent = S.cons;
+  document.getElementById('procOut').textContent = S.slow ? '1000 ms (API)' : S.proc + ' ms';
+  document.getElementById('dlq').disabled = !poisoned();
+}
+
+function describe() {
+  const pad = (s, n) => String(s).padEnd(n);
+  const rows = [pad('GROUP', 12) + pad('TOPIC', 14) + pad('PARTITION', 10) + pad('CURRENT-OFFSET', 15) + pad('LOG-END-OFFSET', 15) + pad('LAG', 8) + 'CONSUMER-ID'];
+  S.lag.forEach((l, p) => rows.push(pad('l09.billing', 12) + pad('l09.cdr.voice', 14) + pad(p, 10) + pad(S.end[p] - l, 15) + pad(S.end[p], 15) + pad(l, 8) + (S.storm ? '-' : `billing-svc-${owner(p) + 1}-…`)));
+  termRun(term, 'kafka-consumer-groups.sh --bootstrap-server $CP --command-config $CFG --describe --group l09.billing', rows.map(r => r.replace(/ /g, '&nbsp;')));
+  logLine(log, 'Snapshot: LAG = LOG-END-OFFSET − CURRENT-OFFSET (the committed offset) per partition');
+}
+
+function toggleRun() {
+  S.running = !S.running;
+  document.getElementById('run').textContent = S.running ? 'Pause' : 'Run';
+  if (S.running) { S.timer = setInterval(tick, reducedMotion ? 900 : 600); logLine(log, 'Running: one step = 10 simulated seconds'); }
+  else { clearInterval(S.timer); logLine(log, 'Paused'); }
+}
+
+const bind = (id, key, txt) => {
+  const n = document.getElementById(id);
+  n.oninput = () => { S[key] = +n.value; render(); };
+  n.onchange = () => logLine(log, txt());
+};
+bind('rate', 'rate', () => `Produce rate ${S.rate} CDRs/s`);
+bind('cons', 'cons', () => `${S.cons} consumer(s) in l09.billing → rebalance${S.cons > S.parts ? `; ${S.cons - S.parts} idle` : ''}`);
+bind('proc', 'proc', () => `Processing ${S.proc} ms per CDR → ${Math.round(1000 / S.proc)} CDRs/s per consumer`);
+['cons'].forEach(id => document.getElementById(id).addEventListener('change', () => { S.reb++; render(); }));
+wireSeg('partSeg', v => { S.parts = +v; resetParts(); S.reb++; render(); logLine(log, `${v} partitions. Adding partitions changes which partition each MSISDN key maps to, so per-key order isn't kept across the change`, true); });
+wireSeg('mprSeg', v => { S.mpr = +v; render(); logLine(log, `max.poll.records=${v}`); });
+document.getElementById('cHot').onchange = e => { S.hot = e.target.checked; render(); logLine(log, S.hot ? 'Hot key on: 40 % of CDRs go to partition 0' : 'Keys spread evenly again'); };
+document.getElementById('cPoison').onchange = e => { S.poison = e.target.checked; render(); logLine(log, S.poison ? 'ERROR RecordDeserializationException: Error deserializing key/value for partition l09.cdr.voice-2 at offset 20411' : 'Poison record gone', S.poison); };
+document.getElementById('cSlow').onchange = e => { S.slow = e.target.checked; render(); logLine(log, S.slow ? 'Rating API: 1 s per CDR' : 'Rating API back to normal'); };
+document.getElementById('dlq').onclick = () => {
+  S.poison = false; document.getElementById('cPoison').checked = false; render();
+  logLine(log, 'Produced the raw record to l09.cdr.voice.dlq, called seek() past offset 20411 and committed. Partition 2 moves again', true);
+};
+document.getElementById('run').onclick = toggleRun;
+document.getElementById('desc').onclick = describe;
+resetParts(); render();
+logLine(log, '600 CDRs/s, 6 partitions, 2 consumers at 5 ms each (200/s each). Press Run.');
+
+renderQuiz('quiz', [
+  { q: '<code>l09.cdr.voice</code> has 6 partitions. Lag grows steadily on all six. The group has 2 consumers at 200 CDRs/s each and producers send 600/s. What do you do first?',
+    options: ['Add consumers: up to 6 can share the work', 'Raise <code>max.poll.interval.ms</code>', 'Reset the offsets to latest', 'Increase retention'],
+    answer: 0,
+    explain: 'Capacity is 400/s against 600/s, and lag grows everywhere. That is the one case where more consumers help: 4 consumers give 800/s and the group drains. Beyond 6, extra consumers sit idle.' },
+  { q: 'You scale <code>l09.billing</code> to 10 consumers on the 6-partition topic. What happens?',
+    options: ['Each partition is shared by two consumers', '4 consumers get no partitions and sit idle', 'Kafka adds 4 partitions automatically', 'The group refuses to start'],
+    answer: 1,
+    explain: 'Within one group, each partition is assigned to exactly one consumer. With more consumers than partitions, the extra ones are idle standbys. To use more consumers, you need more partitions.' },
+  { q: 'Lag sits near 0 on five partitions but climbs on partition 0, which receives 40 % of the CDRs. Each consumer manages 200/s. What fixes it?',
+    options: ['Adding more consumers', 'Increasing <code>max.poll.records</code>', 'A key that spreads the load, or faster processing: only one consumer can ever read partition 0', 'Restarting the consumer that owns partition 0'],
+    answer: 2,
+    explain: 'A hot partition is limited by one consumer\'s speed, however many consumers the group has. Fix the skew at the source (the key) or make each record cheaper to process.' },
+  { q: 'A group\'s lag saw-tooths, members keep leaving and joining, and the logs show <code>consumer poll timeout has expired</code>. Each poll returns 500 records that take 1 s each. Which change stops the loop?',
+    options: ['Raise <code>session.timeout.ms</code>', 'Switch to <code>acks=all</code>', 'Add partitions', 'Set <code>max.poll.records=100</code> so each poll finishes inside <code>max.poll.interval.ms</code>'],
+    answer: 3,
+    explain: '500 × 1 s is 500 s, longer than the 300 s default <code>max.poll.interval.ms</code>. The member is removed before it commits and its work is redone. Heartbeats come from a background thread, so <code>session.timeout.ms</code> isn\'t involved. Smaller polls stop the loop. The slow API still limits throughput.' },
+  { q: 'Partition 2 is stuck at offset 20411 with <code>RecordDeserializationException</code>. A colleague suggests <code>kafka-consumer-groups.sh --reset-offsets --to-latest</code>. Why is that a bad remedy?',
+    options: ['It is not a real option', 'It only works on Confluent Cloud', 'It skips every unread CDR on all partitions, not just the one bad record, and billing never sees them', 'It deletes the topic'],
+    answer: 2,
+    explain: 'Resetting to latest throws away all the backlog, which is message loss you caused yourself. Park only the poison record in a dead-letter topic, seek past that one offset, and fix the producer that wrote it.' }
+]);
+</script>
+</body>
+</html>

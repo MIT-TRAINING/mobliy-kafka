@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Support &amp; Escalation</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 9 · Troubleshooting &amp; Message Loss</a>
+    <div class="nav"><span>5 / 6</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 5</div>
+  <h1>The Confluent support and escalation model</h1>
+  <p class="lede">A support subscription doesn't fix your role bindings, and Confluent can't see your application
+    logs. Good escalation means sending each problem to the team that owns it, at the right severity, with the evidence that
+    team needs in the first message. Pick an <b>incident</b>, choose the <b>owner</b>, the <b>severity</b> and the <b>evidence</b>,
+    then press <b>Escalate</b>. See whether the ticket lands or comes back with questions.</p>
+
+  <div class="card">
+    <div class="scen" id="scen" role="group" aria-label="Incident"></div>
+    <div class="verdict" id="incident" style="margin-top:10px"></div>
+    <div class="controls">
+      <span class="ctl-label">Owner</span>
+      <div class="seg" role="group" aria-label="Who owns the fix" id="ownSeg"><button data-v="app" aria-pressed="true">Application team</button><button data-v="platform" aria-pressed="false">Kafka platform team (you)</button><button data-v="confluent" aria-pressed="false">Confluent Support</button></div>
+    </div>
+    <div class="controls">
+      <span class="ctl-label">Severity</span>
+      <div class="seg" role="group" aria-label="Severity" id="sevSeg"><button data-v="none" aria-pressed="true">no ticket</button><button data-v="1" aria-pressed="false">Sev 1</button><button data-v="2" aria-pressed="false">Sev 2</button><button data-v="3" aria-pressed="false">Sev 3</button><button data-v="4" aria-pressed="false">Sev 4</button></div>
+    </div>
+    <div class="evid checks" id="evid"></div>
+    <div class="controls"><button class="primary" id="go">Escalate</button></div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 190" role="img" aria-label="Escalation path from the application team to Confluent engineering"></svg></div>
+    <div class="stats">
+      <div class="stat"><b id="sOk">0 / 5</b><span>incidents routed right first time</span></div>
+      <div class="stat"><b id="sTry">0</b><span>escalations sent</span></div>
+    </div>
+    <div class="verdict" id="verdict"></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Who owns what</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Area</th><th>Confluent Cloud</th><th>Confluent Platform (lab, on-premises)</th></tr></thead>
+      <tbody>
+        <tr><td>Brokers, controllers, disks, patching</td><td>Confluent operates them. Check the status page (<code>status.confluent.cloud</code>), then open a ticket</td><td>You operate them. Confluent supports the software: bugs, upgrade issues, guidance</td></tr>
+        <tr><td>Topics, partitions, configs</td><td>You, inside Cloud's limits</td><td>You</td></tr>
+        <tr><td>API keys, service accounts, role bindings</td><td>You (Cloud RBAC)</td><td>You (LDAP and MDS RBAC)</td></tr>
+        <tr><td>Capacity: eCKUs, CKUs, cluster type, quotas</td><td>You choose. Confluent enforces the limits</td><td>You: brokers, disks, quotas</td></tr>
+        <tr><td>Producer and consumer code and config</td><td>The application team</td><td>The application team</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Severity (as most vendor policies use it)</th><th>Meaning</th><th>Example</th></tr></thead>
+      <tbody>
+        <tr><td><b>1</b>, critical</td><td>Production down or data at risk, no workaround</td><td>No client can produce to the production cluster</td></tr>
+        <tr><td><b>2</b>, high</td><td>Production seriously degraded, a workaround exists</td><td>One broker won't start, and the cluster runs with less redundancy</td></tr>
+        <tr><td><b>3</b>, normal</td><td>Partial, non-critical loss of function</td><td>A non-production feature misbehaves</td></tr>
+        <tr><td><b>4</b>, low</td><td>Questions, guidance, feature requests</td><td>Partition sizing advice for a new topic</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Admin takeaway:</b> the exact severity wording and the response targets come from your Confluent support plan
+    or subscription, so read yours before you need it. Tickets go through the Confluent support portal (<code>support.confluent.io</code>).
+    Every ticket needs the cluster ID, a UTC time window and the exact error text. Without them, the first reply is a question.</div>
+  <div class="callout warn"><b>Production trap:</b> never paste an API secret, an LDAP password or a full <code>cp.properties</code> into a
+    ticket. Support doesn't need it to diagnose anything. Remove secrets from configs and logs, and if one slips out, rotate it
+    (<code>confluent api-key delete</code> and create a new one, or change the LDAP password).</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="04-consumer-lag-remediation.html"><small>← Previous</small>Consumer lag analysis &amp; remediation</a>
+    <a class="next" href="06-message-loss-prevention-checklist.html"><small>Next →</small>Best-practice checklist</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), log = document.getElementById('log');
+const EVID = {
+  cluster: 'Cluster ID (<code>lkc-…</code> or the CP cluster ID) and environment',
+  window: 'Exact time window, in UTC',
+  errors: 'Exact error text and client logs, with client IDs',
+  versions: 'Client library and Confluent Platform versions',
+  brokerlogs: 'Broker <code>server.log</code> excerpt and broker config, secrets removed',
+  changes: 'What changed just before: deploys, upgrades, configs',
+  impact: 'Business impact: which services, how many subscribers',
+  secret: 'The API secret or LDAP password, so Support can reproduce it'
+};
+const INC = {
+  outage: { name: 'Cloud: every client times out', owner: 'confluent', sev: '1', need: ['cluster', 'window', 'errors', 'impact'],
+    text: 'Since 09:40 UTC every producer and consumer of the production Standard cluster gets <code>TimeoutException</code>. Credentials and configs haven\'t changed, and other clusters work. The Confluent status page shows an incident in ap-south-1.',
+    why: 'Confluent runs the brokers, nothing works, and there is no workaround: Sev 1 to Confluent, with the status page incident mentioned.' },
+  crash: { name: 'Platform: broker won\'t start after upgrade', owner: 'confluent', sev: '2', need: ['cluster', 'window', 'versions', 'brokerlogs', 'changes', 'impact'],
+    text: 'After the upgrade to CP 8.3.2, <code>cp-broker-2</code> exits during startup with the same exception in <code>server.log</code> each time. Brokers 1 and 3 serve traffic, and URP is above 0.',
+    why: 'Production still runs, but with less redundancy, and it looks like a product issue: Sev 2. Support needs the version, the upgrade steps and the log excerpt.' },
+  authz: { name: 'New service account denied', owner: 'platform', sev: 'none', need: [],
+    text: 'analytics-svc was redeployed under the new service account <code>sa-analytics-v2</code> and now gets <code>TopicAuthorizationException</code> on <code>l09.cdr.voice</code>. Other apps are fine.',
+    why: 'Nothing is broken in Kafka: the new principal has no role binding. Your platform team adds it. No ticket.' },
+  lag: { name: 'Lag after a release', owner: 'app', sev: 'none', need: [],
+    text: 'Since this morning\'s release, <code>analytics-svc</code> lag grows on every partition. The release added a call to a slow pricing API. Broker metrics and other groups are normal.',
+    why: 'The cluster is healthy. The consumer got slower (Topic 4), so the application team fixes it.' },
+  question: { name: 'Partition sizing advice', owner: 'confluent', sev: '4', need: ['cluster', 'impact'],
+    text: 'You are planning <code>cdr.data</code> for 5G data sessions and want Confluent\'s advice on partition count and retention for the expected volume.',
+    why: 'A question with no impact on production: Sev 4. Give the cluster and the use case (volumes, retention needs) so the answer fits.' }
+};
+const TIERS = [['app', 'Application team', 'client code, configs'], ['platform', 'Kafka platform team', 'topics, RBAC, capacity'], ['confluent', 'Confluent Support', 'portal ticket, severity'], ['eng', 'Confluent engineering', 'escalated by Support']];
+const S = { inc: 'outage', owner: 'app', sev: 'none', done: {}, tries: 0, busy: false };
+
+function draw(dest, ok) {
+  svg.innerHTML = '';
+  TIERS.forEach(([id, name, sub], k) => {
+    const x = 20 + k * 222, hit = dest === id;
+    el('rect', { x, y: 50, width: 196, height: 80, rx: 10, fill: hit ? (ok ? 'var(--ok-soft)' : 'var(--bad-soft)') : 'var(--surface-2)', stroke: hit ? (ok ? 'var(--ok)' : 'var(--bad)') : 'var(--border)', 'stroke-width': hit ? 2.5 : 1.2 }, svg);
+    el('text', { x: x + 98, y: 84, 'text-anchor': 'middle', 'font-size': 15, 'font-weight': 700, text: name }, svg);
+    el('text', { x: x + 98, y: 106, 'text-anchor': 'middle', 'font-size': 12, fill: 'var(--muted)', text: sub }, svg);
+    if (k < 3) el('path', { d: `M ${x + 198} 90 L ${x + 220} 90`, stroke: 'var(--border)', 'stroke-width': 2 }, svg);
+  });
+  el('text', { x: 20, y: 30, 'font-size': 13, fill: 'var(--muted)', text: 'Escalation path: a problem moves right only when the team on the left can\'t fix it' }, svg);
+  el('text', { x: 20 + 2 * 222, y: 160, 'font-size': 12, fill: 'var(--muted)', text: 'needs a support plan or subscription' }, svg);
+}
+
+function renderIncident() {
+  const i = INC[S.inc];
+  document.getElementById('incident').innerHTML = `<b style="font-size:15px">${i.name}.</b> ${i.text}`;
+  document.getElementById('evid').querySelectorAll('input').forEach(c => c.checked = false);
+  draw(null);
+  setVerdict('verdict', '', 'triage', 'Choose the owner, the severity and the evidence, then press <b>Escalate</b>.');
+}
+
+async function escalate() {
+  if (S.busy) return;
+  S.busy = true;
+  const i = INC[S.inc];
+  const got = [...document.querySelectorAll('#evid input:checked')].map(c => c.value);
+  const problems = [];
+  const WHO = { app: 'the application team', platform: 'your Kafka platform team', confluent: 'Confluent Support' };
+  if (S.owner !== i.owner) problems.push(`Owner: this belongs to ${WHO[i.owner]}, not ${WHO[S.owner]}.`);
+  if (S.sev !== i.sev) problems.push(i.sev === 'none' ? 'Severity: no Confluent ticket is needed; it is fixed inside your company.' : S.sev === 'none' ? `Severity: this needs a Confluent ticket at Sev ${i.sev}.` : `Severity: Sev ${S.sev} is ${+S.sev < +i.sev ? 'higher' : 'lower'} than the impact justifies (Sev ${i.sev}).`);
+  const missing = i.need.filter(n => !got.includes(n));
+  if (i.owner === 'confluent' && S.owner === 'confluent' && missing.length) problems.push('Support\'s first reply asks for: ' + missing.map(m => EVID[m].replace(/<[^>]+>/g, '')).join('; ') + '.');
+  if (got.includes('secret')) problems.push('<b>You attached a secret.</b> Rotate it now. Support never needs it.');
+  const ok = !problems.length;
+  S.tries++;
+  const dest = S.owner, idx = TIERS.findIndex(t => t[0] === dest);
+  draw(null);
+  const tok = el('circle', { r: 9, fill: 'var(--accent)' }, svg);
+  for (let k = 0; k <= idx; k++) await tween(tok, 118 + Math.max(0, k - 1) * 222, 140, 118 + k * 222, 140, 300);
+  tok.remove();
+  draw(dest, ok);
+  if (ok && i.sev === '1') el('text', { x: 20 + 3 * 222 + 98, y: 160, 'text-anchor': 'middle', 'font-size': 12, fill: 'var(--muted)', text: 'Support pulls in engineering' }, svg);
+  if (ok && S.done[S.inc] === undefined) S.done[S.inc] = true;
+  if (!ok && S.done[S.inc] === undefined) S.done[S.inc] = false;
+  document.getElementById('sOk').textContent = `${Object.values(S.done).filter(Boolean).length} / 5`;
+  document.getElementById('sTry').textContent = S.tries;
+  if (ok) setVerdict('verdict', 'ok', 'routed', i.why);
+  else setVerdict('verdict', 'bad', 'bounced', problems.join('<br>'));
+  logLine(log, `${i.name}: ${dest} · ${S.sev === 'none' ? 'no ticket' : 'Sev ' + S.sev} · ${got.length} evidence item(s) → ${ok ? 'routed first time' : 'bounced back'}`, !ok);
+  S.busy = false;
+}
+
+const scen = document.getElementById('scen');
+Object.entries(INC).forEach(([k, inc]) => {
+  const b = document.createElement('button');
+  b.textContent = inc.name; b.setAttribute('aria-pressed', k === S.inc);
+  b.onclick = () => { scen.querySelectorAll('button').forEach(x => x.setAttribute('aria-pressed', x === b)); S.inc = k; renderIncident(); logLine(log, `Incident: ${inc.name}`); };
+  scen.appendChild(b);
+});
+const ev = document.getElementById('evid');
+Object.entries(EVID).forEach(([k, txt]) => {
+  const l = document.createElement('label');
+  l.innerHTML = `<input type="checkbox" value="${k}"> <span>${txt}</span>`;
+  ev.appendChild(l);
+});
+wireSeg('ownSeg', v => { S.owner = v; logLine(log, `Owner: ${TIERS.find(t => t[0] === v)[1]}`); });
+wireSeg('sevSeg', v => { S.sev = v; logLine(log, v === 'none' ? 'No Confluent ticket' : `Severity ${v}`); });
+document.getElementById('go').onclick = escalate;
+renderIncident();
+logLine(log, 'Five incidents. Route each one to the team that can fix it.');
+
+renderQuiz('quiz', [
+  { q: 'On Confluent Cloud, a new service account gets <code>TopicAuthorizationException</code>. Who fixes it?',
+    options: ['Confluent Support, at Sev 1', 'Your own team, by adding the missing role binding', 'Nobody: wait for the key to propagate for an hour', 'Confluent engineering'],
+    answer: 1,
+    explain: 'Role bindings, API keys and service accounts are the customer\'s responsibility on Cloud. Confluent can\'t know which access you intend to grant. Check with <code>confluent iam rbac role-binding list --principal User:sa-…</code> and add the binding.' },
+  { q: 'Which ticket is most likely to be answered without a round of questions first?',
+    options: ['"Kafka is slow, please help"', '"Our cluster is broken since this morning"', '"lkc-… in env-…: producers get TimeoutException since 09:40 UTC. Client logs attached. Billing can\'t record calls."', '"Here is our cp.properties with the password so you can test"'],
+    answer: 2,
+    explain: 'Cluster ID, UTC time window, exact error, logs and business impact are what Support needs to start. The last option leaks a secret, which you would then have to rotate.' },
+  { q: 'On the self-managed Confluent Platform cluster, a broker crashes repeatedly after an upgrade, and the other brokers carry the load. What is the right escalation?',
+    options: ['Sev 1 to Confluent, because a broker is down', 'Ask the application team to retry', 'No ticket: Confluent doesn\'t support Platform clusters you run yourself', 'Sev 2 to Confluent, with the version, upgrade steps and <code>server.log</code> excerpt'],
+    answer: 3,
+    explain: 'Production is degraded but still working, so it is Sev 2 rather than Sev 1. Confluent Platform subscriptions include support for the software you run, and the broker log and versions are the evidence Support will ask for.' },
+  { q: 'An MQ administrator expects the vendor to monitor and tune their consumer applications under the support contract. What does Confluent support actually cover?',
+    options: ['Everything that connects to Kafka, including your application code', 'Nothing on Cloud, because it is managed', 'Confluent\'s products and services, plus guidance. Your application code and access decisions stay with you.', 'Only billing questions'],
+    answer: 2,
+    explain: 'On Cloud, Confluent operates the service. On Platform, it supports the software. In both cases your producers, consumers and access decisions are yours. A slow consumer after your release is the application team\'s fix.' },
+  { q: 'Producers on your Cloud Standard cluster are throttled at the evening peak, and <code>client_limit_milliseconds</code> is above 0. Who owns the fix?',
+    options: ['The Kafka platform team: the cluster is at the limits of its type, so improve batching or move to more capacity', 'Confluent Support, at Sev 1: the cluster is broken', 'Nobody: throttling is permanent', 'The network team'],
+    answer: 0,
+    explain: 'Throttling at a cluster type\'s published limits is the service working as specified, not a fault. Choosing capacity (eCKUs, a Dedicated cluster) and improving client efficiency is your team\'s decision (Module 8, Topic 4). You can still ask Confluent for sizing advice as a Sev 4 question.' }
+]);
+</script>
+</body>
+</html>
