@@ -1,0 +1,73 @@
+# Module 10 Lab 03: a CRM database with change data capture, and a Kafka Connect worker next to it.
+#
+# Both containers run on your lab VM. The worker sends the change events to Confluent Cloud
+# (Parts 2-5) or to the Confluent Platform cluster on AWS (Part 6): only $CDC_DIR/worker.env changes.
+#
+#   export ME=lNN CDC_DIR=$HOME/kafka/m10/cdc   # every terminal ("Before you start")
+#   docker compose build                         # once: Connect image + Debezium plugin
+#   docker compose up -d postgres                # Part 1
+#   docker compose up -d connect                 # Parts 2 and 6: (re)starts the worker with worker.env
+#   docker compose down -v                       # clean up: both containers AND the database volume
+#
+# The database has no published port: only containers on this Compose network reach it.
+# The worker's REST API listens on 127.0.0.1:8083, so only you, on the VM, can manage it.
+name: m10-cdc
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cdc-postgres
+    command: ["postgres", "-c", "wal_level=logical"]
+    environment:
+      POSTGRES_DB: crm
+    env_file:
+      - ${CDC_DIR:?export CDC_DIR first}/pg-admin.env    # POSTGRES_PASSWORD (database superuser)
+      - ${CDC_DIR}/cdc-db.env                             # CDC_DB_PASSWORD (user cdc_reader)
+    volumes:
+      - ./init-crm.sh:/docker-entrypoint-initdb.d/init-crm.sh:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "crm"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  connect:
+    build: .
+    image: m10-cdc-connect:8.3.2
+    container_name: cdc-connect
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8083:8083"
+    env_file:
+      - path: ${CDC_DIR}/worker.env      # bootstrap + SASL settings for the target (worker-config.sh)
+        required: false
+      - ${CDC_DIR}/cdc-db.env             # only the cdc_reader password, not the superuser's
+    environment:
+      # Connect keeps its state in three topics on the target cluster, under your prefix.
+      CONNECT_GROUP_ID: ${ME:?export ME first}.cdc-connect
+      CONNECT_CONFIG_STORAGE_TOPIC: ${ME}.cdc-connect-configs
+      CONNECT_OFFSET_STORAGE_TOPIC: ${ME}.cdc-connect-offsets
+      CONNECT_STATUS_STORAGE_TOPIC: ${ME}.cdc-connect-status
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 3
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 3
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 3
+      CONNECT_REST_ADVERTISED_HOST_NAME: connect
+      # Plain JSON keys and values, readable with the console consumer and jq.
+      CONNECT_KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_KEY_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
+      CONNECT_VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      CONNECT_PLUGIN_PATH: /usr/share/java,/usr/share/confluent-hub-components
+      # Connector configs say ${env:CDC_DB_PASSWORD} instead of the password; only CDC_* variables may be read.
+      CONNECT_CONFIG_PROVIDERS: env
+      CONNECT_CONFIG_PROVIDERS_ENV_CLASS: org.apache.kafka.common.config.provider.EnvVarConfigProvider
+      CONNECT_CONFIG_PROVIDERS_ENV_PARAM_ALLOWLIST_PATTERN: ^CDC_.*$$
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx1g
+    volumes:
+      - ${CDC_DIR}/ca.pem:/etc/kafka-connect/ca.pem:ro    # course CA for Platform; empty file for Cloud
+
+volumes:
+  pgdata:

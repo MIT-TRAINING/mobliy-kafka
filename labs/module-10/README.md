@@ -14,15 +14,19 @@ review. Lab 02 is on the **self-hosted Confluent Platform cluster on AWS**.
 You use Replicator to copy a topic from the shared Apache cluster, cut a
 consumer over with a written position decision, and run a failover drill
 that measures RPO, RTO and duplicates. You finish with a capstone drill
-that combines administering, monitoring and troubleshooting. Do the labs in
-order.
+that combines administering, monitoring and troubleshooting. Do Labs 01
+and 02 in order. Lab 03 is a beginner lab on **change data capture**: a
+PostgreSQL container on your VM streams its changes through a self-managed
+Connect worker to Cloud and then to Platform. Do it any time after Lab 01.
 
 | # | Lab | Level | Time | What you will do |
 | - | --- | ----- | ---- | ---------------- |
 | 01 | [Data contracts and managed connectors on Confluent Cloud, the production way](lab-01-data-contracts-managed-connectors-confluent-cloud.md) | Beginner | 75 min | Register a CDR contract as a pipeline would, set `FULL_TRANSITIVE` on one subject, review four change requests (and catch the check that checks too little), run a managed Datagen connector as `sa-lNN-app` with two ACLs and no secret, delete it to stop the bill, run an access review |
 | 02 | [Migration rehearsal, DR drill and capstone on Confluent Platform](lab-02-replicator-migration-dr-capstone-platform-aws.md) | Intermediate → Advanced | 95 min | Take an inventory of an Apache topic, replicate it into Platform with Replicator configured as code, move a consumer with an explicit position, cut the link and measure RPO, fail over by timestamp and count duplicates, then diagnose and fix a broken replication change under time pressure and write the go/no-go |
+| 03 | [Change data capture from PostgreSQL on Confluent Cloud and Confluent Platform](lab-03-postgres-cdc-debezium-confluent-cloud-platform.md) | Beginner | 85 min | Run PostgreSQL and a Connect worker with Debezium in Docker, connect the worker to Cloud as `sa-lNN-app` with two prefixed ACLs, stream a snapshot and live inserts, updates and deletes, turn them into business events with a small consumer, move the pipeline to Platform, and remove the replication slot that would fill the database disk |
 
-Estimated total: **about 2 h 50 min**, including checkpoint questions. The
+Estimated total: **about 2 h 50 min** for Labs 01–02, **about 4 h 15 min**
+with Lab 03, including checkpoint questions. The
 guided review and Q&A of the outline is the closing table of Lab 02
 (Part 6). The full capstone, *Peak Night*, follows in
 [`capstone/part-b-confluent-kafka.md`](../../capstone/part-b-confluent-kafka.md).
@@ -58,10 +62,13 @@ guided review and Q&A of the outline is the closing table of Lab 02
 | Apache client file `~/kafka/apache.properties` | `kafka-topics.sh --bootstrap-server apache-kafka.lab.internal:9092 --command-config ~/kafka/apache.properties --list` | Lab 02 uses the shared Apache cluster as the migration source (Modules 3–5) |
 | Your LDAP password | Your credentials e-mail | `confluent login --url` in Lab 02 |
 | Confluent CLI v4.x, Kafka 4.x CLI, `jq`, `curl` | `confluent version`, `kafka-topics.sh --version` | In the VM image |
-| Two terminals | — | Lab 02 runs a producer while you work |
+| Two terminals | — | Lab 02 runs a producer while you work; Lab 03 runs a consumer |
+| Docker with Compose v2.24+ (Lab 03 only) | `docker compose version` | PostgreSQL 16 and a Connect worker, about 1.5 GB of RAM. The images are pulled from Docker Hub and the Debezium plugin from Confluent Hub on the first `docker compose build` |
 
-> **No Docker in this module.** Nothing runs locally and no ports need to be
-> free. The capstone adds your own Docker cluster as a second site later.
+> **Docker only in Lab 03.** Labs 01 and 02 run nothing locally. Lab 03
+> starts two containers (project `m10-cdc`). The database publishes no port,
+> and the Connect REST API listens on `127.0.0.1:8083` only. Stop your
+> Module 2 cluster first if it is still running, to free memory.
 
 > **Using the course AWS VMs?** Your VM (`lab-lNN`) already has the CLIs,
 > the prepared files under `~/kafka/` and the course repository. Open it in
@@ -155,12 +162,15 @@ kafka-consumer-groups.sh --bootstrap-server $APA --command-config $APA_CFG --des
 | Replicator `RUNNING`, target topic exists, nothing copied on a **rerun** | Connect kept the source offsets of a deleted connector with the same name | Create it under a new name, e.g. `$ME.replicator-2` (Lab 02 Part 5.3) |
 | Target group lag equals the whole topic, or 0 after cutover | Position not set (`auto.offset.reset` decided instead) | Set it explicitly: `--from-file` or `--to-datetime` (Lab 02 Parts 3–4) |
 | `Error: Assignments can only be reset if the group … is inactive` | A consumer of the group is still running | Stop it (`Ctrl+C`), then reset |
+| Lab 03 worker never answers on `localhost:8083`; its log shows `TopicAuthorizationException` | A prefixed ACL for `sa-lNN-app` is missing, or `worker.env` is for the other target | `confluent kafka acl list --service-account $SA`; `./worker-config.sh cloud`, `docker compose up -d connect` (Lab 03 Part 2) |
+| `ERROR: replication slot "cdc_…" is active for PID …` | The connector's task is still stopping, or the worker still runs | `docker compose stop connect`, then drop the slot (Lab 03 clean up) |
+| `retained_wal` grows on an inactive slot | A CDC connector was deleted but its slot was not | `SELECT pg_drop_replication_slot('<slot>');` (Lab 03 Part 6.2) |
 
 ---
 
 ## Cleaning up after the module
 
-Each lab ends with its own clean up. After both labs:
+Each lab ends with its own clean up. After all three labs:
 
 - **Removed on Cloud:** the subject `$ME.cdr.contract-value` (soft and hard
   delete), the topic `$ME.cdr.partner`, the connector and its two ACLs,
@@ -169,6 +179,11 @@ Each lab ends with its own clean up. After both labs:
   topics `$ME.cdr.migrate` and `$ME.cdr.sms` on both clusters, the groups
   `$ME.billing-mig` and `$ME.fraud-dr` on both clusters, and Replicator's
   own group `$ME.replicator` on the Apache cluster.
+- **Removed by Lab 03:** the containers, the database volume and the image
+  of the Docker project `m10-cdc`, the files in `~/kafka/m10/cdc/`, the
+  `$ME.cdc*` topics and the two prefixed ACLs on Cloud, and the `$ME.cdc*`
+  topics and groups on Platform. The groups `$ME.cdc-processor` and
+  `$ME.cdc-connect` on Cloud expire on their own after 7 days.
 - **Kept:** `sa-lNN-app`, its Kafka key and role bindings, and the topic
   `$ME.cdr.voice` on Cloud. The capstone's Phase 9 builds on them.
 
@@ -182,10 +197,11 @@ kafka-topics.sh --bootstrap-server $CP  --command-config $CFG     --list | grep 
 confluent context use <your Cloud context name>
 confluent connect cluster list
 confluent api-key list
+docker ps -a --filter name=cdc- --format '{{.Names}}'
 ```
 
 **Expected:** an empty `~/kafka/m10/`, no matching topics on either cluster,
-an empty connector list, and no key described as "m10".
+an empty connector list, no key described as "m10", and no `cdc-` containers.
 
 At the end of the course the trainer deletes the service account, its keys and your Cloud environment
 ([`infra/confluent/README.md` Part D](../../infra/confluent/README.md#part-d--teardown)).
