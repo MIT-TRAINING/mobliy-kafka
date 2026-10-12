@@ -1,0 +1,21 @@
+#!/bin/bash
+# First-boot preparation for one Confluent Platform host. cp-ansible installs everything else.
+set -euxo pipefail
+exec > >(tee -a /var/log/cp-first-boot.log) 2>&1
+
+hostnamectl set-hostname ${hostname}
+
+%{ if swap_gb > 0 ~}
+if [ ! -f /swapfile ]; then
+  fallocate -l ${swap_gb}G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+swapon -a
+sysctl -w vm.swappiness=10
+echo 'vm.swappiness=10' > /etc/sysctl.d/99-swappiness.conf
+%{ endif ~}
+
+# The SSM agent ships as a snap on Ubuntu AMIs; make sure it is running for Ansible
+snap start amazon-ssm-agent || true
