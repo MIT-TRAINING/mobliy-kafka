@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backup &amp; DR Replication</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 10 · Ecosystem, Migration &amp; DR</a>
+    <div class="nav"><span>4 / 5</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 4</div>
+  <h1>Backup and DR: Confluent Replicator and multi-datacenter replication</h1>
+  <p class="lede">Kafka has no "backup to tape" for live data. Disaster recovery means a second cluster that holds a copy
+    of your topics and enough of your consumers' positions to carry on. Cross-site copies are <b>asynchronous</b>, so a site
+    failure costs you whatever hadn't been copied yet (<b>RPO</b>), and consumer positions are copied only periodically,
+    so some CDRs get billed twice. Start the traffic, pick a tool, then fail Site A and fail over. Try a bigger replication
+    lag, a longer offset-sync interval, and Replicator without its interceptor.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Replication tool</span>
+      <div class="seg" role="group" aria-label="Replication tool" id="toolSeg"><button data-v="rep" aria-pressed="true">Confluent Replicator</button><button data-v="mm2" aria-pressed="false">MirrorMaker 2</button><button data-v="cl" aria-pressed="false">Cluster Linking</button></div>
+      <label id="icptWrap" style="display:flex;gap:6px;align-items:center;font-size:14px"><input type="checkbox" id="icpt" checked> ConsumerTimestampsInterceptor on Site A consumers</label>
+    </div>
+    <div class="sliders">
+      <label><span>Replication lag <output id="oLag">5 s</output></span><input type="range" id="lag" min="0" max="30" value="5" aria-label="Replication lag in seconds"></label>
+      <label><span>Consumer offset sync every <output id="oSync">60 s</output></span><input type="range" id="sync" min="10" max="120" step="10" value="60" aria-label="Offset sync interval in seconds"></label>
+    </div>
+    <div class="controls">
+      <button class="primary" id="start">Start CDR traffic</button>
+      <button class="danger" id="disaster">Disaster: lose Site A</button>
+      <button id="failover">Fail over to Site B</button>
+      <button id="reset">Reset</button>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 340" role="img" aria-label="Two sites, the replicated topic, and billing-svc's position on each"></svg></div>
+    <div class="stats">
+      <div class="stat"><b id="sProd">0</b><span>CDRs written at Site A</span></div>
+      <div class="stat"><b id="sCopy">0</b><span>copied to Site B</span></div>
+      <div class="stat"><b id="sLost">–</b><span>lost (RPO)</span></div>
+      <div class="stat"><b id="sDup">–</b><span>billed twice</span></div>
+      <div class="stat"><b id="sRto">–</b><span>billing outage (s)</span></div>
+    </div>
+    <div class="verdict" id="verdict"></div>
+    <div class="grid grid-2">
+      <div><pre class="code" id="cfg" aria-label="Replication configuration"></pre></div>
+      <div class="term" id="term" aria-live="polite"><div class="term-empty">Failover commands appear here.</div></div>
+    </div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Replicator, MirrorMaker 2 and Cluster Linking</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th></th><th>Confluent Replicator</th><th>MirrorMaker 2</th><th>Cluster Linking</th></tr></thead>
+      <tbody>
+        <tr><td>What it is</td><td>A source connector on Kafka Connect</td><td>A set of connectors on Connect (or <code>connect-mirror-maker.sh</code>)</td><td>Built into Confluent brokers: the destination fetches from the source</td></tr>
+        <tr><td>Where it runs</td><td>A Connect cluster at the <b>destination</b> (consume remotely, produce locally)</td><td>Usually at the destination</td><td>The destination cluster's brokers; no extra workers</td></tr>
+        <tr><td>Licence</td><td>Confluent commercial</td><td>Apache 2.0</td><td>Confluent Platform Enterprise and Confluent Cloud</td></tr>
+        <tr><td>Topic name at Site B</td><td><code>topic.rename.format</code>, default <code>${topic}</code>: same name</td><td><code>siteA.cdr.voice</code> (DefaultReplicationPolicy), or same name with IdentityReplicationPolicy</td><td>Same name; a read-only <b>mirror topic</b> until promoted or failed over</td></tr>
+        <tr><td>Offsets on Site B</td><td>New offsets. Consumer positions translated by timestamp, which needs the interceptor on source consumers</td><td>New offsets. Positions translated through checkpoints (<code>sync.group.offsets.enabled</code>)</td><td><b>Identical</b> offsets, byte for byte. Group offsets synced (<code>consumer.offset.sync.enable</code>)</td></tr>
+        <tr><td>Topic configs</td><td>Copied (<code>topic.config.sync</code>)</td><td>Copied</td><td>Copied, and kept in sync</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">When RPO must be zero: a stretched cluster</h3>
+    <p style="color:var(--muted);margin:0">Every tool above copies asynchronously, so RPO is at least the replication lag.
+      A <b>Multi-Region Cluster</b> (Confluent Platform) is one cluster spread across sites. Synchronous replicas in both
+      sites, <code>acks=all</code> and a matching <code>min.insync.replicas</code> give RPO 0. The cost is cross-site
+      latency on every write, plus a third location for the KRaft controller quorum. Observers (asynchronous replicas)
+      add a cheaper copy without slowing writes.</p>
+  </div>
+  <div class="callout"><b>Admin takeaway:</b> after any failover, the consumers will reprocess some CDRs. Make billing
+    idempotent: deduplicate on <code>cdrId</code>, which is the same at both sites. Don't use topic-partition-offset
+    keys, because offsets differ on Replicator and MirrorMaker 2 copies. Then rehearse the failover and time it: the RTO
+    is your runbook, not the tool.</div>
+  <div class="callout warn"><b>Production trap:</b> Replicator's and MirrorMaker 2's destination topics are ordinary,
+    writable topics. A producer pointed at Site B by mistake writes records that Site A never gets back. Restrict who
+    can write to them with RBAC, or use Cluster Linking, whose mirror topics are read-only.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="03-ksqldb-overview.html"><small>← Previous</small>ksqlDB on Confluent</a>
+    <a class="next" href="05-migration-apache-to-confluent.html"><small>Next →</small>Migration: Apache Kafka → Confluent</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), logEl = document.getElementById('log'), term = document.getElementById('term');
+const RATE = 20;
+const S = { tool: 'rep', icpt: true, lag: 5, sync: 60, t: 0, running: false, phase: 'idle',
+  prod: 0, consumed: 0, lastSync: 0, syncedPos: 0, tDisaster: null, result: null, timer: null };
+const say = (h, hl) => logLine(logEl, h, hl);
+const TOOLNAME = { rep: 'Replicator', mm2: 'MirrorMaker 2', cl: 'Cluster Linking' };
+const drTopic = () => S.tool === 'mm2' ? 'siteA.cdr.voice' : 'cdr.voice';
+const copied = () => Math.max(0, S.prod - RATE * S.lag);
+const translationOff = () => S.tool === 'rep' && !S.icpt;
+
+function tick() {
+  S.t++;
+  if (S.phase === 'running') {
+    S.prod += RATE; S.consumed = S.prod;
+    if (S.t - S.lastSync >= S.sync) {
+      S.lastSync = S.t; S.syncedPos = Math.min(S.consumed, copied());
+      if (!translationOff()) say(`t=${S.t}s: billing-svc's position synced to Site B (offset ${S.syncedPos}).`);
+    }
+  }
+  render();
+}
+
+function disaster() {
+  if (S.phase !== 'running') return say('Start the traffic first.');
+  S.phase = 'down'; S.tDisaster = S.t; S.frozenCopy = copied();
+  say(`<b>t=${S.t}s: Site A is gone.</b> ${S.prod - S.frozenCopy} acknowledged CDRs were never copied. Producers and billing-svc stop. The clock for RTO is running.`, true);
+  setVerdict('verdict', 'bad', 'Site A down', 'Billing has stopped. Fail over to Site B.');
+  render();
+}
+
+function failover() {
+  if (S.phase !== 'down') return say(S.phase === 'over' ? 'Already failed over. Reset to try again.' : 'Nothing to fail over from yet: cause the disaster first.');
+  S.phase = 'over';
+  const end = S.frozenCopy;
+  let pos, how;
+  if (translationOff()) { pos = 0; how = 'no translated offsets (interceptor missing), so the group fell back to <code>auto.offset.reset=earliest</code>'; }
+  else { pos = Math.min(S.syncedPos, end); how = `resumed from the last synced position (offset ${pos}, synced at t=${S.lastSync}s)`; }
+  const lost = S.prod - end, dup = Math.max(0, Math.min(S.consumed, end) - pos), rto = S.t - S.tDisaster;
+  S.result = { lost, dup, rto };
+  const cmds = {
+    rep: ['# stop Replicator (its source is gone), then point clients at Site B', 'cn /connectors/siteA-to-siteB-replicator -X DELETE', '# billing-svc: bootstrap.servers=siteB:9092, topic cdr.voice (same name)'],
+    mm2: ['# stop connect-mirror-maker.sh, then point clients at Site B', `# billing-svc must subscribe to ${drTopic()} (renamed by DefaultReplicationPolicy)`],
+    cl: ['kafka-mirrors --failover --topics cdr.voice --link siteA-to-siteB --bootstrap-server siteB:9092', '# Cloud: confluent kafka mirror failover cdr.voice --link siteA-to-siteB', '# the mirror topic becomes writable; offsets are the same as on Site A'],
+  }[S.tool];
+  termRun(term, cmds[0], cmds.slice(1));
+  say(`Failed over with <b>${TOOLNAME[S.tool]}</b>: billing-svc ${how}.`, true);
+  const cls = lost === 0 && dup <= RATE * 10 ? 'ok' : lost > 0 || dup > RATE * 60 ? 'bad' : 'warn';
+  setVerdict('verdict', cls, 'Failed over', `RPO: <b>${lost}</b> CDRs lost (${S.lag} s of lag × ${RATE}/s). Duplicates: <b>${dup}</b>${translationOff() ? ' (every copied CDR billed again!)' : ` (${Math.round(dup / RATE)} s since the last offset sync)`}. Billing outage: <b>${rto} s</b>${S.tool === 'mm2' ? ', plus the time to change topic names in every consumer' : ''}.`);
+  render();
+}
+
+function render() {
+  svg.innerHTML = '';
+  const aUp = S.phase !== 'down' && S.phase !== 'over', bLive = S.phase === 'over';
+  site(20, 'Site A (primary)', aUp, 'cdr.voice', S.prod, S.prod, aUp ? S.consumed : null, 'billing-svc (committed)', false);
+  const end = S.phase === 'idle' || S.phase === 'running' ? copied() : S.frozenCopy;
+  site(530, 'Site B (DR)', true, drTopic(), end, Math.max(S.prod, 1), bLive ? (translationOff() ? 0 : Math.min(S.syncedPos, end)) : (translationOff() ? null : S.syncedPos), bLive ? 'billing-svc resumes here' : 'synced position', true);
+  // link
+  el('line', { x1: 370, y1: 140, x2: 530, y2: 140, stroke: aUp ? 'var(--accent)' : 'var(--bad)', 'stroke-width': 2.5, 'stroke-dasharray': aUp ? '' : '6 5' }, svg);
+  el('text', { x: 450, y: 126, 'text-anchor': 'middle', 'font-size': 12.5, 'font-weight': 700, text: TOOLNAME[S.tool] }, svg);
+  el('text', { x: 450, y: 160, 'text-anchor': 'middle', 'font-size': 11, fill: 'var(--muted)', text: `async · ${S.lag} s behind` }, svg);
+  el('text', { x: 450, y: 176, 'text-anchor': 'middle', 'font-size': 11, fill: 'var(--muted)', text: { rep: 'runs on Connect at Site B', mm2: 'runs on Connect at Site B', cl: 'runs in Site B brokers' }[S.tool] }, svg);
+  if (S.phase === 'running') { const d = el('circle', { r: 5, fill: 'var(--p0)' }, svg); tween(d, 375, 140, 525, 140, 260).then(() => d.remove()); }
+  // timeline of syncs
+  el('text', { x: 20, y: 300, 'font-size': 11.5, fill: 'var(--muted)', text: `t = ${S.t} s · ${RATE} CDRs/s · offset sync every ${S.sync} s${translationOff() ? ' (no translation: interceptor missing)' : ''}` }, svg);
+  const w = 860, span = Math.max(120, S.t);
+  el('line', { x1: 20, y1: 316, x2: 20 + w, y2: 316, stroke: 'var(--border)' }, svg);
+  for (let s = S.sync; s <= S.t; s += S.sync) el('line', { x1: 20 + w * s / span, y1: 310, x2: 20 + w * s / span, y2: 322, stroke: translationOff() ? 'var(--muted)' : 'var(--ok)', 'stroke-width': 2 }, svg);
+  if (S.tDisaster !== null) el('line', { x1: 20 + w * S.tDisaster / span, y1: 304, x2: 20 + w * S.tDisaster / span, y2: 328, stroke: 'var(--bad)', 'stroke-width': 3 }, svg);
+  document.getElementById('sProd').textContent = S.prod;
+  document.getElementById('sCopy').textContent = end;
+  ['Lost', 'Dup', 'Rto'].forEach(k => document.getElementById('s' + k).textContent = S.result ? S.result[k.toLowerCase()] : '–');
+  renderCfg();
+}
+
+function site(x, title, up, topic, end, scale, pos, posLabel, isB) {
+  el('rect', { x, y: 40, width: 350, height: 230, rx: 12, fill: up ? 'var(--surface)' : 'var(--surface-2)', stroke: up ? (isB && S.phase === 'over' ? 'var(--ok)' : 'var(--border)') : 'var(--bad)', 'stroke-width': 1.6, 'stroke-dasharray': up ? '' : '6 5' }, svg);
+  el('text', { x: x + 14, y: 64, 'font-size': 14, 'font-weight': 700, fill: up ? 'var(--text)' : 'var(--bad)', text: title + (up ? '' : ' · DOWN') }, svg);
+  const ro = isB && S.tool === 'cl' && S.phase !== 'over';
+  el('text', { x: x + 14, y: 84, 'font-size': 12, fill: 'var(--muted)', text: `topic ${topic}${ro ? ' · read-only mirror' : isB && S.phase === 'over' ? ' · now serving clients' : ''}` }, svg);
+  const bx = x + 14, bw = 320, frac = Math.min(1, end / Math.max(1, scale));
+  el('rect', { x: bx, y: 100, width: bw, height: 34, rx: 6, fill: 'var(--surface-2)' }, svg);
+  el('rect', { x: bx, y: 100, width: bw * frac, height: 34, rx: 6, fill: up ? 'var(--accent-soft)' : 'var(--surface-2)', stroke: 'var(--accent)', 'stroke-width': .8 }, svg);
+  if (isB && S.phase !== 'idle' && S.prod > end) {
+    el('rect', { x: bx + bw * frac, y: 100, width: bw * (1 - frac), height: 34, fill: S.phase === 'running' ? 'var(--warn-soft)' : 'var(--bad-soft)' }, svg);
+    el('text', { x: bx + bw - 4, y: 122, 'text-anchor': 'end', 'font-size': 10.5, fill: S.phase === 'running' ? 'var(--warn)' : 'var(--bad)', text: S.phase === 'running' ? 'in flight' : 'never copied' }, svg);
+  }
+  el('text', { x: bx, y: 152, 'font-size': 11, fill: 'var(--muted)', text: `end offset ${end}${isB && S.tool !== 'cl' ? ' (offsets differ from Site A)' : ''}` }, svg);
+  if (pos !== null && pos !== undefined) {
+    const px = bx + bw * Math.min(1, pos / Math.max(1, scale));
+    el('line', { x1: px, y1: 94, x2: px, y2: 196, stroke: isB ? 'var(--p1)' : 'var(--ok)', 'stroke-width': 2.5 }, svg);
+    el('text', { x: Math.min(px, bx + bw - 150), y: 212, 'font-size': 11, 'font-weight': 600, fill: isB ? 'var(--p1)' : 'var(--ok)', text: `${posLabel}: ${pos}` }, svg);
+  } else if (isB) el('text', { x: bx, y: 212, 'font-size': 11, fill: 'var(--bad)', text: translationOff() ? 'no translated position for billing-svc' : '' }, svg);
+  el('text', { x: bx, y: 252, 'font-size': 11, fill: 'var(--muted)', text: isB ? (S.phase === 'over' ? 'producers and billing-svc now use Site B' : 'standby: no clients yet') : up ? 'producers (mediation) + billing-svc' : 'producers erroring, billing stopped' }, svg);
+}
+
+function renderCfg() {
+  const c = document.getElementById('cfg');
+  if (S.tool === 'rep') c.innerHTML = `<span class="cm">// Replicator connector on Site B's Connect cluster</span>
+{ "name": "siteA-to-siteB-replicator", "config": {
+  "connector.class": "io.confluent.connect.replicator.ReplicatorSourceConnector",
+  "src.kafka.bootstrap.servers": "siteA:9092",
+  "dest.kafka.bootstrap.servers": "siteB:9092",
+  "topic.whitelist": "cdr.voice",
+  "topic.rename.format": "\${topic}",
+  "key.converter": "io.confluent.connect.replicator.util.ByteArrayConverter",
+  "value.converter": "io.confluent.connect.replicator.util.ByteArrayConverter",
+  "tasks.max": "3" } }
+<span class="cm">// Site A consumers, for offset translation:</span>
+<span class="${S.icpt ? 'chg' : 'cm'}">${S.icpt ? '' : '// MISSING: '}interceptor.classes=io.confluent.connect.replicator.offsets.ConsumerTimestampsInterceptor</span>`;
+  else if (S.tool === 'mm2') c.innerHTML = `<span class="cm"># mm2.properties  →  connect-mirror-maker.sh mm2.properties</span>
+clusters = siteA, siteB
+siteA.bootstrap.servers = siteA:9092
+siteB.bootstrap.servers = siteB:9092
+siteA->siteB.enabled = true
+siteA->siteB.topics = cdr\\.voice
+sync.group.offsets.enabled = true
+emit.checkpoints.interval.seconds = <span class="chg">${S.sync}</span>
+sync.group.offsets.interval.seconds = <span class="chg">${S.sync}</span>
+<span class="cm"># default policy names the copy siteA.cdr.voice</span>`;
+  else c.innerHTML = `<span class="cm"># on Site B: a link that pulls from Site A</span>
+kafka-cluster-links --bootstrap-server siteB:9092 \\
+  --create --link siteA-to-siteB --config-file link.properties
+<span class="cm"># link.properties</span>
+bootstrap.servers=siteA:9092
+consumer.offset.sync.enable=true
+consumer.offset.sync.ms=<span class="chg">${S.sync * 1000}</span>
+
+kafka-mirrors --create --mirror-topic cdr.voice \\
+  --link siteA-to-siteB --bootstrap-server siteB:9092`;
+}
+
+function reset(msg) {
+  Object.assign(S, { t: 0, phase: 'idle', prod: 0, consumed: 0, lastSync: 0, syncedPos: 0, tDisaster: null, result: null, frozenCopy: 0 });
+  setVerdict('verdict', '', 'Ready', `Press <b>Start CDR traffic</b>. ${TOOLNAME[S.tool]} copies <code>cdr.voice</code> to Site B as <code>${drTopic()}</code>.`);
+  if (msg) say(msg);
+  render();
+}
+wireSeg('toolSeg', v => {
+  S.tool = v;
+  document.getElementById('icptWrap').style.display = v === 'rep' ? 'flex' : 'none';
+  const def = { mm2: 60, cl: 30 }[v];
+  if (def) { S.sync = def; document.getElementById('sync').value = def; document.getElementById('oSync').textContent = def + ' s'; }
+  reset(v === 'cl' ? 'Cluster Linking: same topic name, same offsets; <code>consumer.offset.sync.ms</code> defaults to 30 s.'
+    : v === 'mm2' ? 'MirrorMaker 2: checkpoints every 60 s by default, and the copy is named <code>siteA.cdr.voice</code>.'
+    : 'Replicator: same topic name by default; consumer offsets are translated using timestamps written by an interceptor on the source consumers.');
+});
+document.getElementById('icpt').onchange = e => { S.icpt = e.target.checked; say(S.icpt ? 'Interceptor added to billing-svc on Site A.' : 'Interceptor removed: Replicator can no longer translate billing-svc\'s position.', !S.icpt); render(); };
+document.getElementById('lag').oninput = e => { S.lag = +e.target.value; document.getElementById('oLag').textContent = S.lag + ' s'; render(); };
+document.getElementById('sync').oninput = e => { S.sync = +e.target.value; document.getElementById('oSync').textContent = S.sync + ' s'; render(); };
+document.getElementById('start').onclick = () => {
+  if (S.phase === 'running') return;
+  if (S.phase !== 'idle') reset();
+  S.phase = 'running';
+  say(`Traffic started: mediation writes ${RATE} CDRs/s to <code>cdr.voice</code> at Site A; billing-svc keeps up.`, true);
+  setVerdict('verdict', 'ok', 'Replicating', `Site B is about ${S.lag} s behind. Let it run past an offset sync, then lose Site A.`);
+};
+document.getElementById('disaster').onclick = disaster;
+document.getElementById('failover').onclick = failover;
+document.getElementById('reset').onclick = () => reset('Reset.');
+reset();
+setInterval(tick, 250);
+
+renderQuiz('quiz', [
+  { q: 'Management asks for zero data loss if a whole data centre is lost. Which design can deliver RPO 0?',
+    options: ['Replicator with <code>tasks.max</code> raised', 'MirrorMaker 2 with a 10-second checkpoint interval', 'Cluster Linking, because offsets are identical', 'A stretched Multi-Region Cluster with synchronous replicas in both sites, <code>acks=all</code> and a matching <code>min.insync.replicas</code>'],
+    answer: 3,
+    explain: 'Replicator, MirrorMaker 2 and Cluster Linking all copy asynchronously: RPO is at least the replication lag at the moment of failure. Only a synchronous, stretched cluster acknowledges after both sites have the record, at the cost of cross-site latency.' },
+  { q: 'After failing over to the MirrorMaker 2 copy with default settings, billing-svc subscribes to <code>cdr.voice</code> at Site B and reads nothing. Why?',
+    options: ['MirrorMaker 2 copies only the latest segment', 'The DefaultReplicationPolicy named the copy <code>siteA.cdr.voice</code>', 'Mirror topics are read-only until promoted', 'Checkpoints were disabled'],
+    answer: 1,
+    explain: 'The default policy prefixes the source cluster alias to avoid replication loops. Consumers must subscribe to the prefixed name, or you configure IdentityReplicationPolicy to keep the same name.' },
+  { q: 'Replicator is copying <code>cdr.voice</code>, but at failover billing-svc has no translated position at Site B. What was missing?',
+    options: ['The <code>ConsumerTimestampsInterceptor</code> on the Site A consumers', 'A Schema Registry at Site B', '<code>topic.config.sync=true</code>', 'A second Replicator in the opposite direction'],
+    answer: 0,
+    explain: 'Replicator translates consumer offsets using the timestamps the interceptor writes for each group on the source. Without it the group has no position at Site B, and it falls back to <code>auto.offset.reset</code>: earliest re-bills everything, latest skips the gap.' },
+  { q: 'What makes Cluster Linking different from Replicator and MirrorMaker 2 at failover time?',
+    options: ['It replicates synchronously, so RPO is 0', 'It needs no consumer offset sync at all', 'Mirror topics keep the <b>same offsets</b> as the source and stay read-only until you fail over or promote them', 'It runs on Kafka Connect, so it scales with tasks'],
+    answer: 2,
+    explain: 'Cluster Linking runs in the destination brokers and copies the log byte for byte, so offsets match. It is still asynchronous (RPO > 0), and group offsets are still synced periodically (<code>consumer.offset.sync.ms</code>), so some re-reads remain.' },
+  { q: 'Every failover rehearsal bills a few hundred CDRs twice. What is the right fix?',
+    options: ['Make billing idempotent: deduplicate on <code>cdrId</code>, which is the same at both sites', 'Set the offset sync interval to 0', 'Switch to <code>acks=0</code> so fewer records exist', 'Have consumers start from <code>latest</code> after failover'],
+    answer: 0,
+    explain: 'Offset sync is periodic in every tool, so a few re-reads are normal. Deduplicating on a business key solves it at any interval. Starting from latest swaps duplicates for loss. Offsets themselves differ on Replicator and MirrorMaker 2 copies, so never use them as the key.' },
+]);
+</script>
+</body>
+</html>

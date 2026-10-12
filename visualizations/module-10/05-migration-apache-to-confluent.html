@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Migrating to Confluent</title>
+<link rel="stylesheet" href="assets/style.css">
+<script src="assets/common.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <a href="index.html">← Module 10 · Ecosystem, Migration &amp; DR</a>
+    <div class="nav"><span>5 / 5</span><a href="#" onclick="toggleTheme();return false;">Toggle theme</a></div>
+  </div>
+
+  <div class="kicker">Topic 5</div>
+  <h1>Migration: Apache Kafka → Confluent Kafka</h1>
+  <p class="lede">You must move the CDR pipeline from the Apache cluster (<code>apache-kafka.lab.internal</code>) to
+    Confluent Platform (<code>cp-kafka.lab.internal</code>) without stopping billing for long, losing CDRs or billing any
+    twice. Pick a strategy and decide where the new consumer group starts. Tick what each client must change, then step
+    through the runbook. Aim for the capstone targets: billing paused for 5 minutes or less, 0 CDRs lost, every duplicate
+    explained, and a rollback within 15 minutes.</p>
+
+  <div class="card">
+    <div class="controls">
+      <span class="ctl-label">Strategy</span>
+      <div class="seg" role="group" aria-label="Migration strategy" id="stSeg"><button data-v="rep" aria-pressed="true">Replicate, consumers first</button><button data-v="dual" aria-pressed="false">Dual write</button><button data-v="bang" aria-pressed="false">Big bang</button></div>
+    </div>
+    <div class="controls">
+      <span class="ctl-label">New group <code>lNN.billing</code> on CP starts at</span>
+      <div class="seg" role="group" aria-label="Offset decision for the new consumer group" id="offSeg"><button data-v="earliest" aria-pressed="false">earliest</button><button data-v="latest" aria-pressed="false">latest</button><button data-v="datetime" aria-pressed="false">--to-datetime (stop time)</button><button data-v="translated" aria-pressed="true">Replicator-translated</button></div>
+      <label style="display:flex;gap:6px;align-items:center;font-size:14px"><input type="checkbox" id="drain" checked> stop replication only after lag is 0</label>
+    </div>
+    <div class="ck-groups"><fieldset><legend>Client cutover inventory: what each client changes</legend><div class="checks" id="inv"></div></fieldset></div>
+    <div class="controls">
+      <button class="primary" id="next">Next step</button>
+      <button id="all">Run to the end</button>
+      <button class="danger" id="rollback">Roll back now</button>
+      <button id="reset">Reset</button>
+    </div>
+    <div class="stage"><svg id="svg" viewBox="0 0 900 340" role="img" aria-label="Apache and Confluent clusters, which cluster each client uses, and the runbook steps"></svg></div>
+    <div class="stats">
+      <div class="stat"><b id="sPause">0</b><span>billing pause (s)</span></div>
+      <div class="stat"><b id="sLost">0</b><span>CDRs lost</span></div>
+      <div class="stat"><b id="sDup">0</b><span>CDRs billed twice</span></div>
+      <div class="stat"><b id="sDiv">0</b><span>CDRs on one cluster only</span></div>
+      <div class="stat"><b id="sRb">–</b><span>rollback right now</span></div>
+    </div>
+    <div class="verdict" id="verdict"></div>
+    <div class="term" id="term" aria-live="polite"><div class="term-empty">Runbook commands appear here.</div></div>
+    <div class="log" id="log" aria-live="polite"></div>
+  </div>
+
+  <h2>Three strategies</h2>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th></th><th>Replicate, consumers first</th><th>Dual write</th><th>Big bang</th></tr></thead>
+      <tbody>
+        <tr><td>How</td><td>Replicator copies Apache → CP. Move consumers, then producers, then stop replication once it has caught up</td><td>Every producer writes to both clusters; move consumers; stop writing to Apache</td><td>Stop everything, copy the data, restart every client on CP</td></tr>
+        <tr><td>Billing pause</td><td>Seconds to a minute (one consumer restart)</td><td>Seconds to a minute</td><td>Minutes to hours</td></tr>
+        <tr><td>Risk</td><td>Offsets differ on CP, so the group's start point must be decided explicitly</td><td>Two independent writes: one can fail, so the clusters <b>diverge</b>. Order can differ too. Every producer needs a code change</td><td>Everything changes at once; one missed client setting stops billing</td></tr>
+        <tr><td>Rollback</td><td>Easy while producers are still on Apache</td><td>Easy while Apache still receives every write</td><td>Hard: CDRs written to CP must be copied back</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="card table-wrap">
+    <table>
+      <thead><tr><th>Client setting</th><th>Apache cluster (lab)</th><th>Confluent Platform (lab)</th></tr></thead>
+      <tbody>
+        <tr><td><code>bootstrap.servers</code></td><td><code>apache-kafka.lab.internal:9092</code></td><td><code>cp-kafka.lab.internal:9092</code></td></tr>
+        <tr><td><code>security.protocol</code></td><td><code>SASL_PLAINTEXT</code></td><td><code>SASL_SSL</code></td></tr>
+        <tr><td><code>sasl.mechanism</code></td><td><code>SCRAM-SHA-512</code></td><td><code>PLAIN</code> (checked against LDAP)</td></tr>
+        <tr><td>Credentials</td><td>SCRAM user</td><td>Your LDAP user</td></tr>
+        <tr><td>Truststore</td><td>none</td><td>The lab CA (<code>$CP_CA</code>)</td></tr>
+        <tr><td>Access</td><td>ACLs</td><td>RBAC role bindings on <code>Topic</code> and <code>Group</code> prefixes</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="callout"><b>Admin takeaway:</b> decide where the new group starts, and prove it before you cut over.
+    <code>earliest</code> re-bills the whole history. <code>latest</code> silently skips the CDRs written during the pause.
+    A translated position, or <code>kafka-consumer-groups.sh --reset-offsets --to-datetime</code> with a safety margin,
+    gives a few explained duplicates. Then verify with CDR IDs, never offsets: offsets are different on the new cluster.</div>
+  <div class="callout warn"><b>Production trap:</b> the Replicator connector's configuration holds your Apache
+    credentials, and anyone who can read that connector can see them. Use a dedicated replication user with read-only
+    rights, keep the file out of Git, and delete the connector when the migration ends.</div>
+
+  <h2>Self-quiz</h2>
+  <div class="card"><div id="quiz"></div></div>
+
+  <div class="pager">
+    <a href="04-backup-dr-replication.html"><small>← Previous</small>Backup &amp; DR: Replicator &amp; multi-datacenter</a>
+    <a class="next" href="index.html"><small>Done →</small>Back to Module 10 overview</a>
+  </div>
+</div>
+
+<script>
+const svg = document.getElementById('svg'), logEl = document.getElementById('log'), term = document.getElementById('term');
+const RATE = 20, HIST = 36000, LAG = 60;
+const say = (h, hl) => logLine(logEl, h, hl);
+const INV = [
+  { id: 'boot', txt: '<code>bootstrap.servers</code> → <code>cp-kafka.lab.internal:9092</code>', err: null },
+  { id: 'proto', txt: '<code>security.protocol</code> → <code>SASL_SSL</code>', err: 'WARN [Consumer clientId=billing-svc] Bootstrap broker cp-kafka.lab.internal:9092 (id: -1 rack: null) disconnected' },
+  { id: 'mech', txt: '<code>sasl.mechanism</code> → <code>PLAIN</code>', err: "UnsupportedSaslMechanismException: Client SASL mechanism 'SCRAM-SHA-512' not enabled in the server, enabled mechanisms are [PLAIN]" },
+  { id: 'cred', txt: 'JAAS user → your LDAP user', err: 'SaslAuthenticationException: Authentication failed: Invalid username or password' },
+  { id: 'trust', txt: 'truststore → the lab CA (<code>$CP_CA</code>)', err: 'SSLHandshakeException: PKIX path building failed: … unable to find valid certification path to requested target' },
+  { id: 'rbac', txt: 'RBAC: <code>lNN.</code> topics and group bound on CP', err: 'GroupAuthorizationException: Not authorized to access group: lNN.billing' },
+];
+const STEPS = {
+  rep: ['Pre-create topics + RBAC', 'Start Replicator, catch up', 'Stop billing on Apache', 'Start billing on CP', 'Move producers to CP', 'Stop Replicator', 'Verify CDR IDs'],
+  dual: ['Pre-create topics + RBAC', 'Producers write to both', 'Wait one retention window', 'Stop billing on Apache', 'Start billing on CP', 'Stop writing to Apache', 'Verify CDR IDs'],
+  bang: ['Stop all clients', 'Copy data with Replicator', 'Start all clients on CP', 'Verify CDR IDs'],
+};
+const S = { st: 'rep', off: 'translated', drain: true, inv: new Set(), step: 0, pause: 0, lost: 0, dup: 0, div: 0, paused: false,
+  prod: 'apache', cons: 'apache', repl: false, dualOn: false, done: false };
+
+function missing() { return INV.filter(i => !S.inv.has(i.id)); }
+function clientCheck(who) {
+  const m = missing();
+  if (!m.length) return true;
+  const first = m[0];
+  if (first.id === 'boot') {
+    termRun(term, `# ${who} restarted with the new config`, ['… connected to apache-kafka.lab.internal:9092 (still the old cluster!)'], true);
+    say(`<b>${who} came up on the Apache cluster</b>: <code>bootstrap.servers</code> was never changed. No error at all, so check where the group really is.`, true);
+  } else {
+    termRun(term, `# ${who} restarted with the new config`, [first.err], true);
+    say(`<b>${who} can't join CP</b>: ${first.txt} is missing from the cutover inventory. +60 s while you fix it.`, true);
+  }
+  if (S.paused) S.pause += 60;
+  return false;
+}
+
+function startOffsets() {
+  const pauseRecs = RATE * S.pauseSecs;
+  let cmd, dup = 0, lost = 0, note;
+  if (S.off === 'translated' && S.st === 'dual') {
+    lost = pauseRecs; note = 'nothing translated a position (no Replicator in a dual write), so the group fell back to <code>auto.offset.reset=latest</code> and skipped the CDRs written during the pause';
+    cmd = ['# no committed offsets for lNN.billing on CP', []];
+  } else if (S.off === 'earliest') {
+    dup = HIST; note = `the group started at the beginning and re-billed the ${HIST} CDRs of history`;
+    cmd = ['kafka-consumer-groups.sh --bootstrap-server $CP --command-config $CFG --reset-offsets --group lNN.billing --topic lNN.cdr.voice --to-earliest --execute', []];
+  } else if (S.off === 'latest') {
+    lost = pauseRecs; note = `the group started at the end and silently skipped the ${pauseRecs} CDRs written during the pause`;
+    cmd = ['kafka-consumer-groups.sh --bootstrap-server $CP --command-config $CFG --reset-offsets --group lNN.billing --topic lNN.cdr.voice --to-latest --execute', []];
+  } else if (S.off === 'datetime') {
+    dup = RATE * 5; note = `the group started at the first record stamped at or after the Apache stop time minus a 5 s safety margin: ${dup} explained duplicates`;
+    cmd = ["kafka-consumer-groups.sh --bootstrap-server $CP --command-config $CFG --reset-offsets --group lNN.billing --topic lNN.cdr.voice --to-datetime 2026-10-12T09:59:55.000 --execute", []];
+  } else {
+    dup = RATE; note = `Replicator had translated the group's position (interceptor on the Apache consumers): ${dup} duplicates from timestamp granularity`;
+    cmd = ['kafka-consumer-groups.sh --bootstrap-server $CP --command-config $CFG --describe --group lNN.billing', ['GROUP        TOPIC          PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG', 'lNN.billing  lNN.cdr.voice  0          …               …               …']];
+  }
+  termRun(term, cmd[0], cmd[1]);
+  S.dup += dup; S.lost += lost;
+  say(`Billing resumed on CP: ${note}.`, lost > 0 || dup > 1000);
+}
+
+function doStep() {
+  const name = STEPS[S.st][S.step];
+  if (!name) return false;
+  const t = (c, o) => termRun(term, c, o || []);
+  switch (name) {
+    case 'Pre-create topics + RBAC':
+      t('kafka-topics.sh --bootstrap-server $CP --command-config $CFG --create --topic lNN.cdr.voice --partitions 6 --replication-factor 3', ['Created topic lNN.cdr.voice.']);
+      say('Topics pre-created on CP with the <b>same names and partition counts</b>, so each MSISDN key lands in the same partition number. RBAC bindings in place.'); break;
+    case 'Start Replicator, catch up':
+      t(`cn /connectors -X POST -H 'Content-Type: application/json' -d @replicator-apache-to-cp.json`, ['{ "name": "lNN.replicator", … "type": "source" }']);
+      S.repl = true; say(`Replicator copies Apache → CP on the Connect cluster next to CP. History copied; steady lag about ${LAG / RATE} s.`); break;
+    case 'Stop billing on Apache': case 'Stop all clients':
+      t('# stop billing-svc on the Apache cluster (it commits its last offsets on shutdown)');
+      S.paused = true; S.pauseStart = S.pause; S.cons = 'none';
+      if (name === 'Stop all clients') { S.prod = 'none'; say('<b>Everything is stopped.</b> Mediation buffers CDRs upstream; billing is paused.', true); }
+      else say('billing-svc stopped on Apache. <b>The billing pause starts now.</b>', true);
+      S.pause += 10; break;
+    case 'Start billing on CP': case 'Start all clients on CP':
+      if (!clientCheck('billing-svc')) return true;
+      if (name === 'Start all clients on CP') { if (!clientCheck('mediation producers')) return true; S.prod = 'cp'; S.pause += 120; }
+      S.pause += 30; S.pauseSecs = S.pause - S.pauseStart; S.paused = false; S.cons = 'cp';
+      startOffsets(); break;
+    case 'Move producers to CP':
+      if (!clientCheck('mediation producers')) return true;
+      S.prod = 'cp'; say('Producers now write to CP. Replicator is still draining the last CDRs written to Apache.'); break;
+    case 'Stop Replicator':
+      t('cn /connectors/lNN.replicator -X DELETE');
+      if (!S.drain) { S.lost += LAG; say(`Replicator stopped <b>before it caught up</b>: the last ${LAG} CDRs on Apache never reached CP.`, true); }
+      else say('Replicator lag reached 0, then it was deleted, along with the Apache credentials in its config.');
+      S.repl = false; break;
+    case 'Copy data with Replicator':
+      t(`cn /connectors -X POST -H 'Content-Type: application/json' -d @replicator-apache-to-cp.json`, []);
+      S.pause += 420; S.repl = false;
+      say('Copied the full history while nothing ran: <b>+7 min of pause</b>. Replicator deleted after it caught up.', true); break;
+    case 'Producers write to both':
+      t('# deploy the producer change: every CDR is sent to both clusters');
+      S.prod = 'both'; S.dualOn = true; S.div += 7;
+      say('Dual write on. The two sends are independent: 7 CDRs reached Apache but timed out on CP, and the app only logged it. <b>The clusters already diverge.</b>', true); break;
+    case 'Wait one retention window':
+      say('CP now holds a full retention window of new CDRs. No pause, but days of calendar time.'); break;
+    case 'Stop writing to Apache':
+      if (!clientCheck('mediation producers')) return true;
+      S.prod = 'cp'; S.dualOn = false; say('Producers write only to CP. Apache is now stale: rollback from here means copying back.'); break;
+    case 'Verify CDR IDs': {
+      const bad = S.lost + S.div;
+      t('./verify-migration.sh', [bad ? `lNN.cdr.voice  FAIL  ${bad} CDR IDs missing on one side` : 'lNN.cdr.voice  PASS  counts and CDR ID sets match']);
+      S.done = true; break;
+    }
+  }
+  S.step++;
+  return true;
+}
+
+function rollbackCost() {
+  if (S.step === 0) return 'nothing to undo';
+  if (S.prod === 'apache' || S.dualOn) return S.cons === 'cp' ? '≈1 min: billing back to Apache' : '≈1 min';
+  if (S.prod === 'none') return '≈2 min: restart on Apache';
+  return '≥15 min: copy CP-only CDRs back';
+}
+
+function verdict() {
+  const ok = S.pause <= 300 && S.lost === 0 && S.div === 0 && S.dup <= 1000;
+  if (!S.done) return setVerdict('verdict', '', `Step ${S.step} / ${STEPS[S.st].length}`, `Next: <b>${STEPS[S.st][S.step]}</b>.`);
+  const why = [];
+  if (S.pause > 300) why.push(`pause ${S.pause} s &gt; 300 s`);
+  if (S.lost) why.push(`${S.lost} CDRs lost`);
+  if (S.div) why.push(`${S.div} CDRs on one cluster only`);
+  if (S.dup > 1000) why.push(`${S.dup} duplicates is not "a few, explained"`);
+  setVerdict('verdict', ok ? 'ok' : 'bad', ok ? 'Go' : 'No-go', ok ? `Pause ${S.pause} s, 0 lost, ${S.dup} explained duplicates. Migration meets the targets.` : why.join('; ') + '.');
+}
+
+function render() {
+  svg.innerHTML = '';
+  const box = (x, title, sub, live) => {
+    el('rect', { x, y: 40, width: 250, height: 150, rx: 12, fill: 'var(--surface)', stroke: live ? 'var(--ok)' : 'var(--border)', 'stroke-width': live ? 2 : 1.4 }, svg);
+    el('text', { x: x + 125, y: 66, 'text-anchor': 'middle', 'font-size': 14, 'font-weight': 700, text: title }, svg);
+    el('text', { x: x + 125, y: 84, 'text-anchor': 'middle', 'font-size': 11, fill: 'var(--muted)', text: sub }, svg);
+    el('rect', { x: x + 25, y: 104, width: 200, height: 30, rx: 6, fill: 'var(--accent-soft)', stroke: 'var(--accent)', 'stroke-width': .8 }, svg);
+    el('text', { x: x + 125, y: 124, 'text-anchor': 'middle', 'font-size': 12, 'font-family': 'var(--mono)', text: 'lNN.cdr.voice' }, svg);
+  };
+  box(20, 'Apache Kafka 4.x', 'apache-kafka.lab.internal · SCRAM', S.prod === 'apache' || S.prod === 'both' || S.cons === 'apache');
+  box(630, 'Confluent Platform 8.x', 'cp-kafka.lab.internal · SASL_SSL + LDAP', S.prod === 'cp' || S.prod === 'both' || S.cons === 'cp');
+  const cl = (y, name, at) => {
+    el('rect', { x: 345, y, width: 210, height: 40, rx: 10, fill: at === 'none' ? 'var(--bad-soft)' : 'var(--surface-2)', stroke: at === 'none' ? 'var(--bad)' : 'var(--border)' }, svg);
+    el('text', { x: 450, y: y + 25, 'text-anchor': 'middle', 'font-size': 12.5, 'font-weight': 600, text: name + (at === 'none' ? ' · stopped' : '') }, svg);
+    if (at === 'apache' || at === 'both') el('line', { x1: 345, y1: y + 20, x2: 270, y2: 119, stroke: 'var(--ok)', 'stroke-width': 2 }, svg);
+    if (at === 'cp' || at === 'both') el('line', { x1: 555, y1: y + 20, x2: 630, y2: 119, stroke: 'var(--ok)', 'stroke-width': 2 }, svg);
+  };
+  cl(70, 'mediation (producers)', S.prod);
+  cl(140, 'billing-svc (lNN.billing)', S.cons);
+  if (S.repl) {
+    el('path', { d: 'M145 40 C 145 8, 755 8, 755 40', fill: 'none', stroke: 'var(--warn)', 'stroke-width': 2.5, 'marker-end': '' }, svg);
+    el('text', { x: 450, y: 22, 'text-anchor': 'middle', 'font-size': 11.5, 'font-weight': 600, fill: 'var(--warn)', text: 'Replicator: Apache → CP (runs on Connect next to CP)' }, svg);
+  }
+  const steps = STEPS[S.st], w = 860 / steps.length;
+  steps.forEach((s, i) => {
+    const x = 20 + i * w, st = i < S.step ? 'done' : i === S.step && !S.done ? 'now' : 'todo';
+    el('rect', { x: x + 2, y: 226, width: w - 6, height: 62, rx: 8, fill: st === 'done' ? 'var(--ok-soft)' : st === 'now' ? 'var(--accent-soft)' : 'var(--surface-2)', stroke: st === 'now' ? 'var(--accent)' : 'var(--border)' }, svg);
+    el('text', { x: x + w / 2, y: 246, 'text-anchor': 'middle', 'font-size': 12, 'font-weight': 700, fill: st === 'done' ? 'var(--ok)' : 'var(--text)', text: (st === 'done' ? '✓ ' : '') + (i + 1) }, svg);
+    const words = s.split(' '), half = Math.ceil(words.length / 2);
+    [words.slice(0, half).join(' '), words.slice(half).join(' ')].forEach((ln, k) => el('text', { x: x + w / 2, y: 263 + k * 14, 'text-anchor': 'middle', 'font-size': 10.5, fill: 'var(--muted)', text: ln }, svg));
+  });
+  el('text', { x: 20, y: 316, 'font-size': 11.5, fill: S.paused ? 'var(--bad)' : 'var(--muted)', text: S.paused ? 'Billing is paused: every second counts toward the 5-minute target' : `Strategy: ${{ rep: 'replicate, consumers first', dual: 'dual write', bang: 'big bang' }[S.st]} · new group starts at: ${S.off}` }, svg);
+  document.getElementById('sPause').textContent = S.pause;
+  document.getElementById('sLost').textContent = S.lost;
+  document.getElementById('sDup').textContent = S.dup;
+  document.getElementById('sDiv').textContent = S.div;
+  document.getElementById('sRb').textContent = rollbackCost();
+  verdict();
+}
+
+function reset(msg) {
+  Object.assign(S, { step: 0, pause: 0, lost: 0, dup: 0, div: 0, paused: false, prod: 'apache', cons: 'apache', repl: false, dualOn: false, done: false });
+  if (msg) say(msg);
+  render();
+}
+INV.forEach(i => {
+  const l = document.createElement('label');
+  l.innerHTML = `<input type="checkbox" data-id="${i.id}"><span>${i.txt}</span>`;
+  l.querySelector('input').onchange = e => { e.target.checked ? S.inv.add(i.id) : S.inv.delete(i.id); };
+  document.getElementById('inv').appendChild(l);
+});
+wireSeg('stSeg', v => { S.st = v; reset(`Strategy: <b>${{ rep: 'replicate, then cut over consumers first', dual: 'dual write', bang: 'big bang' }[v]}</b>.`); });
+wireSeg('offSeg', v => { S.off = v; say(`The new group will start at <b>${v}</b>.`); render(); });
+document.getElementById('drain').onchange = e => { S.drain = e.target.checked; };
+document.getElementById('next').onclick = () => { if (S.done) return say('Runbook finished. Reset to try another plan.'); doStep(); render(); };
+document.getElementById('all').onclick = () => { let guard = 20; while (!S.done && guard--) { const before = S.step; doStep(); if (S.step === before) break; } render(); };
+document.getElementById('rollback').onclick = () => {
+  const c = rollbackCost();
+  say(`<b>Rollback</b> at step ${S.step}: ${c}.${c.startsWith('≥') ? ' CDRs written only to CP must be copied back to Apache before producers return: well past the 15-minute target.' : ' Apache still has every CDR, so billing-svc resumes there from its committed offsets.'}`, true);
+  termRun(term, '# rollback: point clients back at apache-kafka.lab.internal:9092', []);
+  reset();
+};
+document.getElementById('reset').onclick = () => reset('Reset.');
+reset();
+
+renderQuiz('quiz', [
+  { q: 'With Replicator, why can\'t billing-svc simply reuse its Apache offsets on Confluent Platform?',
+    options: ['Confluent Platform stores offsets in a different format', 'The copied records get <b>new offsets</b> on the target, so the same number points at a different CDR', 'Offsets are encrypted per cluster', 'It can; offsets are identical after Replicator'],
+    answer: 1,
+    explain: 'Replicator produces into the target topic, which assigns its own offsets. That is why the start point needs a translated position, a timestamp reset, or an explicit earliest or latest decision. (Cluster Linking is the tool that keeps offsets identical.)' },
+  { q: 'The cutover starts billing-svc on CP with <code>--to-latest</code>. Billing resumes after a 45-second pause. What happened to the CDRs written during those 45 seconds?',
+    options: ['They were billed twice', 'They are buffered in the producer', 'Replicator re-sends them automatically', 'They were skipped: about 45 × rate CDRs never billed, and no error anywhere'],
+    answer: 3,
+    explain: '<code>latest</code> means "start after everything already on the topic", including the records produced while billing was stopped. It is silent loss: always pick and prove a start point that covers the pause.' },
+  { q: 'What is the main risk of the dual-write strategy?',
+    options: ['The two writes are independent, so one can fail and the clusters diverge (and ordering can differ)', 'Confluent Platform rejects records that also exist on Apache', 'It needs a longer billing pause than big bang', 'Consumers must read from both clusters at once'],
+    answer: 0,
+    explain: 'No transaction spans two clusters. A timeout on one side leaves a CDR on only one cluster, and every producer needs a code change. Verify with the set of CDR IDs on both sides before you stop writing to Apache.' },
+  { q: 'billing-svc moved to CP with no error, but its group shows no members there and the Apache group is active. What did the cutover miss?',
+    options: ['The truststore', 'The SASL mechanism', '<code>bootstrap.servers</code> still pointed at the Apache cluster', 'The RBAC binding on the group'],
+    answer: 2,
+    explain: 'Every other missed setting fails loudly against CP: a disconnect, an unsupported mechanism, a failed handshake or an authorization error. A wrong bootstrap just connects to the old cluster successfully. Check where the group actually is with <code>kafka-consumer-groups.sh --describe</code> on both clusters.' },
+  { q: 'An MQ admin proposes a weekend big bang: stop everything, copy, restart on CP. Against the capstone targets, what is the weak point?',
+    options: ['Big bang loses data by design', 'The long billing pause, and a rollback that needs CP-only CDRs copied back once clients write there', 'Replicator can\'t copy stopped topics', 'Big bang needs dual-write code changes'],
+    answer: 1,
+    explain: 'Copying while nothing runs makes the pause minutes or hours, and every client changes at once. Once producers write to CP, going back means a reverse copy. Replicating first and moving consumers first keeps both the pause and the rollback short.' },
+]);
+</script>
+</body>
+</html>
