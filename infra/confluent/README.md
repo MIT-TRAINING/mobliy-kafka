@@ -283,6 +283,16 @@ What the inventory sets, and why:
 | `confluent.balancer.enable=true` | | Self-Balancing on, so Lab 03 Part 1.2 shows it |
 | `control_center_next_gen` group | `cp-services` | Control Center 2.x (separate product since CP 8.0) |
 | `required_total_memory_mb_*`, `*_service_environment_overrides` | Controller heap 1.5 GB, broker 3 GB; SR 0.5, Connect 1, ksqlDB 1, C3 2 GB | Fits t3a.medium/t3a.large; cp-ansible's defaults assume 7 GB+ per host |
+| `kafka_connect_confluent_hub_plugins` | `confluentinc/kafka-connect-datagen:0.7.2` | Datagen Source plugin for Module 6 Lab 07, installed from Confluent Hub with `confluent connect plugin install` into `/usr/share/java/connect_plugins` (on the worker's `plugin.path`). `cp-services` needs outbound HTTPS to `hub-downloads.confluent.io` |
+
+**Cluster already installed?** Add the plugin without a full re-run: only the
+Connect role runs, and it restarts the worker (running connectors pause for
+about a minute):
+
+```bash
+# (admin laptop) - from infra/confluent/cp-ansible, same venv and exports as above
+ansible-playbook "${INV[@]}" confluent.platform.all --tags kafka_connect --limit kafka_connect,localhost
+```
 
 > **Before the real run:** compare `hosts.yml` with the sample inventories in
 > the cp-ansible collection version you installed (KRaft + RBAC + LDAP +
@@ -317,7 +327,11 @@ confluent logout
 | `User:lNN` | `ResourceOwner` on `Group:lNN.` (prefix) | Own consumer groups (`lNN.analytics`) |
 | `User:lNN` (except any listed in `RESOURCE_OWNER_ONLY` in the script) | `SystemAdmin` on the Kafka cluster | Full control of the Kafka cluster: brokers and broker configs, every topic and group (including other learners'), role bindings, the full Control Center view and alert triggers. Overrides the prefix isolation of the two rows above |
 | `User:lNN` | ACL `Describe`, `DescribeConfigs` on the cluster | Read brokers, quorum and broker configs (Lab 03 Part 1); no `Alter` |
-| `User:trainer` | `SystemAdmin` on the Kafka cluster | Demos, resets, the full Control Center view |
+| `User:lNN` | `ResourceOwner` on `Subject:lNN.` (prefix) in Schema Registry `schema-registry` | Register, read and delete schemas of own topics (Module 6 Lab 06) |
+| `User:lNN` | `ResourceOwner` on `Connector:lNN.` (prefix) in Connect `connect-cluster` | Create, pause, restart and delete own connectors; other names refused (Module 6 Lab 07). Makes the Connect cluster visible in Control Center |
+| `User:lNN` | `DeveloperWrite` on `KsqlCluster:ksql-cluster` in ksqlDB `default_` | Submit statements and queries (Module 6 Lab 08). Makes the ksqlDB cluster visible in Control Center |
+| `User:ksql`, `User:connect_worker` | `ResourceOwner` on `Topic:lNN.` and `Subject:lNN.` (prefix) | Persistent queries and connectors run as these service principals |
+| `User:trainer` | `SystemAdmin` on the Kafka cluster, Schema Registry, Connect and ksqlDB | Demos, resets, the full Control Center view of every component |
 
 > **Learners are `SystemAdmin`:** any learner can read, change or delete any topic or
 > group, alter broker configs and create or delete role bindings, including other
@@ -342,7 +356,7 @@ Each VM receives, next to the existing `apache.properties`:
 | ---- | ---- | ------- |
 | `~/kafka/cp.properties` | 600 | `SASL_SSL`, `PLAIN`, the learner's LDAP user, PEM truststore |
 | `~/kafka/cp-ca.pem` | 644 | Course CA |
-| `~/kafka/confluent.env` | 644 | `CP`, `MDS_URL`, `CP_REST`, `CP_CA`, `C3_URL`, `SR_URL`, `KSQL_URL` — endpoints only |
+| `~/kafka/confluent.env` | 644 | `CP`, `MDS_URL`, `CP_REST`, `CP_CA`, `C3_URL`, `SR_URL`, `KSQL_URL`, `CONNECT_URL` — endpoints only |
 
 ### B.8 Publish Control Center
 
@@ -378,6 +392,7 @@ confluent kafka topic create l01.smoke --url $CP_REST --certificate-authority-pa
 confluent kafka topic create other.smoke --url $CP_REST --certificate-authority-path $CP_CA --partitions 1   # must be denied
 confluent kafka topic delete l01.smoke --url $CP_REST --certificate-authority-path $CP_CA --force
 curl -sI $C3_URL | head -1
+curl -s --cacert $CP_CA -u l01:<password> $CONNECT_URL/connector-plugins | jq -r '.[].class' | grep -i datagen   # DatagenConnector
 ```
 
 ---

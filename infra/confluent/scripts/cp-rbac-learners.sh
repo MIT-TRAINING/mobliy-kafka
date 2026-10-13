@@ -4,10 +4,13 @@
 #                 (except learners listed in RESOURCE_OWNER_ONLY),
 #                 ACL Describe/DescribeConfigs on the cluster,
 #                 ResourceOwner on Subject:lNN. in Schema Registry (Module 6 Lab 06),
+#                 ResourceOwner on Connector:lNN. in the Connect cluster (Module 6 Lab 07),
 #                 DeveloperWrite on the ksqlDB cluster (Module 6 Lab 08)
 #   ksql        : ResourceOwner on Topic:lNN. and Subject:lNN., because persistent queries
 #                 read and write the learners' topics as the ksqlDB service principal
-#   trainer     : SystemAdmin on the Kafka cluster
+#   connect_worker : ResourceOwner on Topic:lNN. and Subject:lNN., because connectors run as
+#                 the Connect worker principal
+#   trainer     : SystemAdmin on the Kafka cluster, Schema Registry, Connect and ksqlDB
 # Mirrors the prefix rules of the shared Apache cluster (infra/LAB-SETUP.md §4). Safe to re-run.
 #
 # Prereq: confluent login --url $MDS_URL --certificate-authority-path secrets/certs/ca.pem  (as "mds")
@@ -23,6 +26,7 @@ BS=${CP:-cp-kafka.lab.internal:9092}
 # Component cluster IDs as registered by cp-ansible (check: confluent cluster list --url $MDS_URL ...)
 SR_CLUSTER=${SR_CLUSTER_ID:-schema-registry}
 KSQL_CLUSTER=${KSQL_CLUSTER_ID:-default_}
+CONNECT_CLUSTER=${CONNECT_CLUSTER_ID:-connect-cluster}   # the worker's group.id
 # Learners who get only their prefixed ResourceOwner bindings, no SystemAdmin (space-separated)
 RESOURCE_OWNER_ONLY=${RESOURCE_OWNER_ONLY:-}
 
@@ -47,7 +51,7 @@ bind_in() {
 }
 
 bind User:trainer SystemAdmin
-for scope in "--schema-registry-cluster $SR_CLUSTER" "--ksql-cluster $KSQL_CLUSTER"; do
+for scope in "--schema-registry-cluster $SR_CLUSTER" "--ksql-cluster $KSQL_CLUSTER" "--connect-cluster $CONNECT_CLUSTER"; do
   confluent iam rbac role-binding create --principal User:trainer --role SystemAdmin \
     --kafka-cluster "$CP_ID" $scope >/dev/null 2>&1 \
     && echo "ok   User:trainer SystemAdmin $scope" || echo "skip User:trainer SystemAdmin $scope"
@@ -65,13 +69,18 @@ while IFS=, read -r id _ <&3; do
   bind "User:$id" ResourceOwner "Group:$id."
   # Full control of the Kafka cluster (brokers, all topics and groups, role bindings, Control Center).
   # This overrides the prefix isolation above for Kafka resources; it does not cover Schema Registry,
-  # Connect or ksqlDB, which keep the bindings below. For monitoring only, bind Operator instead.
+  # Connect or ksqlDB, which keep the prefixed bindings below. For monitoring only, bind Operator instead.
   [[ " $RESOURCE_OWNER_ONLY " == *" $id "* ]] || bind "User:$id" SystemAdmin
   kafka-acls.sh --bootstrap-server "$BS" --command-config "$ADMIN_CFG" --add \
     --allow-principal "User:$id" --operation Describe --operation DescribeConfigs --cluster >/dev/null
   echo "ok   User:$id ACL Describe,DescribeConfigs on cluster"
   # Schema Registry: register and read schemas for their own topics (<topic>-value subjects)
   bind_in "User:$id" ResourceOwner "Subject:$id." yes --schema-registry-cluster "$SR_CLUSTER"
+  # Connect: create, change and delete connectors named lNN.* on the shared Connect cluster
+  bind_in "User:$id" ResourceOwner "Connector:$id." yes --connect-cluster "$CONNECT_CLUSTER"
+  # ...which run as User:connect_worker on the learner's topics and subjects
+  bind "User:connect_worker" ResourceOwner "Topic:$id."
+  bind_in "User:connect_worker" ResourceOwner "Subject:$id." yes --schema-registry-cluster "$SR_CLUSTER"
   # ksqlDB: submit statements and queries to the shared ksqlDB server
   bind_in "User:$id" DeveloperWrite "KsqlCluster:ksql-cluster" no --ksql-cluster "$KSQL_CLUSTER"
   # ...whose persistent queries run as User:ksql on the learner's topics and subjects
